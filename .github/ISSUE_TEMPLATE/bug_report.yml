@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a problem to help us improve
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! Please provide as much detail as you can.
+
+  - type: input
+    id: version
+    attributes:
+      label: BlazeServe version
+      placeholder: e.g. 0.3.0
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: e.g. 3.12.4
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: e.g. Ubuntu 22.04 / Windows 11 / macOS 14
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+      placeholder: Tell us what you saw...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Command run...
+        2. Request made to...
+        3. Error/log output...
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      render: shell

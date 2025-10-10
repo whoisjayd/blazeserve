@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+# Ensure consistent diffs
+*.py diff=python
+*.md diff=markdown
+*.yml diff=yaml
+*.toml diff=toml
+LICENSE text eol=lf
