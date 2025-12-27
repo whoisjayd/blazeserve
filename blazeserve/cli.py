@@ -16,6 +16,8 @@ try:
 except Exception:
     import click  # type: ignore
 
+import contextlib
+
 from rich import box
 from rich.panel import Panel
 from rich.table import Table
@@ -41,7 +43,7 @@ def _lan_ip() -> str:
 
 
 @click.group(
-    context_settings=dict(help_option_names=["-h", "--help"]),
+    context_settings={"help_option_names": ["-h", "--help"]},
     invoke_without_command=False,
 )
 @click.version_option(version=__version__, prog_name="blaze")
@@ -202,10 +204,8 @@ def serve_cmd(
         soft_wrap=True,
     )
     if open_browser:
-        try:
+        with contextlib.suppress(Exception):
             webbrowser.open(f"{scheme}://localhost:{port}/")
-        except Exception:
-            pass
     try:
         run_server(
             host=host,
@@ -517,7 +517,6 @@ def main():
                         sys.stderr.write(f"Skip (not a file): {p}\n")
                         rc = 2
                         continue
-                    print(f"{sha256_file(ap)}  {p}")
                 sys.exit(rc)
         except SystemExit:
             raise

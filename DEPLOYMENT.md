@@ -97,10 +97,10 @@ WORKDIR /data
 EXPOSE 8000
 
 # Run server
-CMD ["blaze", "serve", ".", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--chunk-mb", "256", \
+CMD ["blaze", "serve", ".",
+     "--host", "0.0.0.0",
+     "--port", "8000",
+     "--chunk-mb", "256",
      "--sock-sndbuf-mb", "128"]
 ```
 
