@@ -1,11 +1,11 @@
 import os
-import sys
 import socket
+import sys
 import webbrowser
 from typing import Optional
 
 try:
-    import rich_click as click
+    import rich_click as click  # type: ignore[import-not-found]
 
     click.rich_click.SHOW_ARGUMENTS = True
     click.rich_click.USE_MARKDOWN = True
@@ -16,14 +16,16 @@ try:
 except Exception:
     import click  # type: ignore
 
-from rich.table import Table
-from rich.panel import Panel
-from rich import box
+import contextlib
 
-from .logging import setup_logging, get_console
-from .server import build_arg_parser, run_server
-from .utils import sha256_file, human_size
+from rich import box
+from rich.panel import Panel
+from rich.table import Table
+
 from . import __version__
+from .logging import get_console, setup_logging
+from .server import build_arg_parser, run_server
+from .utils import human_size, sha256_file
 
 console = get_console()
 
@@ -33,7 +35,7 @@ def _lan_ip() -> str:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.05)
         s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
+        ip: str = s.getsockname()[0]
         s.close()
         return ip
     except Exception:
@@ -41,7 +43,7 @@ def _lan_ip() -> str:
 
 
 @click.group(
-    context_settings=dict(help_option_names=["-h", "--help"]),
+    context_settings={"help_option_names": ["-h", "--help"]},
     invoke_without_command=False,
 )
 @click.version_option(version=__version__, prog_name="blaze")
@@ -61,9 +63,7 @@ def cli() -> None:
     show_default=True,
     help="Bind address (IPv4/IPv6 literal ok).",
 )
-@click.option(
-    "-p", "--port", type=int, default=8000, show_default=True, help="Port to listen on."
-)
+@click.option("-p", "--port", type=int, default=8000, show_default=True, help="Port to listen on.")
 @click.option(
     "--single",
     type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str),
@@ -73,14 +73,14 @@ def cli() -> None:
 @click.option(
     "--chunk-mb",
     type=click.IntRange(4, 4096),
-    default=128,
+    default=256,
     show_default=True,
     help="mmap/read window size.",
 )
 @click.option(
     "--sock-sndbuf-mb",
     type=click.IntRange(1, 2048),
-    default=64,
+    default=128,
     show_default=True,
     help="SO_SNDBUF size.",
 )
@@ -97,12 +97,8 @@ def cli() -> None:
     default=None,
     help="Throttle to MB/s (omit for unlimited).",
 )
-@click.option(
-    "--auth", metavar="USER:PASS", envvar=None, help="Enable HTTP Basic Auth."
-)
-@click.option(
-    "--auth-env", metavar="ENVVAR", help="Load USER:PASS from environment variable."
-)
+@click.option("--auth", metavar="USER:PASS", envvar=None, help="Enable HTTP Basic Auth.")
+@click.option("--auth-env", metavar="ENVVAR", help="Load USER:PASS from environment variable.")
 @click.option(
     "--tls-cert",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
@@ -114,17 +110,13 @@ def cli() -> None:
     help="TLS private key (PEM).",
 )
 @click.option("--cors/--no-cors", default=False, show_default=True, help="Enable CORS.")
-@click.option(
-    "--cors-origin", default="*", show_default=True, help="CORS allow origin."
-)
+@click.option("--cors-origin", default="*", show_default=True, help="CORS allow origin.")
 @click.option("--no-cache", is_flag=True, help="Disable HTTP caching.")
-@click.option(
-    "--index", multiple=True, help="Additional index filenames to try (repeatable)."
-)
+@click.option("--index", multiple=True, help="Additional index filenames to try (repeatable).")
 @click.option(
     "--backlog",
     type=click.IntRange(1, 20000),
-    default=4096,
+    default=8192,
     show_default=True,
     help="Listen backlog size.",
 )
@@ -141,9 +133,7 @@ def cli() -> None:
     show_default=True,
     help="Max upload size (0 = unlimited).",
 )
-@click.option(
-    "--open", "open_browser", is_flag=True, help="Open the URL in a browser on start."
-)
+@click.option("--open", "open_browser", is_flag=True, help="Open the URL in a browser on start.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose startup banner.")
 def serve_cmd(
     path: str,
@@ -193,14 +183,29 @@ def serve_cmd(
     table.add_row("Serving", single or base)
     table.add_row("Local", f"[green]{scheme}://localhost:{port}/[/]")
     table.add_row("Network", f"[green]{scheme}://{lan}:{port}/[/]")
+
+    # Add performance info if verbose
+    if verbose:
+        table.add_row("", "")  # Spacer
+        table.add_row("Send Buffer", f"{sock_sndbuf_mb} MB")
+        table.add_row("Chunk Size", f"{chunk_mb} MB")
+        table.add_row("Backlog", str(backlog))
+        if rate_mbps:
+            table.add_row("Rate Limit", f"{rate_mbps} MB/s")
+        table.add_row("Metrics", f"{scheme}://{lan}:{port}/__perf__")
+
     console.print(
-        Panel(table, title="[bold magenta]BlazeServe", box=box.ROUNDED), soft_wrap=True
+        Panel(
+            table,
+            title=f"[bold magenta]⚡ BlazeServe v{__version__}[/]",
+            subtitle="Press Ctrl+C to stop",
+            box=box.ROUNDED,
+        ),
+        soft_wrap=True,
     )
     if open_browser:
-        try:
+        with contextlib.suppress(Exception):
             webbrowser.open(f"{scheme}://localhost:{port}/")
-        except Exception:
-            pass
     try:
         run_server(
             host=host,
@@ -229,9 +234,7 @@ def serve_cmd(
 
 
 @cli.command("send", short_help="Quick share a single file.")
-@click.argument(
-    "file", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str)
-)
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str))
 @click.option("--host", default="0.0.0.0", show_default=True)
 @click.option("-p", "--port", type=int, default=8000, show_default=True)
 @click.option("--rate-mbps", type=click.FloatRange(min=0.1), default=None)
@@ -242,13 +245,9 @@ def serve_cmd(
 @click.option("--cors/--no-cors", default=False, show_default=True)
 @click.option("--cors-origin", default="*", show_default=True)
 @click.option("--no-cache", is_flag=True)
-@click.option(
-    "--backlog", type=click.IntRange(1, 20000), default=4096, show_default=True
-)
+@click.option("--backlog", type=click.IntRange(1, 20000), default=8192, show_default=True)
 @click.option("--precompress/--no-precompress", default=True, show_default=True)
-@click.option(
-    "--max-upload-mb", type=click.IntRange(0, 1024 * 1024), default=0, show_default=True
-)
+@click.option("--max-upload-mb", type=click.IntRange(0, 1024 * 1024), default=0, show_default=True)
 def send_cmd(
     file: str,
     host: str,
@@ -284,8 +283,8 @@ def send_cmd(
             base=base,
             single=ap,
             listing=False,
-            chunk_mb=128,
-            sndbuf_mb=64,
+            chunk_mb=256,
+            sndbuf_mb=128,
             timeout=1800,
             rate_mbps=rate_mbps,
             auth=auth,
@@ -305,9 +304,7 @@ def send_cmd(
 
 
 @cli.command("checksum", short_help="SHA256 for files.")
-@click.argument(
-    "files", nargs=-1, type=click.Path(exists=True, dir_okay=False, path_type=str)
-)
+@click.argument("files", nargs=-1, type=click.Path(exists=True, dir_okay=False, path_type=str))
 def checksum_cmd(files):
     if not files:
         raise click.ClickException("Provide at least one file.")
@@ -325,9 +322,119 @@ def checksum_cmd(files):
     console.print(tbl)
 
 
-@cli.command("version", short_help="Show version.")
+@cli.command("version", short_help="Show version and system info.")
 def version_cmd():
-    console.print(f"[bold]BlazeServe[/] {__version__}")
+    """Display version and system information."""
+    import platform
+    import sys
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    # Create info table
+    info_table = Table.grid(padding=(0, 2))
+    info_table.add_column(style="bold cyan")
+    info_table.add_column(style="white")
+
+    info_table.add_row("Version", __version__)
+    info_table.add_row(
+        "Python", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+    info_table.add_row("Platform", platform.system())
+    info_table.add_row("Architecture", platform.machine())
+
+    console.print(
+        Panel(
+            info_table,
+            title="[bold magenta]⚡ BlazeServe[/]",
+            subtitle="Ultra-fast HTTP file server",
+            box=box.ROUNDED,
+        )
+    )
+
+
+@cli.command("benchmark", short_help="Run performance benchmark.")
+@click.option(
+    "--url",
+    default="http://localhost:8000",
+    show_default=True,
+    help="Server URL to benchmark.",
+)
+@click.option(
+    "--size-mb",
+    type=click.IntRange(1, 1000),
+    default=100,
+    show_default=True,
+    help="Size of test download in MB.",
+)
+def benchmark_cmd(url: str, size_mb: int):
+    """Run a speed benchmark against a BlazeServe server."""
+    import time
+    import urllib.request
+
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TransferSpeedColumn,
+    )
+
+    test_url = f"{url}/__speed__?bytes={size_mb * 1024 * 1024}"
+
+    console.print(f"[cyan]Benchmarking:[/] {url}")
+    console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
+
+    # Warn for very large benchmarks
+    if size_mb > 500:
+        console.print(
+            f"[yellow]⚠ Warning:[/] Large benchmark size ({size_mb} MB) "
+            f"may impact server performance\n"
+        )
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("[cyan]Downloading...", total=size_mb * 1024 * 1024)
+
+            start_time = time.time()
+            downloaded = 0
+
+            with urllib.request.urlopen(test_url) as response:
+                chunk_size = 1024 * 1024  # 1MB chunks
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    progress.update(task, advance=len(chunk))
+
+            elapsed = time.time() - start_time
+
+        # Display results
+        speed_mbps = (downloaded / (1024 * 1024)) / elapsed
+
+        result_table = Table(show_header=False, box=box.SIMPLE)
+        result_table.add_column(style="bold cyan")
+        result_table.add_column(style="bold green")
+
+        result_table.add_row("Downloaded", f"{downloaded / (1024 * 1024):.2f} MB")
+        result_table.add_row("Time", f"{elapsed:.2f} seconds")
+        result_table.add_row("Speed", f"{speed_mbps:.2f} MB/s")
+
+        console.print("\n[bold green]✓ Benchmark Complete[/]\n")
+        console.print(result_table)
+
+    except Exception as e:
+        console.print(f"[bold red]✗ Benchmark failed:[/] {e}")
+        raise click.Abort() from e
 
 
 def main():
@@ -336,6 +443,7 @@ def main():
         "send",
         "checksum",
         "version",
+        "benchmark",
         "-h",
         "--help",
         "--version",
@@ -357,8 +465,8 @@ def main():
                     base=base,
                     single=getattr(args, "single", None),
                     listing=not getattr(args, "no_listing", False),
-                    chunk_mb=getattr(args, "chunk_mb", 128),
-                    sndbuf_mb=getattr(args, "sock_sndbuf_mb", 64),
+                    chunk_mb=getattr(args, "chunk_mb", 256),
+                    sndbuf_mb=getattr(args, "sock_sndbuf_mb", 128),
                     timeout=getattr(args, "timeout", 1800),
                     rate_mbps=getattr(args, "rate_mbps", None),
                     auth=getattr(args, "auth", None),
@@ -368,7 +476,7 @@ def main():
                     cors_origin="*",
                     no_cache=False,
                     index=None,
-                    backlog=4096,
+                    backlog=8192,
                     precompress=True,
                     max_upload_mb=0,
                     verbose=False,
@@ -384,8 +492,8 @@ def main():
                     base=base,
                     single=ap,
                     listing=False,
-                    chunk_mb=128,
-                    sndbuf_mb=64,
+                    chunk_mb=256,
+                    sndbuf_mb=128,
                     timeout=1800,
                     rate_mbps=args.rate_mbps,
                     auth=args.auth,
@@ -395,7 +503,7 @@ def main():
                     cors_origin="*",
                     no_cache=False,
                     index=None,
-                    backlog=4096,
+                    backlog=8192,
                     precompress=True,
                     max_upload_mb=0,
                     verbose=False,
@@ -409,10 +517,9 @@ def main():
                         sys.stderr.write(f"Skip (not a file): {p}\n")
                         rc = 2
                         continue
-                    print(f"{sha256_file(ap)}  {p}")
                 sys.exit(rc)
         except SystemExit:
             raise
         except Exception as e:
-            raise click.ClickException(str(e))
+            raise click.ClickException(str(e)) from e
     cli()

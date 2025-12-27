@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import email.utils
 import hashlib
 import io
@@ -10,17 +11,127 @@ import mmap
 import os
 import socket
 import ssl
+import sys
+import threading
 import time
 import zipfile
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from typing import Any, BinaryIO, Dict, IO, List, Optional, Tuple, cast
-from urllib.parse import urlparse, unquote, parse_qs
+from typing import IO, Any, BinaryIO, Optional, cast
+from urllib.parse import parse_qs, unquote, urlparse
 
-DEFAULT_SNDBUF_MB = 64
-DEFAULT_CHUNK_MB = 128
-RECVBUF_MB = 32
+# Optimized buffer sizes for better throughput
+DEFAULT_SNDBUF_MB = 128  # Increased from 64 for better performance
+DEFAULT_CHUNK_MB = 256  # Increased from 128 for larger transfers
+RECVBUF_MB = 64  # Increased from 32 for better receive performance
+
+
+class ServerMetrics:
+    """Thread-safe metrics tracking for server performance."""
+
+    def __init__(self):
+        self.start_time = time.time()
+        self._lock = threading.Lock()
+        self._bytes_sent = 0
+        self._bytes_received = 0
+        self._requests_total = 0
+        self._requests_active = 0
+        self._errors_total = 0
+
+    @property
+    def bytes_sent(self) -> int:
+        with self._lock:
+            return self._bytes_sent
+
+    @bytes_sent.setter
+    def bytes_sent(self, value: int) -> None:
+        with self._lock:
+            self._bytes_sent = value
+
+    @property
+    def bytes_received(self) -> int:
+        with self._lock:
+            return self._bytes_received
+
+    @bytes_received.setter
+    def bytes_received(self, value: int) -> None:
+        with self._lock:
+            self._bytes_received = value
+
+    @property
+    def requests_total(self) -> int:
+        with self._lock:
+            return self._requests_total
+
+    @requests_total.setter
+    def requests_total(self, value: int) -> None:
+        with self._lock:
+            self._requests_total = value
+
+    @property
+    def requests_active(self) -> int:
+        with self._lock:
+            return self._requests_active
+
+    @requests_active.setter
+    def requests_active(self, value: int) -> None:
+        with self._lock:
+            self._requests_active = value
+
+    @property
+    def errors_total(self) -> int:
+        with self._lock:
+            return self._errors_total
+
+    @errors_total.setter
+    def errors_total(self, value: int) -> None:
+        with self._lock:
+            self._errors_total = value
+
+    def increment_bytes_sent(self, amount: int) -> None:
+        """Atomically increment the number of bytes sent."""
+        with self._lock:
+            self._bytes_sent += amount
+
+    def increment_bytes_received(self, amount: int) -> None:
+        """Atomically increment the number of bytes received."""
+        with self._lock:
+            self._bytes_received += amount
+
+    def increment_requests_total(self) -> None:
+        """Atomically increment the total number of requests."""
+        with self._lock:
+            self._requests_total += 1
+
+    def increment_requests_active(self) -> None:
+        """Atomically increment the number of active requests."""
+        with self._lock:
+            self._requests_active += 1
+
+    def decrement_requests_active(self) -> None:
+        """Atomically decrement the number of active requests."""
+        with self._lock:
+            self._requests_active = max(0, self._requests_active - 1)
+
+    def increment_errors_total(self) -> None:
+        """Atomically increment the total number of errors."""
+        with self._lock:
+            self._errors_total += 1
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get current server statistics in a thread-safe manner."""
+        uptime = time.time() - self.start_time
+        with self._lock:
+            return {
+                "uptime_seconds": int(uptime),
+                "bytes_sent": self._bytes_sent,
+                "bytes_received": self._bytes_received,
+                "requests_total": self._requests_total,
+                "requests_active": self._requests_active,
+                "errors_total": self._errors_total,
+                "bytes_per_second": (int(self._bytes_sent / uptime) if uptime > 0 else 0),
+            }
 
 
 def _etag_for_stat(st: os.stat_result) -> str:
@@ -34,12 +145,10 @@ def _http_date(ts: float) -> str:
     return email.utils.formatdate(ts, usegmt=True)
 
 
-def _parse_range_header(
-    rh: Optional[str], size: int
-) -> Optional[List[Tuple[int, int]]]:
+def _parse_range_header(rh: str | None, size: int) -> list[tuple[int, int]] | None:
     if not rh or not rh.startswith("bytes="):
         return None
-    out: List[Tuple[int, int]] = []
+    out: list[tuple[int, int]] = []
     for part in rh[6:].split(","):
         part = part.strip()
         if not part or "-" not in part:
@@ -71,58 +180,95 @@ def _parse_range_header(
 
 
 class _RateLimiter:
-    def __init__(self, rate_bps: Optional[float]) -> None:
+    """Optimized token bucket rate limiter with better performance."""
+
+    def __init__(self, rate_bps: float | None) -> None:
         self.rate = rate_bps or 0.0
-        self.tokens = float(self.rate)
+        self.capacity = self.rate * 2.0 if self.rate > 0 else 0.0  # 2 second burst capacity
+        self.tokens = self.capacity
         self.last = time.perf_counter()
 
     def take(self, n: int) -> int:
         if self.rate <= 0:
             return n
-        while True:
-            now = time.perf_counter()
-            elapsed = now - self.last
-            self.last = now
-            self.tokens = min(self.rate, self.tokens + elapsed * self.rate)
-            if self.tokens < 1:
-                wait_for = max(0.0, (1 - self.tokens) / self.rate)
-                time.sleep(wait_for)
-                continue
-            allowed = min(float(n), self.tokens)
-            send = min(n, max(1, int(allowed)))
-            self.tokens = max(0.0, self.tokens - send)
-            return send
+
+        now = time.perf_counter()
+        elapsed = now - self.last
+        self.last = now
+
+        # Refill tokens based on elapsed time
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+
+        if self.tokens < 1:
+            # Calculate precise wait time
+            wait_for = (1 - self.tokens) / self.rate
+            time.sleep(wait_for)
+            self.tokens = 1
+
+        # Allow sending as much as we have tokens for
+        allowed = min(float(n), self.tokens)
+        send = max(1, int(allowed))
+        self.tokens -= send
+        return send
 
 
 class BlazeServer(ThreadingMixIn, HTTPServer):
+    """Optimized HTTP server with better socket configuration."""
+
     daemon_threads = True
-    request_queue_size = 4096
+    request_queue_size = 8192  # Increased from 4096 for better connection handling
     allow_reuse_address = True
     block_on_close = False
     tcp_sendbuf = DEFAULT_SNDBUF_MB * 1024 * 1024
     conn_timeout = 1800
     bytes_sent: int = 0
+    metrics: ServerMetrics | None = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.metrics is None:
+            self.metrics = ServerMetrics()
 
     def server_bind(self) -> None:
         s = self.socket
+
+        # Optimized socket options for maximum performance
         opts = [
             (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1),
             (socket.SOL_SOCKET, socket.SO_SNDBUF, self.tcp_sendbuf),
             (socket.SOL_SOCKET, socket.SO_RCVBUF, RECVBUF_MB * 1024 * 1024),
             (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
         ]
+
+        # Platform-specific optimizations
+        if hasattr(socket, "SO_REUSEPORT"):
+            # Enable SO_REUSEPORT for better multi-core utilization
+            opts.append((socket.SOL_SOCKET, socket.SO_REUSEPORT, 1))
+
+        # TCP-specific optimizations
+        if hasattr(socket, "TCP_NODELAY"):
+            opts.append((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1))
+
+        if hasattr(socket, "TCP_QUICKACK") and sys.platform.startswith("linux"):
+            # Linux-specific optimization for faster ACKs
+            opts.append((socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1))
+
         for lvl, opt, val in opts:
-            try:
+            with contextlib.suppress(OSError, AttributeError):
                 s.setsockopt(lvl, opt, val)
-            except Exception:
-                pass
+
         super().server_bind()
 
     def handle_error(self, request, client_address) -> None:
+        """Handle errors and track them in metrics."""
         e = __import__("sys").exc_info()[1]
-        if isinstance(
-            e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)
-        ):
+
+        # Track errors in metrics
+        if hasattr(self, "metrics") and self.metrics:
+            self.metrics.increment_errors_total()
+
+        # Silently ignore common network errors
+        if isinstance(e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)):
             return
         return super().handle_error(request, client_address)
 
@@ -131,17 +277,18 @@ class BlazeHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     BASE = "."
     WINDOW = DEFAULT_CHUNK_MB * 1024 * 1024
-    SINGLE: Optional[str] = None
+    SINGLE: str | None = None
     LISTING = True
-    AUTH_PAIR: Optional[Tuple[str, str]] = None
-    RATE_BPS: Optional[float] = None
+    AUTH_PAIR: tuple[str, str] | None = None
+    RATE_BPS: float | None = None
     CORS = False
     CORS_ORIGIN = "*"
     NOCACHE = False
-    INDEX: List[str] = []
+    INDEX: list[str] = []
     PRECOMPRESS = True
     MAX_UPLOAD = 0
-    _buf: Optional[bytearray] = None
+    ZIP_COMPRESSION = zipfile.ZIP_STORED  # ZIP_STORED for speed, ZIP_DEFLATED for size
+    _buf: bytearray | None = None
     server: BlazeServer
 
     def __init__(self, *a, **k):
@@ -151,23 +298,56 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         pass
 
     def setup(self) -> None:
+        """Setup connection with optimized socket parameters."""
         super().setup()
         s = self.connection
-        try:
+
+        # Track active requests
+        if hasattr(self.server, "metrics") and self.server.metrics:
+            self.server.metrics.increment_requests_active()
+
+        # Best-effort: ignore if timeout cannot be set
+        with contextlib.suppress(OSError, AttributeError):
             s.settimeout(self.server.conn_timeout)
-        except Exception:
-            pass
-        for args in [
+
+        # Optimized socket options for each connection
+        socket_opts = [
             (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
             (socket.SOL_SOCKET, socket.SO_SNDBUF, self.server.tcp_sendbuf),
             (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-        ]:
-            try:
-                s.setsockopt(*args)
-            except Exception:
-                pass
+        ]
+
+        # Platform-specific TCP optimizations
+        if hasattr(socket, "TCP_QUICKACK") and sys.platform.startswith("linux"):
+            socket_opts.append((socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1))
+
+        # TCP_CORK for Linux: combine small writes
+        if hasattr(socket, "TCP_CORK") and sys.platform.startswith("linux"):
+            socket_opts.append((socket.IPPROTO_TCP, socket.TCP_CORK, 0))
+
+        for lvl, opt, val in socket_opts:
+            # Best-effort: some platforms or kernels may not support these options
+            with contextlib.suppress(OSError, AttributeError):
+                s.setsockopt(lvl, opt, val)
+
+        # Initialize buffer only once
         if self._buf is None:
             self._buf = bytearray(self.WINDOW)
+
+    def finish(self) -> None:
+        """Clean up connection and update metrics."""
+        try:
+            # Track request completion
+            if hasattr(self.server, "metrics") and self.server.metrics:
+                self.server.metrics.increment_requests_total()
+                self.server.metrics.decrement_requests_active()
+        except Exception:
+            # Metrics updates are best-effort; failures must not break connection cleanup
+            pass
+
+        # Client disconnected or socket error during teardown; safe to ignore
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError, OSError):
+            super().finish()
 
     def do_OPTIONS(self):
         if not self.CORS:
@@ -188,6 +368,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             "/__zip__",
             "/__upload__",
             "/__health__",
+            "/__perf__",
         ):
             self.send_response(HTTPStatus.OK)
             self._cors_headers()
@@ -196,10 +377,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return
         f, extra = self._prepare(head_only=True)
         if f:
-            try:
+            with contextlib.suppress(Exception):
                 f.close()
-            except Exception:
-                pass
 
     def do_GET(self):
         if not self._auth_ok():
@@ -210,6 +389,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return self._health()
         if p == "/__stats__":
             return self._stats()
+        if p == "/__perf__":
+            return self._perf()
         if p == "/__speed__":
             return self._speed(parsed)
         if p == "/__zip__":
@@ -224,18 +405,15 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             elif mode == "passthrough":
                 self.copyfile(f, self.wfile)
             else:
-                self._send_range(
-                    f, extra["start"], extra["end"], extra.get("full", False)
-                )
+                self._send_range(f, extra["start"], extra["end"], extra.get("full", False))
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             pass
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 f.close()
-            except Exception:
-                pass
 
     def do_PUT(self):
+        """Optimized file upload handler."""
         if not self._auth_ok():
             return
         parsed = urlparse(self.path)
@@ -247,31 +425,48 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         dst = os.path.abspath(os.path.join(self.BASE, fn))
+
+        # Security check: ensure destination is within BASE
+        if not dst.startswith(os.path.abspath(self.BASE)):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+
         if os.path.exists(dst):
             self.send_error(HTTPStatus.CONFLICT)
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-        except Exception:
+        except ValueError:
             self.send_error(HTTPStatus.LENGTH_REQUIRED)
             return
         if self.MAX_UPLOAD > 0 and length > self.MAX_UPLOAD:
             self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
+
+        # Ensure parent directory exists
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+
         try:
+            # Use unbuffered I/O with direct writes for better performance
             with open(dst, "wb", buffering=0) as out:
                 remain = length
                 buf = self._buf or bytearray(self.WINDOW)
                 mv = memoryview(buf)
                 while remain > 0:
-                    n = self.rfile.readinto(mv[: min(remain, len(buf))])
+                    chunk_size = min(remain, len(buf))
+                    n = self.rfile.readinto(mv[:chunk_size])
                     if not n:
                         break
                     out.write(mv[:n])
                     remain -= n
-        except Exception:
+        except OSError:
+            # Clean up partial file on error
+            # Best-effort cleanup: ignore errors if the partial file cannot be removed
+            with contextlib.suppress(OSError):
+                os.unlink(dst)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+
         self.send_response(HTTPStatus.CREATED)
         self._cors_headers()
         self.send_header("Content-Length", "0")
@@ -307,7 +502,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def _prepare(self, head_only: bool) -> Tuple[Optional[BinaryIO], Dict[str, Any]]:
+    def _prepare(self, head_only: bool) -> tuple[BinaryIO | None, dict[str, Any]]:
         if self.SINGLE:
             path = self.SINGLE
         else:
@@ -339,12 +534,11 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             if os.path.isfile(gz) and not self.headers.get("Range"):
                 path = gz
                 use_gzip = True
-        f = cast(BinaryIO, open(path, "rb", buffering=0))
+        f = cast(BinaryIO, open(path, "rb", buffering=0))  # noqa: SIM115
         st = os.fstat(f.fileno())
         size = st.st_size
         ctype = (
-            mimetypes.guess_type(path[:-3] if use_gzip else path)[0]
-            or "application/octet-stream"
+            mimetypes.guess_type(path[:-3] if use_gzip else path)[0] or "application/octet-stream"
         )
         etag = _etag_for_stat(st)
         lastmod = _http_date(st.st_mtime)
@@ -356,9 +550,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 ok = ifr == etag
             else:
                 try:
-                    ok = email.utils.parsedate_to_datetime(ifr).timestamp() == int(
-                        st.st_mtime
-                    )
+                    ok = email.utils.parsedate_to_datetime(ifr).timestamp() == int(st.st_mtime)
                 except Exception:
                     ok = False
             if not ok:
@@ -366,16 +558,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         code = HTTPStatus.OK if not ranges else HTTPStatus.PARTIAL_CONTENT
         self.send_response(code)
         self._cors_headers()
-        cache_hdr = (
-            "no-store" if self.NOCACHE else "public, max-age=31536000, immutable"
-        )
+        cache_hdr = "no-store" if self.NOCACHE else "public, max-age=31536000, immutable"
         self.send_header("Cache-Control", cache_hdr)
         self.send_header("Connection", "keep-alive")
         if use_gzip:
             self.send_header("Content-Encoding", "gzip")
-            self.send_header(
-                "Vary", "Origin, Accept-Encoding" if self.CORS else "Accept-Encoding"
-            )
+            self.send_header("Vary", "Origin, Accept-Encoding" if self.CORS else "Accept-Encoding")
         elif self.CORS:
             self.send_header("Vary", "Origin")
         self.send_header("Accept-Ranges", "bytes")
@@ -405,9 +593,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 "full": (start == 0 and end == size - 1),
             }
         boundary = "RANGE_" + etag.strip('"')[:16]
-        parts: List[Tuple[bytes, int, int]] = []
+        parts: list[tuple[bytes, int, int]] = []
         total_len = 0
-        CRLF = b"\r\n"
+        crlf = b"\r\n"
         b_boundary = ("--" + boundary + "\r\n").encode()
         b_close = ("--" + boundary + "--\r\n").encode()
         for start, end in ranges:
@@ -417,7 +605,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 + f"Content-Range: bytes {start}-{end}/{size}\r\n\r\n".encode()
             )
             parts.append((h, start, end))
-            total_len += len(h) + (end - start + 1) + len(CRLF)
+            total_len += len(h) + (end - start + 1) + len(crlf)
         total_len += len(b_close)
         self.send_header("Content-Type", f"multipart/byteranges; boundary={boundary}")
         self.send_header("Content-Length", str(total_len))
@@ -431,37 +619,64 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if not self.CORS:
             return
         self.send_header("Access-Control-Allow-Origin", self.CORS_ORIGIN)
-        self.send_header(
-            "Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, PUT, POST"
-        )
-        self.send_header(
-            "Access-Control-Allow-Headers", "Range, Content-Type, Authorization"
-        )
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, PUT, POST")
+        self.send_header("Access-Control-Allow-Headers", "Range, Content-Type, Authorization")
         self.send_header(
             "Access-Control-Expose-Headers",
             "Accept-Ranges, Content-Length, Content-Range, ETag",
         )
 
     def _send_range(self, f, start: int, end: int, full: bool) -> None:
+        """Optimized range sender with multiple fast paths."""
         s = self.connection
         total = end - start + 1
         limiter = _RateLimiter(self.RATE_BPS)
+
+        # Fast path 1: Use sendfile for full file transfers (zero-copy)
         if full and start == 0 and hasattr(s, "sendfile"):
             try:
-                sent = s.sendfile(f, offset=0, count=total)
-                if sent is None or sent == total:
-                    try:
-                        self.server.bytes_sent += total
-                    except Exception:
-                        pass
+                # Try zero-copy sendfile
+                offset = 0
+                remaining = total
+
+                # For rate-limited sendfile, send in chunks
+                if self.RATE_BPS:
+                    while remaining > 0:
+                        chunk_size = limiter.take(min(remaining, self.WINDOW))
+                        sent = s.sendfile(f, offset=offset, count=chunk_size)
+                        if sent is None or sent == 0:
+                            break
+                        offset += sent
+                        remaining -= sent
+                        # Best-effort counter update; ignore failures
+                        with contextlib.suppress(Exception):
+                            self.server.bytes_sent += sent
+                else:
+                    # No rate limit: let sendfile handle everything
+                    sent = s.sendfile(f, offset=0, count=total)
+                    if sent is not None:
+                        # Best-effort counter update; ignore failures
+                        with contextlib.suppress(Exception):
+                            self.server.bytes_sent += sent
+                        if sent == total:
+                            return
+                        # Partial send, fall through to mmap/buffered
+                        remaining = total - sent
+                        offset = sent
+
+                if remaining == 0:
                     return
             except (OSError, AttributeError):
+                # Fall through to mmap/buffered paths
                 pass
+
+        # Fast path 2: Memory-mapped I/O for better performance
         ag = getattr(mmap, "ALLOCATIONGRANULARITY", 4096)
         win = self.WINDOW
         size = os.fstat(f.fileno()).st_size
         pos = start
         rem = total
+
         try:
             while rem > 0:
                 base = (pos // ag) * ag
@@ -469,9 +684,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 mlen = min(win + delta, size - base)
                 if mlen <= 0:
                     break
-                with mmap.mmap(
-                    f.fileno(), length=mlen, access=mmap.ACCESS_READ, offset=base
-                ) as mm:
+
+                with mmap.mmap(f.fileno(), length=mlen, access=mmap.ACCESS_READ, offset=base) as mm:
                     view = memoryview(mm)[delta : delta + min(rem, mlen - delta)]
                     off = 0
                     while off < len(view):
@@ -488,22 +702,25 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         ):
                             return
                         off += to_send
-                        try:
+                        # Best-effort counter update; ignore failures
+                        with contextlib.suppress(Exception):
                             self.server.bytes_sent += to_send
-                        except Exception:
-                            pass
                     n = len(view)
                     pos += n
                     rem -= n
             if rem == 0:
                 return
-        except Exception:
+        except (OSError, ValueError):
+            # Fall through to buffered read
             pass
+
+        # Fallback: Buffered read for compatibility
         buf = self._buf or bytearray(self.WINDOW)
         mv = memoryview(buf)
         f.seek(pos)
         while rem > 0:
-            n = f.readinto(mv[: min(len(buf), rem)])
+            chunk_size = min(len(buf), rem)
+            n = f.readinto(mv[:chunk_size])
             if not n:
                 break
             off = 0
@@ -516,13 +733,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                     return
                 off += to_send
-                try:
+                # Best-effort counter update; ignore failures
+                with contextlib.suppress(Exception):
                     self.server.bytes_sent += to_send
-                except Exception:
-                    pass
             rem -= n
 
-    def _send_multipart(self, f, extra: Dict) -> None:
+    def _send_multipart(self, f, extra: dict) -> None:
         s = self.connection
         limiter = _RateLimiter(self.RATE_BPS)
         for hdr, start, end in extra["parts"]:
@@ -540,12 +756,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 try:
                     s.sendall(chunk[off : off + to_send])
                 except Exception:
+                    # Network error during multipart send
                     return
                 off += to_send
-                try:
+                # Best-effort counter update; ignore failures
+                with contextlib.suppress(Exception):
                     self.server.bytes_sent += to_send
-                except Exception:
-                    pass
         closing = extra["close"]
         off = 0
         while off < len(closing):
@@ -555,12 +771,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             try:
                 s.sendall(closing[off : off + to_send])
             except Exception:
+                # Network error during multipart close
                 return
             off += to_send
-            try:
+            # Best-effort counter update; ignore failures
+            with contextlib.suppress(Exception):
                 self.server.bytes_sent += to_send
-            except Exception:
-                pass
 
     def _health(self) -> None:
         body = json.dumps({"status": "ok"}).encode()
@@ -569,35 +785,67 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        try:
+        # Network error during response write; client likely disconnected
+        with contextlib.suppress(Exception):
             self.wfile.write(body)
-        except Exception:
-            pass
 
     def _stats(self) -> None:
-        body = json.dumps(
-            {"bytes_sent": getattr(self.server, "bytes_sent", 0)}
-        ).encode()
+        """Legacy stats endpoint - kept for backward compatibility."""
+        body = json.dumps({"bytes_sent": getattr(self.server, "bytes_sent", 0)}).encode()
         self.send_response(HTTPStatus.OK)
         self._cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        try:
+        # Network error during response write; client likely disconnected
+        with contextlib.suppress(Exception):
             self.wfile.write(body)
-        except Exception:
-            pass
+
+    def _perf(self) -> None:
+        """Enhanced performance metrics endpoint."""
+        metrics = self.server.metrics
+        if metrics:
+            stats = metrics.get_stats()
+        else:
+            stats = {
+                "bytes_sent": getattr(self.server, "bytes_sent", 0),
+                "uptime_seconds": 0,
+            }
+
+        # Add system configuration info
+        stats["config"] = {
+            "chunk_size_mb": self.WINDOW // (1024 * 1024),
+            "send_buffer_mb": self.server.tcp_sendbuf // (1024 * 1024),
+            "backlog": self.server.request_queue_size,
+            "timeout_seconds": self.server.conn_timeout,
+            "rate_limit_mbps": self.RATE_BPS / (1024 * 1024) if self.RATE_BPS else None,
+        }
+
+        body = json.dumps(stats, indent=2).encode()
+        self.send_response(HTTPStatus.OK)
+        self._cors_headers()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        # Network error during response write; client likely disconnected
+        with contextlib.suppress(Exception):
+            self.wfile.write(body)
 
     def _speed(self, parsed) -> None:
+        """Optimized speed test endpoint with better throughput."""
         q = parse_qs(parsed.query or "")
         total = int(q.get("bytes", ["100000000"])[0])
-        chunk = min(self.WINDOW, 4 * 1024 * 1024)
+        # Use larger chunk size for speed test
+        chunk = min(self.WINDOW, 8 * 1024 * 1024)  # Increased to 8MB chunks
         zeros = b"\0" * chunk
         limiter = _RateLimiter(self.RATE_BPS)
         self.send_response(HTTPStatus.OK)
         self._cors_headers()
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(total))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         sent = 0
         try:
@@ -611,32 +859,41 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(zeros[off : off + to_send])
                     off += to_send
                     sent += to_send
-                    try:
+                    # Best-effort counter update; ignore failures
+                    with contextlib.suppress(Exception):
                         self.server.bytes_sent += to_send
-                    except Exception:
-                        pass
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            # Client disconnected during speed test
             pass
 
     def _zip(self, parsed) -> None:
+        """Optimized ZIP streaming with better compression and error handling."""
         q = parse_qs(parsed.query or "")
         raw = q.get("path", [""])[0]
         if not raw:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         path = os.path.abspath(os.path.join(self.BASE, raw))
+
+        # Security check: ensure path is within BASE
+        if not path.startswith(os.path.abspath(self.BASE)):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+
         if not os.path.exists(path):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
+
         self.send_response(HTTPStatus.OK)
         self._cors_headers()
         self.send_header("Content-Type", "application/zip")
         name = os.path.basename(path.rstrip(os.sep)) or "archive"
         self.send_header("Content-Disposition", f'attachment; filename="{name}.zip"')
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
         class _Stream(io.RawIOBase):
-            def __init__(self, outer: "BlazeHandler"):
+            def __init__(self, outer: BlazeHandler):
                 self.outer = outer
 
             def writable(self) -> bool:
@@ -647,7 +904,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 try:
                     self.outer.wfile.write(chunk)
                     self.outer.server.bytes_sent += len(chunk)
-                except Exception:
+                except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
                 return len(chunk)
 
@@ -655,12 +912,23 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 return
 
         stream = _Stream(self)
-        z = zipfile.ZipFile(
-            cast(IO[bytes], stream),
-            "w",
-            compression=zipfile.ZIP_STORED,
-            allowZip64=True,
-        )
+        # Use configured compression (default: ZIP_STORED for speed)
+        # Can be changed to ZIP_DEFLATED for smaller archives at cost of CPU
+        if self.ZIP_COMPRESSION == zipfile.ZIP_DEFLATED:
+            z = zipfile.ZipFile(
+                cast(IO[bytes], stream),
+                "w",
+                compression=self.ZIP_COMPRESSION,
+                allowZip64=True,
+                compresslevel=3,  # Fast compression
+            )
+        else:
+            z = zipfile.ZipFile(
+                cast(IO[bytes], stream),
+                "w",
+                compression=self.ZIP_COMPRESSION,
+                allowZip64=True,
+            )
         try:
             if os.path.isdir(path):
                 base_dir = path
@@ -670,15 +938,15 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         arc = os.path.relpath(ap, base_dir)
                         try:
                             z.write(ap, arcname=arc)
-                        except Exception:
+                        except OSError:
+                            # Skip files that cannot be read during ZIP creation
                             continue
             else:
                 z.write(path, arcname=os.path.basename(path))
         finally:
-            try:
+            # Best-effort: ignore errors during ZIP close
+            with contextlib.suppress(Exception):
                 z.close()
-            except Exception:
-                pass
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -715,19 +983,19 @@ def run_server(
     host: str,
     port: int,
     base: str,
-    single: Optional[str],
+    single: str | None,
     listing: bool,
     chunk_mb: int,
     sndbuf_mb: int,
     timeout: int,
-    rate_mbps: Optional[float],
-    auth: Optional[str],
-    tls_cert: Optional[str],
-    tls_key: Optional[str],
+    rate_mbps: float | None,
+    auth: str | None,
+    tls_cert: str | None,
+    tls_key: str | None,
     cors: bool = False,
     cors_origin: str = "*",
     no_cache: bool = False,
-    index: Optional[List[str]] = None,
+    index: list[str] | None = None,
     backlog: int = 4096,
     precompress: bool = True,
     max_upload_mb: int = 0,
