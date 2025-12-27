@@ -26,6 +26,31 @@ DEFAULT_CHUNK_MB = 256  # Increased from 128 for larger transfers
 RECVBUF_MB = 64  # Increased from 32 for better receive performance
 
 
+class ServerMetrics:
+    """Thread-safe metrics tracking for server performance."""
+
+    def __init__(self):
+        self.start_time = time.time()
+        self.bytes_sent = 0
+        self.bytes_received = 0
+        self.requests_total = 0
+        self.requests_active = 0
+        self.errors_total = 0
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current server statistics."""
+        uptime = time.time() - self.start_time
+        return {
+            "uptime_seconds": int(uptime),
+            "bytes_sent": self.bytes_sent,
+            "bytes_received": self.bytes_received,
+            "requests_total": self.requests_total,
+            "requests_active": self.requests_active,
+            "errors_total": self.errors_total,
+            "bytes_per_second": int(self.bytes_sent / uptime) if uptime > 0 else 0,
+        }
+
+
 def _etag_for_stat(st: os.stat_result) -> str:
     h = hashlib.sha1()
     h.update(str(st.st_size).encode())
@@ -118,10 +143,16 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
     tcp_sendbuf = DEFAULT_SNDBUF_MB * 1024 * 1024
     conn_timeout = 1800
     bytes_sent: int = 0
+    metrics: Optional[ServerMetrics] = None
 
     # Thread pool for better resource management
     _thread_pool: Optional[ThreadPoolExecutor] = None
     max_workers = 100  # Configurable thread pool size
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.metrics is None:
+            self.metrics = ServerMetrics()
 
     def server_bind(self) -> None:
         s = self.socket
@@ -241,6 +272,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             "/__zip__",
             "/__upload__",
             "/__health__",
+            "/__perf__",
         ):
             self.send_response(HTTPStatus.OK)
             self._cors_headers()
@@ -263,6 +295,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return self._health()
         if p == "/__stats__":
             return self._stats()
+        if p == "/__perf__":
+            return self._perf()
         if p == "/__speed__":
             return self._speed(parsed)
         if p == "/__zip__":
@@ -677,6 +711,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             pass
 
     def _stats(self) -> None:
+        """Legacy stats endpoint - kept for backward compatibility."""
         body = json.dumps(
             {"bytes_sent": getattr(self.server, "bytes_sent", 0)}
         ).encode()
@@ -684,6 +719,39 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self._cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _perf(self) -> None:
+        """Enhanced performance metrics endpoint."""
+        metrics = self.server.metrics
+        if metrics:
+            stats = metrics.get_stats()
+        else:
+            stats = {
+                "bytes_sent": getattr(self.server, "bytes_sent", 0),
+                "uptime_seconds": 0,
+            }
+
+        # Add system configuration info
+        stats["config"] = {
+            "chunk_size_mb": self.WINDOW // (1024 * 1024),
+            "send_buffer_mb": self.server.tcp_sendbuf // (1024 * 1024),
+            "backlog": self.server.request_queue_size,
+            "timeout_seconds": self.server.conn_timeout,
+            "rate_limit_mbps": self.RATE_BPS / (1024 * 1024) if self.RATE_BPS else None,
+        }
+
+        body = json.dumps(stats, indent=2).encode()
+        self.send_response(HTTPStatus.OK)
+        self._cors_headers()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
             self.wfile.write(body)
