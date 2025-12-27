@@ -11,6 +11,7 @@ import os
 import socket
 import ssl
 import sys
+import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -31,24 +32,78 @@ class ServerMetrics:
 
     def __init__(self):
         self.start_time = time.time()
-        self.bytes_sent = 0
-        self.bytes_received = 0
-        self.requests_total = 0
-        self.requests_active = 0
-        self.errors_total = 0
+        self._lock = threading.Lock()
+        self._bytes_sent = 0
+        self._bytes_received = 0
+        self._requests_total = 0
+        self._requests_active = 0
+        self._errors_total = 0
+
+    @property
+    def bytes_sent(self) -> int:
+        with self._lock:
+            return self._bytes_sent
+
+    @bytes_sent.setter
+    def bytes_sent(self, value: int) -> None:
+        with self._lock:
+            self._bytes_sent = value
+
+    @property
+    def bytes_received(self) -> int:
+        with self._lock:
+            return self._bytes_received
+
+    @bytes_received.setter
+    def bytes_received(self, value: int) -> None:
+        with self._lock:
+            self._bytes_received = value
+
+    @property
+    def requests_total(self) -> int:
+        with self._lock:
+            return self._requests_total
+
+    @requests_total.setter
+    def requests_total(self, value: int) -> None:
+        with self._lock:
+            self._requests_total = value
+
+    @property
+    def requests_active(self) -> int:
+        with self._lock:
+            return self._requests_active
+
+    @requests_active.setter
+    def requests_active(self, value: int) -> None:
+        with self._lock:
+            self._requests_active = value
+
+    @property
+    def errors_total(self) -> int:
+        with self._lock:
+            return self._errors_total
+
+    @errors_total.setter
+    def errors_total(self, value: int) -> None:
+        with self._lock:
+            self._errors_total = value
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get current server statistics."""
+        """Get current server statistics in a thread-safe manner."""
         uptime = time.time() - self.start_time
-        return {
-            "uptime_seconds": int(uptime),
-            "bytes_sent": self.bytes_sent,
-            "bytes_received": self.bytes_received,
-            "requests_total": self.requests_total,
-            "requests_active": self.requests_active,
-            "errors_total": self.errors_total,
-            "bytes_per_second": int(self.bytes_sent / uptime) if uptime > 0 else 0,
-        }
+        with self._lock:
+            return {
+                "uptime_seconds": int(uptime),
+                "bytes_sent": self._bytes_sent,
+                "bytes_received": self._bytes_received,
+                "requests_total": self._requests_total,
+                "requests_active": self._requests_active,
+                "errors_total": self._errors_total,
+                "bytes_per_second": (
+                    int(self._bytes_sent / uptime) if uptime > 0 else 0
+                ),
+            }
 
 
 def _etag_for_stat(st: os.stat_result) -> str:
@@ -216,6 +271,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
     INDEX: List[str] = []
     PRECOMPRESS = True
     MAX_UPLOAD = 0
+    ZIP_COMPRESSION = zipfile.ZIP_STORED  # ZIP_STORED for speed, ZIP_DEFLATED for size
     _buf: Optional[bytearray] = None
     server: BlazeServer
 
@@ -374,7 +430,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-        except (ValueError, TypeError):
+        except ValueError:
             self.send_error(HTTPStatus.LENGTH_REQUIRED)
             return
         if self.MAX_UPLOAD > 0 and length > self.MAX_UPLOAD:
@@ -588,25 +644,33 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 # Try zero-copy sendfile
                 offset = 0
                 remaining = total
-                while remaining > 0:
-                    if self.RATE_BPS:
+
+                # For rate-limited sendfile, send in chunks
+                if self.RATE_BPS:
+                    while remaining > 0:
                         chunk_size = limiter.take(min(remaining, self.WINDOW))
-                    else:
-                        chunk_size = remaining
-
-                    sent = s.sendfile(f, offset=offset, count=chunk_size)
-                    if sent is None or sent == 0:
-                        break
-
-                    offset += sent
-                    remaining -= sent
-                    try:
-                        self.server.bytes_sent += sent
-                    except Exception:
-                        pass
-
-                    if not self.RATE_BPS:
-                        break  # sendfile handles it all if no rate limit
+                        sent = s.sendfile(f, offset=offset, count=chunk_size)
+                        if sent is None or sent == 0:
+                            break
+                        offset += sent
+                        remaining -= sent
+                        try:
+                            self.server.bytes_sent += sent
+                        except Exception:
+                            pass
+                else:
+                    # No rate limit: let sendfile handle everything
+                    sent = s.sendfile(f, offset=0, count=total)
+                    if sent is not None:
+                        try:
+                            self.server.bytes_sent += sent
+                        except Exception:
+                            pass
+                        if sent == total:
+                            return
+                        # Partial send, fall through to mmap/buffered
+                        remaining = total - sent
+                        offset = sent
 
                 if remaining == 0:
                     return
@@ -865,13 +929,17 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 return
 
         stream = _Stream(self)
-        # Use DEFLATE compression for better compression ratios
+        # Use configured compression (default: ZIP_STORED for speed)
+        # Can be changed to ZIP_DEFLATED for smaller archives at cost of CPU
+        compression_params = {"allowZip64": True}
+        if self.ZIP_COMPRESSION == zipfile.ZIP_DEFLATED:
+            compression_params["compresslevel"] = 3  # Fast compression
+
         z = zipfile.ZipFile(
             cast(IO[bytes], stream),
             "w",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=6,  # Balance between speed and compression
-            allowZip64=True,
+            compression=self.ZIP_COMPRESSION,
+            **compression_params,
         )
         try:
             if os.path.isdir(path):

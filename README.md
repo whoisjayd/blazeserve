@@ -103,7 +103,7 @@ blaze version                 Show version.
 - `GET /__stats__` -> `{"bytes_sent": <int>}` (legacy endpoint)
 - `GET /__perf__` -> enhanced performance metrics with config and throughput stats
 - `GET /__speed__?bytes=104857600` -> streams zeros for client speed testing
-- `GET /__zip__?path=relative/or/absolute/path` -> streams a ZIP (DEFLATE compressed)
+- `GET /__zip__?path=relative/or/absolute/path` -> streams a ZIP (uncompressed for speed)
 - `PUT|POST /__upload__/path/to/file` -> saves request body to disk (requires Content-Length)
 
 ## Examples
@@ -198,7 +198,7 @@ This returns detailed statistics including:
 - If `--no-cache` is set, responses use `Cache-Control: no-store`.
 - Precompressed `.gz` files are served only for non-range requests to keep range semantics correct.
 - In single-file mode, listing is disabled and the fast path is favored.
-- ZIP downloads use DEFLATE compression (level 6) for a good balance of speed and size.
+- ZIP downloads use uncompressed storage (ZIP_STORED) for maximum speed by default.
 
 ## Systemd
 
