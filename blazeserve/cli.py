@@ -386,6 +386,13 @@ def benchmark_cmd(url: str, size_mb: int):
     console.print(f"[cyan]Benchmarking:[/] {url}")
     console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
 
+    # Warn for very large benchmarks
+    if size_mb > 500:
+        console.print(
+            f"[yellow]⚠ Warning:[/] Large benchmark size ({size_mb} MB) "
+            f"may impact server performance\n"
+        )
+
     try:
         with Progress(
             SpinnerColumn(),
