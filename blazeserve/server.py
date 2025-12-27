@@ -16,10 +16,10 @@ import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from typing import Any, BinaryIO, Dict, IO, List, Optional, Tuple, cast
-from urllib.parse import urlparse, unquote, parse_qs
+from typing import IO, Any, BinaryIO, Dict, List, Optional, Tuple, cast
+from urllib.parse import parse_qs, unquote, urlparse
 
 # Optimized buffer sizes for better throughput
 DEFAULT_SNDBUF_MB = 128  # Increased from 64 for better performance
@@ -100,9 +100,7 @@ class ServerMetrics:
                 "requests_total": self._requests_total,
                 "requests_active": self._requests_active,
                 "errors_total": self._errors_total,
-                "bytes_per_second": (
-                    int(self._bytes_sent / uptime) if uptime > 0 else 0
-                ),
+                "bytes_per_second": (int(self._bytes_sent / uptime) if uptime > 0 else 0),
             }
 
 
@@ -117,9 +115,7 @@ def _http_date(ts: float) -> str:
     return email.utils.formatdate(ts, usegmt=True)
 
 
-def _parse_range_header(
-    rh: Optional[str], size: int
-) -> Optional[List[Tuple[int, int]]]:
+def _parse_range_header(rh: Optional[str], size: int) -> Optional[List[Tuple[int, int]]]:
     if not rh or not rh.startswith("bytes="):
         return None
     out: List[Tuple[int, int]] = []
@@ -158,9 +154,7 @@ class _RateLimiter:
 
     def __init__(self, rate_bps: Optional[float]) -> None:
         self.rate = rate_bps or 0.0
-        self.capacity = (
-            self.rate * 2.0 if self.rate > 0 else 0.0
-        )  # 2 second burst capacity
+        self.capacity = self.rate * 2.0 if self.rate > 0 else 0.0  # 2 second burst capacity
         self.tokens = self.capacity
         self.last = time.perf_counter()
 
@@ -250,9 +244,7 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
             self.metrics.errors_total += 1
 
         # Silently ignore common network errors
-        if isinstance(
-            e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)
-        ):
+        if isinstance(e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)):
             return
         return super().handle_error(request, client_address)
 
@@ -395,9 +387,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             elif mode == "passthrough":
                 self.copyfile(f, self.wfile)
             else:
-                self._send_range(
-                    f, extra["start"], extra["end"], extra.get("full", False)
-                )
+                self._send_range(f, extra["start"], extra["end"], extra.get("full", False))
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             pass
         finally:
@@ -453,7 +443,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         break
                     out.write(mv[:n])
                     remain -= n
-        except (OSError, IOError):
+        except OSError:
             # Clean up partial file on error
             try:
                 os.unlink(dst)
@@ -533,8 +523,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         st = os.fstat(f.fileno())
         size = st.st_size
         ctype = (
-            mimetypes.guess_type(path[:-3] if use_gzip else path)[0]
-            or "application/octet-stream"
+            mimetypes.guess_type(path[:-3] if use_gzip else path)[0] or "application/octet-stream"
         )
         etag = _etag_for_stat(st)
         lastmod = _http_date(st.st_mtime)
@@ -546,9 +535,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 ok = ifr == etag
             else:
                 try:
-                    ok = email.utils.parsedate_to_datetime(ifr).timestamp() == int(
-                        st.st_mtime
-                    )
+                    ok = email.utils.parsedate_to_datetime(ifr).timestamp() == int(st.st_mtime)
                 except Exception:
                     ok = False
             if not ok:
@@ -556,16 +543,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         code = HTTPStatus.OK if not ranges else HTTPStatus.PARTIAL_CONTENT
         self.send_response(code)
         self._cors_headers()
-        cache_hdr = (
-            "no-store" if self.NOCACHE else "public, max-age=31536000, immutable"
-        )
+        cache_hdr = "no-store" if self.NOCACHE else "public, max-age=31536000, immutable"
         self.send_header("Cache-Control", cache_hdr)
         self.send_header("Connection", "keep-alive")
         if use_gzip:
             self.send_header("Content-Encoding", "gzip")
-            self.send_header(
-                "Vary", "Origin, Accept-Encoding" if self.CORS else "Accept-Encoding"
-            )
+            self.send_header("Vary", "Origin, Accept-Encoding" if self.CORS else "Accept-Encoding")
         elif self.CORS:
             self.send_header("Vary", "Origin")
         self.send_header("Accept-Ranges", "bytes")
@@ -621,12 +604,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if not self.CORS:
             return
         self.send_header("Access-Control-Allow-Origin", self.CORS_ORIGIN)
-        self.send_header(
-            "Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, PUT, POST"
-        )
-        self.send_header(
-            "Access-Control-Allow-Headers", "Range, Content-Type, Authorization"
-        )
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, PUT, POST")
+        self.send_header("Access-Control-Allow-Headers", "Range, Content-Type, Authorization")
         self.send_header(
             "Access-Control-Expose-Headers",
             "Accept-Ranges, Content-Length, Content-Range, ETag",
@@ -693,9 +672,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 if mlen <= 0:
                     break
 
-                with mmap.mmap(
-                    f.fileno(), length=mlen, access=mmap.ACCESS_READ, offset=base
-                ) as mm:
+                with mmap.mmap(f.fileno(), length=mlen, access=mmap.ACCESS_READ, offset=base) as mm:
                     view = memoryview(mm)[delta : delta + min(rem, mlen - delta)]
                     off = 0
                     while off < len(view):
@@ -804,9 +781,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
 
     def _stats(self) -> None:
         """Legacy stats endpoint - kept for backward compatibility."""
-        body = json.dumps(
-            {"bytes_sent": getattr(self.server, "bytes_sent", 0)}
-        ).encode()
+        body = json.dumps({"bytes_sent": getattr(self.server, "bytes_sent", 0)}).encode()
         self.send_response(HTTPStatus.OK)
         self._cors_headers()
         self.send_header("Content-Type", "application/json")
@@ -910,7 +885,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
         class _Stream(io.RawIOBase):
-            def __init__(self, outer: "BlazeHandler"):
+            def __init__(self, outer: BlazeHandler):
                 self.outer = outer
 
             def writable(self) -> bool:
@@ -950,7 +925,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         arc = os.path.relpath(ap, base_dir)
                         try:
                             z.write(ap, arcname=arc)
-                        except (OSError, IOError):
+                        except OSError:
                             continue
             else:
                 z.write(path, arcname=os.path.basename(path))

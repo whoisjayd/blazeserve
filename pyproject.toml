@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blazeserve"
-version = "0.1.0"
-description = "Fast, dependable HTTP file server for sharing files and folders — supports byte-range/multi-range downloads, TLS, Basic Auth, throttling, uploads, streaming ZIP, CORS, and a polished CLI."
+version = "0.2.0"
+description = "⚡ Ultra-fast HTTP file server with advanced performance optimizations, real-time metrics, and production-ready architecture — supports byte-range/multi-range downloads, TLS, Basic Auth, throttling, uploads, streaming ZIP, CORS, and a polished CLI."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -51,3 +51,26 @@ Issues = "https://github.com/whoisjayd/blazeserve/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["blazeserve*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20", "SIM"]
+ignore = ["E501"]  # Line too long (handled by formatter)
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
