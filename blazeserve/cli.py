@@ -5,7 +5,7 @@ import webbrowser
 from typing import Optional
 
 try:
-    import rich_click as click
+    import rich_click as click  # type: ignore[import-not-found]
 
     click.rich_click.SHOW_ARGUMENTS = True
     click.rich_click.USE_MARKDOWN = True
@@ -35,7 +35,7 @@ def _lan_ip() -> str:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.05)
         s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
+        ip: str = s.getsockname()[0]
         s.close()
         return ip
     except Exception:

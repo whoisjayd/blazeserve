@@ -534,7 +534,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             if os.path.isfile(gz) and not self.headers.get("Range"):
                 path = gz
                 use_gzip = True
-        f = cast(BinaryIO, open(path, "rb", buffering=0))
+        f = cast(BinaryIO, open(path, "rb", buffering=0))  # noqa: SIM115
         st = os.fstat(f.fileno())
         size = st.st_size
         ctype = (
@@ -595,7 +595,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         boundary = "RANGE_" + etag.strip('"')[:16]
         parts: list[tuple[bytes, int, int]] = []
         total_len = 0
-        CRLF = b"\r\n"
+        crlf = b"\r\n"
         b_boundary = ("--" + boundary + "\r\n").encode()
         b_close = ("--" + boundary + "--\r\n").encode()
         for start, end in ranges:
@@ -605,7 +605,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 + f"Content-Range: bytes {start}-{end}/{size}\r\n\r\n".encode()
             )
             parts.append((h, start, end))
-            total_len += len(h) + (end - start + 1) + len(CRLF)
+            total_len += len(h) + (end - start + 1) + len(crlf)
         total_len += len(b_close)
         self.send_header("Content-Type", f"multipart/byteranges; boundary={boundary}")
         self.send_header("Content-Length", str(total_len))
@@ -914,16 +914,21 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         stream = _Stream(self)
         # Use configured compression (default: ZIP_STORED for speed)
         # Can be changed to ZIP_DEFLATED for smaller archives at cost of CPU
-        compression_params = {"allowZip64": True}
         if self.ZIP_COMPRESSION == zipfile.ZIP_DEFLATED:
-            compression_params["compresslevel"] = 3  # Fast compression
-
-        z = zipfile.ZipFile(
-            cast(IO[bytes], stream),
-            "w",
-            compression=self.ZIP_COMPRESSION,
-            **compression_params,
-        )
+            z = zipfile.ZipFile(
+                cast(IO[bytes], stream),
+                "w",
+                compression=self.ZIP_COMPRESSION,
+                allowZip64=True,
+                compresslevel=3,  # Fast compression
+            )
+        else:
+            z = zipfile.ZipFile(
+                cast(IO[bytes], stream),
+                "w",
+                compression=self.ZIP_COMPRESSION,
+                allowZip64=True,
+            )
         try:
             if os.path.isdir(path):
                 base_dir = path
