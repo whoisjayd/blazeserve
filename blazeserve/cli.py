@@ -434,7 +434,7 @@ def benchmark_cmd(url: str, size_mb: int):
 
     except Exception as e:
         console.print(f"[bold red]✗ Benchmark failed:[/] {e}")
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 def main():
@@ -521,5 +521,5 @@ def main():
         except SystemExit:
             raise
         except Exception as e:
-            raise click.ClickException(str(e))
+            raise click.ClickException(str(e)) from e
     cli()

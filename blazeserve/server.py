@@ -306,11 +306,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if hasattr(self.server, "metrics") and self.server.metrics:
             self.server.metrics.increment_requests_active()
 
-        try:
+        # Best-effort: ignore if timeout cannot be set
+        with contextlib.suppress(OSError, AttributeError):
             s.settimeout(self.server.conn_timeout)
-        except (OSError, AttributeError):
-            # Best-effort: ignore if timeout cannot be set
-            pass
 
         # Optimized socket options for each connection
         socket_opts = [
@@ -328,11 +326,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             socket_opts.append((socket.IPPROTO_TCP, socket.TCP_CORK, 0))
 
         for lvl, opt, val in socket_opts:
-            try:
+            # Best-effort: some platforms or kernels may not support these options
+            with contextlib.suppress(OSError, AttributeError):
                 s.setsockopt(lvl, opt, val)
-            except (OSError, AttributeError):
-                # Best-effort: some platforms or kernels may not support these options
-                pass
 
         # Initialize buffer only once
         if self._buf is None:
@@ -349,11 +345,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             # Metrics updates are best-effort; failures must not break connection cleanup
             pass
 
-        try:
+        # Client disconnected or socket error during teardown; safe to ignore
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError, OSError):
             super().finish()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            # Client disconnected or socket error during teardown; safe to ignore
-            pass
 
     def do_OPTIONS(self):
         if not self.CORS:
@@ -467,11 +461,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     remain -= n
         except OSError:
             # Clean up partial file on error
-            try:
+            # Best-effort cleanup: ignore errors if the partial file cannot be removed
+            with contextlib.suppress(OSError):
                 os.unlink(dst)
-            except OSError:
-                # Best-effort cleanup: ignore errors if the partial file cannot be removed
-                pass
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
@@ -656,20 +648,16 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                             break
                         offset += sent
                         remaining -= sent
-                        try:
+                        # Best-effort counter update; ignore failures
+                        with contextlib.suppress(Exception):
                             self.server.bytes_sent += sent
-                        except Exception:
-                            # Best-effort counter update; ignore failures
-                            pass
                 else:
                     # No rate limit: let sendfile handle everything
                     sent = s.sendfile(f, offset=0, count=total)
                     if sent is not None:
-                        try:
+                        # Best-effort counter update; ignore failures
+                        with contextlib.suppress(Exception):
                             self.server.bytes_sent += sent
-                        except Exception:
-                            # Best-effort counter update; ignore failures
-                            pass
                         if sent == total:
                             return
                         # Partial send, fall through to mmap/buffered
@@ -714,11 +702,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         ):
                             return
                         off += to_send
-                        try:
+                        # Best-effort counter update; ignore failures
+                        with contextlib.suppress(Exception):
                             self.server.bytes_sent += to_send
-                        except Exception:
-                            # Best-effort counter update; ignore failures
-                            pass
                     n = len(view)
                     pos += n
                     rem -= n
@@ -747,11 +733,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                     return
                 off += to_send
-                try:
+                # Best-effort counter update; ignore failures
+                with contextlib.suppress(Exception):
                     self.server.bytes_sent += to_send
-                except Exception:
-                    # Best-effort counter update; ignore failures
-                    pass
             rem -= n
 
     def _send_multipart(self, f, extra: dict) -> None:
@@ -775,11 +759,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     # Network error during multipart send
                     return
                 off += to_send
-                try:
+                # Best-effort counter update; ignore failures
+                with contextlib.suppress(Exception):
                     self.server.bytes_sent += to_send
-                except Exception:
-                    # Best-effort counter update; ignore failures
-                    pass
         closing = extra["close"]
         off = 0
         while off < len(closing):
@@ -792,11 +774,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 # Network error during multipart close
                 return
             off += to_send
-            try:
+            # Best-effort counter update; ignore failures
+            with contextlib.suppress(Exception):
                 self.server.bytes_sent += to_send
-            except Exception:
-                # Best-effort counter update; ignore failures
-                pass
 
     def _health(self) -> None:
         body = json.dumps({"status": "ok"}).encode()
@@ -805,11 +785,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        try:
+        # Network error during response write; client likely disconnected
+        with contextlib.suppress(Exception):
             self.wfile.write(body)
-        except Exception:
-            # Network error during response write; client likely disconnected
-            pass
 
     def _stats(self) -> None:
         """Legacy stats endpoint - kept for backward compatibility."""
@@ -820,11 +798,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        try:
+        # Network error during response write; client likely disconnected
+        with contextlib.suppress(Exception):
             self.wfile.write(body)
-        except Exception:
-            # Network error during response write; client likely disconnected
-            pass
 
     def _perf(self) -> None:
         """Enhanced performance metrics endpoint."""
@@ -853,11 +829,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        try:
+        # Network error during response write; client likely disconnected
+        with contextlib.suppress(Exception):
             self.wfile.write(body)
-        except Exception:
-            # Network error during response write; client likely disconnected
-            pass
 
     def _speed(self, parsed) -> None:
         """Optimized speed test endpoint with better throughput."""
@@ -885,11 +859,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(zeros[off : off + to_send])
                     off += to_send
                     sent += to_send
-                    try:
+                    # Best-effort counter update; ignore failures
+                    with contextlib.suppress(Exception):
                         self.server.bytes_sent += to_send
-                    except Exception:
-                        # Best-effort counter update; ignore failures
-                        pass
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             # Client disconnected during speed test
             pass
@@ -967,11 +939,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             else:
                 z.write(path, arcname=os.path.basename(path))
         finally:
-            try:
+            # Best-effort: ignore errors during ZIP close
+            with contextlib.suppress(Exception):
                 z.close()
-            except Exception:
-                # Best-effort: ignore errors during ZIP close
-                pass
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
