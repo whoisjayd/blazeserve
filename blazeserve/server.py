@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import email.utils
 import hashlib
 import io
@@ -14,11 +15,10 @@ import sys
 import threading
 import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from typing import IO, Any, BinaryIO, Dict, List, Optional, Tuple, cast
+from typing import IO, Any, BinaryIO, Optional, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 # Optimized buffer sizes for better throughput
@@ -89,7 +89,37 @@ class ServerMetrics:
         with self._lock:
             self._errors_total = value
 
-    def get_stats(self) -> Dict[str, Any]:
+    def increment_bytes_sent(self, amount: int) -> None:
+        """Atomically increment the number of bytes sent."""
+        with self._lock:
+            self._bytes_sent += amount
+
+    def increment_bytes_received(self, amount: int) -> None:
+        """Atomically increment the number of bytes received."""
+        with self._lock:
+            self._bytes_received += amount
+
+    def increment_requests_total(self) -> None:
+        """Atomically increment the total number of requests."""
+        with self._lock:
+            self._requests_total += 1
+
+    def increment_requests_active(self) -> None:
+        """Atomically increment the number of active requests."""
+        with self._lock:
+            self._requests_active += 1
+
+    def decrement_requests_active(self) -> None:
+        """Atomically decrement the number of active requests."""
+        with self._lock:
+            self._requests_active = max(0, self._requests_active - 1)
+
+    def increment_errors_total(self) -> None:
+        """Atomically increment the total number of errors."""
+        with self._lock:
+            self._errors_total += 1
+
+    def get_stats(self) -> dict[str, Any]:
         """Get current server statistics in a thread-safe manner."""
         uptime = time.time() - self.start_time
         with self._lock:
@@ -115,10 +145,10 @@ def _http_date(ts: float) -> str:
     return email.utils.formatdate(ts, usegmt=True)
 
 
-def _parse_range_header(rh: Optional[str], size: int) -> Optional[List[Tuple[int, int]]]:
+def _parse_range_header(rh: str | None, size: int) -> list[tuple[int, int]] | None:
     if not rh or not rh.startswith("bytes="):
         return None
-    out: List[Tuple[int, int]] = []
+    out: list[tuple[int, int]] = []
     for part in rh[6:].split(","):
         part = part.strip()
         if not part or "-" not in part:
@@ -152,7 +182,7 @@ def _parse_range_header(rh: Optional[str], size: int) -> Optional[List[Tuple[int
 class _RateLimiter:
     """Optimized token bucket rate limiter with better performance."""
 
-    def __init__(self, rate_bps: Optional[float]) -> None:
+    def __init__(self, rate_bps: float | None) -> None:
         self.rate = rate_bps or 0.0
         self.capacity = self.rate * 2.0 if self.rate > 0 else 0.0  # 2 second burst capacity
         self.tokens = self.capacity
@@ -192,11 +222,7 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
     tcp_sendbuf = DEFAULT_SNDBUF_MB * 1024 * 1024
     conn_timeout = 1800
     bytes_sent: int = 0
-    metrics: Optional[ServerMetrics] = None
-
-    # Thread pool for better resource management
-    _thread_pool: Optional[ThreadPoolExecutor] = None
-    max_workers = 100  # Configurable thread pool size
+    metrics: ServerMetrics | None = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -228,10 +254,8 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
             opts.append((socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1))
 
         for lvl, opt, val in opts:
-            try:
+            with contextlib.suppress(OSError, AttributeError):
                 s.setsockopt(lvl, opt, val)
-            except (OSError, AttributeError):
-                pass
 
         super().server_bind()
 
@@ -241,7 +265,7 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
 
         # Track errors in metrics
         if hasattr(self, "metrics") and self.metrics:
-            self.metrics.errors_total += 1
+            self.metrics.increment_errors_total()
 
         # Silently ignore common network errors
         if isinstance(e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)):
@@ -253,18 +277,18 @@ class BlazeHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     BASE = "."
     WINDOW = DEFAULT_CHUNK_MB * 1024 * 1024
-    SINGLE: Optional[str] = None
+    SINGLE: str | None = None
     LISTING = True
-    AUTH_PAIR: Optional[Tuple[str, str]] = None
-    RATE_BPS: Optional[float] = None
+    AUTH_PAIR: tuple[str, str] | None = None
+    RATE_BPS: float | None = None
     CORS = False
     CORS_ORIGIN = "*"
     NOCACHE = False
-    INDEX: List[str] = []
+    INDEX: list[str] = []
     PRECOMPRESS = True
     MAX_UPLOAD = 0
     ZIP_COMPRESSION = zipfile.ZIP_STORED  # ZIP_STORED for speed, ZIP_DEFLATED for size
-    _buf: Optional[bytearray] = None
+    _buf: bytearray | None = None
     server: BlazeServer
 
     def __init__(self, *a, **k):
@@ -280,11 +304,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
 
         # Track active requests
         if hasattr(self.server, "metrics") and self.server.metrics:
-            self.server.metrics.requests_active += 1
+            self.server.metrics.increment_requests_active()
 
         try:
             s.settimeout(self.server.conn_timeout)
         except (OSError, AttributeError):
+            # Best-effort: ignore if timeout cannot be set
             pass
 
         # Optimized socket options for each connection
@@ -306,6 +331,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             try:
                 s.setsockopt(lvl, opt, val)
             except (OSError, AttributeError):
+                # Best-effort: some platforms or kernels may not support these options
                 pass
 
         # Initialize buffer only once
@@ -317,16 +343,16 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         try:
             # Track request completion
             if hasattr(self.server, "metrics") and self.server.metrics:
-                self.server.metrics.requests_total += 1
-                self.server.metrics.requests_active = max(
-                    0, self.server.metrics.requests_active - 1
-                )
+                self.server.metrics.increment_requests_total()
+                self.server.metrics.decrement_requests_active()
         except Exception:
+            # Metrics updates are best-effort; failures must not break connection cleanup
             pass
 
         try:
             super().finish()
         except (BrokenPipeError, ConnectionResetError, OSError):
+            # Client disconnected or socket error during teardown; safe to ignore
             pass
 
     def do_OPTIONS(self):
@@ -357,10 +383,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return
         f, extra = self._prepare(head_only=True)
         if f:
-            try:
+            with contextlib.suppress(Exception):
                 f.close()
-            except Exception:
-                pass
 
     def do_GET(self):
         if not self._auth_ok():
@@ -391,10 +415,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             pass
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 f.close()
-            except Exception:
-                pass
 
     def do_PUT(self):
         """Optimized file upload handler."""
@@ -448,6 +470,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             try:
                 os.unlink(dst)
             except OSError:
+                # Best-effort cleanup: ignore errors if the partial file cannot be removed
                 pass
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
             return
@@ -487,7 +510,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def _prepare(self, head_only: bool) -> Tuple[Optional[BinaryIO], Dict[str, Any]]:
+    def _prepare(self, head_only: bool) -> tuple[BinaryIO | None, dict[str, Any]]:
         if self.SINGLE:
             path = self.SINGLE
         else:
@@ -578,7 +601,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 "full": (start == 0 and end == size - 1),
             }
         boundary = "RANGE_" + etag.strip('"')[:16]
-        parts: List[Tuple[bytes, int, int]] = []
+        parts: list[tuple[bytes, int, int]] = []
         total_len = 0
         CRLF = b"\r\n"
         b_boundary = ("--" + boundary + "\r\n").encode()
@@ -636,6 +659,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         try:
                             self.server.bytes_sent += sent
                         except Exception:
+                            # Best-effort counter update; ignore failures
                             pass
                 else:
                     # No rate limit: let sendfile handle everything
@@ -644,6 +668,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         try:
                             self.server.bytes_sent += sent
                         except Exception:
+                            # Best-effort counter update; ignore failures
                             pass
                         if sent == total:
                             return
@@ -692,6 +717,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         try:
                             self.server.bytes_sent += to_send
                         except Exception:
+                            # Best-effort counter update; ignore failures
                             pass
                     n = len(view)
                     pos += n
@@ -724,10 +750,11 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 try:
                     self.server.bytes_sent += to_send
                 except Exception:
+                    # Best-effort counter update; ignore failures
                     pass
             rem -= n
 
-    def _send_multipart(self, f, extra: Dict) -> None:
+    def _send_multipart(self, f, extra: dict) -> None:
         s = self.connection
         limiter = _RateLimiter(self.RATE_BPS)
         for hdr, start, end in extra["parts"]:
@@ -745,11 +772,13 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 try:
                     s.sendall(chunk[off : off + to_send])
                 except Exception:
+                    # Network error during multipart send
                     return
                 off += to_send
                 try:
                     self.server.bytes_sent += to_send
                 except Exception:
+                    # Best-effort counter update; ignore failures
                     pass
         closing = extra["close"]
         off = 0
@@ -760,11 +789,13 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             try:
                 s.sendall(closing[off : off + to_send])
             except Exception:
+                # Network error during multipart close
                 return
             off += to_send
             try:
                 self.server.bytes_sent += to_send
             except Exception:
+                # Best-effort counter update; ignore failures
                 pass
 
     def _health(self) -> None:
@@ -777,6 +808,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(body)
         except Exception:
+            # Network error during response write; client likely disconnected
             pass
 
     def _stats(self) -> None:
@@ -791,6 +823,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(body)
         except Exception:
+            # Network error during response write; client likely disconnected
             pass
 
     def _perf(self) -> None:
@@ -823,6 +856,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(body)
         except Exception:
+            # Network error during response write; client likely disconnected
             pass
 
     def _speed(self, parsed) -> None:
@@ -854,8 +888,10 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     try:
                         self.server.bytes_sent += to_send
                     except Exception:
+                        # Best-effort counter update; ignore failures
                         pass
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            # Client disconnected during speed test
             pass
 
     def _zip(self, parsed) -> None:
@@ -926,6 +962,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         try:
                             z.write(ap, arcname=arc)
                         except OSError:
+                            # Skip files that cannot be read during ZIP creation
                             continue
             else:
                 z.write(path, arcname=os.path.basename(path))
@@ -933,6 +970,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             try:
                 z.close()
             except Exception:
+                # Best-effort: ignore errors during ZIP close
                 pass
 
 
@@ -970,19 +1008,19 @@ def run_server(
     host: str,
     port: int,
     base: str,
-    single: Optional[str],
+    single: str | None,
     listing: bool,
     chunk_mb: int,
     sndbuf_mb: int,
     timeout: int,
-    rate_mbps: Optional[float],
-    auth: Optional[str],
-    tls_cert: Optional[str],
-    tls_key: Optional[str],
+    rate_mbps: float | None,
+    auth: str | None,
+    tls_cert: str | None,
+    tls_key: str | None,
     cors: bool = False,
     cors_origin: str = "*",
     no_cache: bool = False,
-    index: Optional[List[str]] = None,
+    index: list[str] | None = None,
     backlog: int = 4096,
     precompress: bool = True,
     max_upload_mb: int = 0,

@@ -1,7 +1,7 @@
 import base64
 import hashlib
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 
 def human_size(n: int) -> str:
@@ -25,7 +25,7 @@ def sha256_file(path: str, bufsize: int = 8 * 1024 * 1024) -> str:
     return h.hexdigest()
 
 
-def parse_basic_auth(header: Optional[str]) -> Optional[Tuple[str, str]]:
+def parse_basic_auth(header: Optional[str]) -> Optional[tuple[str, str]]:
     if not header or not header.startswith("Basic "):
         return None
     try:
