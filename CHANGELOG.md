@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LAN Usage Tips**: Instructions for maximum speed on local networks
 - **Benchmark Command**: New `blaze benchmark` command for testing server performance
 - **Enhanced CLI UI**: Improved startup banner with version info and optional performance details
-- **Comprehensive Test Suite**: Added 50+ tests covering server, CLI, utilities, and edge cases
+- **Comprehensive Test Suite**: Added 42 tests covering server, CLI, utilities, and edge cases
 - **Production Deployment Guide**: Complete guide for systemd, Docker, and reverse proxy setups
 - **pytest Configuration**: Modern test configuration with markers and proper organization
 

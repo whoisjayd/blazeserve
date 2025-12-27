@@ -51,13 +51,12 @@ class TestServerMetrics:
         assert metrics.errors_total == 0
 
     def test_thread_safe_increment(self):
-        """Test that metrics are thread-safe."""
+        """Test that atomic increment methods are thread-safe."""
         metrics = ServerMetrics()
 
         def increment_bytes():
             for _ in range(1000):
-                current = metrics.bytes_sent
-                metrics.bytes_sent = current + 1
+                metrics.increment_bytes_sent(1)
 
         threads = [threading.Thread(target=increment_bytes) for _ in range(10)]
         for t in threads:
@@ -65,7 +64,7 @@ class TestServerMetrics:
         for t in threads:
             t.join()
 
-        # Should be exactly 10000 if thread-safe
+        # Should be exactly 10000 with atomic increments
         assert metrics.bytes_sent == 10000
 
     def test_get_stats(self):
