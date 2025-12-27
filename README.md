@@ -1,13 +1,16 @@
 # BlazeServe
 
-Fast, dependable HTTP file server for sharing files and folders. Supports byte-range and multi-range downloads, TLS, Basic Auth, throttling, uploads, streaming ZIP, optional CORS, and a modern, colorful CLI.
+⚡ **Ultra-fast**, dependable HTTP file server for sharing files and folders. Optimized for maximum throughput with platform-specific TCP optimizations, multiple I/O fast paths, and efficient resource management.
 
 ## Features
 
+- **High Performance**: Optimized buffers (128MB send, 256MB chunks), zero-copy sendfile, memory-mapped I/O
+- **Platform Optimizations**: SO_REUSEPORT, TCP_QUICKACK, TCP_NODELAY for maximum speed
 - Static file serving over HTTP/1.1 with strong ETag, Last-Modified, and If-Range
 - Range and multi-range responses
 - Zero-copy sendfile fast path, windowed mmap, and buffered fallback
-- Per-connection rate limiting
+- Per-connection rate limiting with token bucket algorithm
+- **Performance Monitoring**: Real-time metrics via `/__perf__` endpoint
 - Optional directory listing with automatic index.html
 - One-file mode for quick shares
 - Streaming ZIP for files or directories (`/__zip__?path=...`)
@@ -192,6 +195,25 @@ This returns detailed statistics including:
 - Current configuration
 - Bytes sent/received
 - Active requests
+
+### Tips for Maximum Speed
+
+1. **LAN Transfers**: Disable rate limiting for local network transfers
+   ```bash
+   blaze serve . --chunk-mb 512 --sock-sndbuf-mb 256
+   ```
+
+2. **Internet Sharing**: Use rate limiting to prevent bandwidth saturation
+   ```bash
+   blaze serve . --rate-mbps 50
+   ```
+
+3. **Multiple Clients**: The server uses SO_REUSEPORT on Linux for multi-core scaling
+
+4. **Direct Connections**: For maximum speed between two machines on the same network:
+   - Connect both to the same WiFi/LAN
+   - Server shows its LAN IP on startup
+   - Client connects directly to that IP (no internet routing)
 
 ## Notes
 
