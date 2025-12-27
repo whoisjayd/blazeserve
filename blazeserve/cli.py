@@ -73,14 +73,14 @@ def cli() -> None:
 @click.option(
     "--chunk-mb",
     type=click.IntRange(4, 4096),
-    default=128,
+    default=256,
     show_default=True,
     help="mmap/read window size.",
 )
 @click.option(
     "--sock-sndbuf-mb",
     type=click.IntRange(1, 2048),
-    default=64,
+    default=128,
     show_default=True,
     help="SO_SNDBUF size.",
 )
@@ -124,7 +124,7 @@ def cli() -> None:
 @click.option(
     "--backlog",
     type=click.IntRange(1, 20000),
-    default=4096,
+    default=8192,
     show_default=True,
     help="Listen backlog size.",
 )
@@ -243,7 +243,7 @@ def serve_cmd(
 @click.option("--cors-origin", default="*", show_default=True)
 @click.option("--no-cache", is_flag=True)
 @click.option(
-    "--backlog", type=click.IntRange(1, 20000), default=4096, show_default=True
+    "--backlog", type=click.IntRange(1, 20000), default=8192, show_default=True
 )
 @click.option("--precompress/--no-precompress", default=True, show_default=True)
 @click.option(
@@ -284,8 +284,8 @@ def send_cmd(
             base=base,
             single=ap,
             listing=False,
-            chunk_mb=128,
-            sndbuf_mb=64,
+            chunk_mb=256,
+            sndbuf_mb=128,
             timeout=1800,
             rate_mbps=rate_mbps,
             auth=auth,
@@ -357,8 +357,8 @@ def main():
                     base=base,
                     single=getattr(args, "single", None),
                     listing=not getattr(args, "no_listing", False),
-                    chunk_mb=getattr(args, "chunk_mb", 128),
-                    sndbuf_mb=getattr(args, "sock_sndbuf_mb", 64),
+                    chunk_mb=getattr(args, "chunk_mb", 256),
+                    sndbuf_mb=getattr(args, "sock_sndbuf_mb", 128),
                     timeout=getattr(args, "timeout", 1800),
                     rate_mbps=getattr(args, "rate_mbps", None),
                     auth=getattr(args, "auth", None),
@@ -368,7 +368,7 @@ def main():
                     cors_origin="*",
                     no_cache=False,
                     index=None,
-                    backlog=4096,
+                    backlog=8192,
                     precompress=True,
                     max_upload_mb=0,
                     verbose=False,
@@ -384,8 +384,8 @@ def main():
                     base=base,
                     single=ap,
                     listing=False,
-                    chunk_mb=128,
-                    sndbuf_mb=64,
+                    chunk_mb=256,
+                    sndbuf_mb=128,
                     timeout=1800,
                     rate_mbps=args.rate_mbps,
                     auth=args.auth,
@@ -395,7 +395,7 @@ def main():
                     cors_origin="*",
                     no_cache=False,
                     index=None,
-                    backlog=4096,
+                    backlog=8192,
                     precompress=True,
                     max_upload_mb=0,
                     verbose=False,

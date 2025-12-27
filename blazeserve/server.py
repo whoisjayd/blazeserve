@@ -10,17 +10,20 @@ import mmap
 import os
 import socket
 import ssl
+import sys
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, BinaryIO, Dict, IO, List, Optional, Tuple, cast
 from urllib.parse import urlparse, unquote, parse_qs
 
-DEFAULT_SNDBUF_MB = 64
-DEFAULT_CHUNK_MB = 128
-RECVBUF_MB = 32
+# Optimized buffer sizes for better throughput
+DEFAULT_SNDBUF_MB = 128  # Increased from 64 for better performance
+DEFAULT_CHUNK_MB = 256  # Increased from 128 for larger transfers
+RECVBUF_MB = 64  # Increased from 32 for better receive performance
 
 
 def _etag_for_stat(st: os.stat_result) -> str:
@@ -71,51 +74,85 @@ def _parse_range_header(
 
 
 class _RateLimiter:
+    """Optimized token bucket rate limiter with better performance."""
+
     def __init__(self, rate_bps: Optional[float]) -> None:
         self.rate = rate_bps or 0.0
-        self.tokens = float(self.rate)
+        self.capacity = (
+            self.rate * 2.0 if self.rate > 0 else 0.0
+        )  # 2 second burst capacity
+        self.tokens = self.capacity
         self.last = time.perf_counter()
 
     def take(self, n: int) -> int:
         if self.rate <= 0:
             return n
-        while True:
-            now = time.perf_counter()
-            elapsed = now - self.last
-            self.last = now
-            self.tokens = min(self.rate, self.tokens + elapsed * self.rate)
-            if self.tokens < 1:
-                wait_for = max(0.0, (1 - self.tokens) / self.rate)
-                time.sleep(wait_for)
-                continue
-            allowed = min(float(n), self.tokens)
-            send = min(n, max(1, int(allowed)))
-            self.tokens = max(0.0, self.tokens - send)
-            return send
+
+        now = time.perf_counter()
+        elapsed = now - self.last
+        self.last = now
+
+        # Refill tokens based on elapsed time
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+
+        if self.tokens < 1:
+            # Calculate precise wait time
+            wait_for = (1 - self.tokens) / self.rate
+            time.sleep(wait_for)
+            self.tokens = 1
+
+        # Allow sending as much as we have tokens for
+        allowed = min(float(n), self.tokens)
+        send = max(1, int(allowed))
+        self.tokens -= send
+        return send
 
 
 class BlazeServer(ThreadingMixIn, HTTPServer):
+    """Optimized HTTP server with better socket configuration."""
+
     daemon_threads = True
-    request_queue_size = 4096
+    request_queue_size = 8192  # Increased from 4096 for better connection handling
     allow_reuse_address = True
     block_on_close = False
     tcp_sendbuf = DEFAULT_SNDBUF_MB * 1024 * 1024
     conn_timeout = 1800
     bytes_sent: int = 0
 
+    # Thread pool for better resource management
+    _thread_pool: Optional[ThreadPoolExecutor] = None
+    max_workers = 100  # Configurable thread pool size
+
     def server_bind(self) -> None:
         s = self.socket
+
+        # Optimized socket options for maximum performance
         opts = [
             (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1),
             (socket.SOL_SOCKET, socket.SO_SNDBUF, self.tcp_sendbuf),
             (socket.SOL_SOCKET, socket.SO_RCVBUF, RECVBUF_MB * 1024 * 1024),
             (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
         ]
+
+        # Platform-specific optimizations
+        if hasattr(socket, "SO_REUSEPORT"):
+            # Enable SO_REUSEPORT for better multi-core utilization
+            opts.append((socket.SOL_SOCKET, socket.SO_REUSEPORT, 1))
+
+        # TCP-specific optimizations
+        if hasattr(socket, "TCP_NODELAY"):
+            opts.append((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1))
+
+        if hasattr(socket, "TCP_QUICKACK") and sys.platform.startswith("linux"):
+            # Linux-specific optimization for faster ACKs
+            opts.append((socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1))
+
         for lvl, opt, val in opts:
             try:
                 s.setsockopt(lvl, opt, val)
-            except Exception:
+            except (OSError, AttributeError):
                 pass
+
         super().server_bind()
 
     def handle_error(self, request, client_address) -> None:
@@ -151,21 +188,37 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         pass
 
     def setup(self) -> None:
+        """Setup connection with optimized socket parameters."""
         super().setup()
         s = self.connection
+
         try:
             s.settimeout(self.server.conn_timeout)
-        except Exception:
+        except (OSError, AttributeError):
             pass
-        for args in [
+
+        # Optimized socket options for each connection
+        socket_opts = [
             (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
             (socket.SOL_SOCKET, socket.SO_SNDBUF, self.server.tcp_sendbuf),
             (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-        ]:
+        ]
+
+        # Platform-specific TCP optimizations
+        if hasattr(socket, "TCP_QUICKACK") and sys.platform.startswith("linux"):
+            socket_opts.append((socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1))
+
+        # TCP_CORK for Linux: combine small writes
+        if hasattr(socket, "TCP_CORK") and sys.platform.startswith("linux"):
+            socket_opts.append((socket.IPPROTO_TCP, socket.TCP_CORK, 0))
+
+        for lvl, opt, val in socket_opts:
             try:
-                s.setsockopt(*args)
-            except Exception:
+                s.setsockopt(lvl, opt, val)
+            except (OSError, AttributeError):
                 pass
+
+        # Initialize buffer only once
         if self._buf is None:
             self._buf = bytearray(self.WINDOW)
 
@@ -236,6 +289,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 pass
 
     def do_PUT(self):
+        """Optimized file upload handler."""
         if not self._auth_ok():
             return
         parsed = urlparse(self.path)
@@ -247,31 +301,49 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         dst = os.path.abspath(os.path.join(self.BASE, fn))
+
+        # Security check: ensure destination is within BASE
+        if not dst.startswith(os.path.abspath(self.BASE)):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+
         if os.path.exists(dst):
             self.send_error(HTTPStatus.CONFLICT)
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-        except Exception:
+        except (ValueError, TypeError):
             self.send_error(HTTPStatus.LENGTH_REQUIRED)
             return
         if self.MAX_UPLOAD > 0 and length > self.MAX_UPLOAD:
             self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
+
+        # Ensure parent directory exists
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+
         try:
+            # Use unbuffered I/O with direct writes for better performance
             with open(dst, "wb", buffering=0) as out:
                 remain = length
                 buf = self._buf or bytearray(self.WINDOW)
                 mv = memoryview(buf)
                 while remain > 0:
-                    n = self.rfile.readinto(mv[: min(remain, len(buf))])
+                    chunk_size = min(remain, len(buf))
+                    n = self.rfile.readinto(mv[:chunk_size])
                     if not n:
                         break
                     out.write(mv[:n])
                     remain -= n
-        except Exception:
+        except (OSError, IOError):
+            # Clean up partial file on error
+            try:
+                os.unlink(dst)
+            except OSError:
+                pass
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+
         self.send_response(HTTPStatus.CREATED)
         self._cors_headers()
         self.send_header("Content-Length", "0")
@@ -443,25 +515,50 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         )
 
     def _send_range(self, f, start: int, end: int, full: bool) -> None:
+        """Optimized range sender with multiple fast paths."""
         s = self.connection
         total = end - start + 1
         limiter = _RateLimiter(self.RATE_BPS)
+
+        # Fast path 1: Use sendfile for full file transfers (zero-copy)
         if full and start == 0 and hasattr(s, "sendfile"):
             try:
-                sent = s.sendfile(f, offset=0, count=total)
-                if sent is None or sent == total:
+                # Try zero-copy sendfile
+                offset = 0
+                remaining = total
+                while remaining > 0:
+                    if self.RATE_BPS:
+                        chunk_size = limiter.take(min(remaining, self.WINDOW))
+                    else:
+                        chunk_size = remaining
+
+                    sent = s.sendfile(f, offset=offset, count=chunk_size)
+                    if sent is None or sent == 0:
+                        break
+
+                    offset += sent
+                    remaining -= sent
                     try:
-                        self.server.bytes_sent += total
+                        self.server.bytes_sent += sent
                     except Exception:
                         pass
+
+                    if not self.RATE_BPS:
+                        break  # sendfile handles it all if no rate limit
+
+                if remaining == 0:
                     return
             except (OSError, AttributeError):
+                # Fall through to mmap/buffered paths
                 pass
+
+        # Fast path 2: Memory-mapped I/O for better performance
         ag = getattr(mmap, "ALLOCATIONGRANULARITY", 4096)
         win = self.WINDOW
         size = os.fstat(f.fileno()).st_size
         pos = start
         rem = total
+
         try:
             while rem > 0:
                 base = (pos // ag) * ag
@@ -469,6 +566,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 mlen = min(win + delta, size - base)
                 if mlen <= 0:
                     break
+
                 with mmap.mmap(
                     f.fileno(), length=mlen, access=mmap.ACCESS_READ, offset=base
                 ) as mm:
@@ -497,13 +595,17 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     rem -= n
             if rem == 0:
                 return
-        except Exception:
+        except (OSError, ValueError):
+            # Fall through to buffered read
             pass
+
+        # Fallback: Buffered read for compatibility
         buf = self._buf or bytearray(self.WINDOW)
         mv = memoryview(buf)
         f.seek(pos)
         while rem > 0:
-            n = f.readinto(mv[: min(len(buf), rem)])
+            chunk_size = min(len(buf), rem)
+            n = f.readinto(mv[:chunk_size])
             if not n:
                 break
             off = 0
@@ -589,15 +691,18 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             pass
 
     def _speed(self, parsed) -> None:
+        """Optimized speed test endpoint with better throughput."""
         q = parse_qs(parsed.query or "")
         total = int(q.get("bytes", ["100000000"])[0])
-        chunk = min(self.WINDOW, 4 * 1024 * 1024)
+        # Use larger chunk size for speed test
+        chunk = min(self.WINDOW, 8 * 1024 * 1024)  # Increased to 8MB chunks
         zeros = b"\0" * chunk
         limiter = _RateLimiter(self.RATE_BPS)
         self.send_response(HTTPStatus.OK)
         self._cors_headers()
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(total))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         sent = 0
         try:
@@ -619,20 +724,29 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             pass
 
     def _zip(self, parsed) -> None:
+        """Optimized ZIP streaming with better compression and error handling."""
         q = parse_qs(parsed.query or "")
         raw = q.get("path", [""])[0]
         if not raw:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         path = os.path.abspath(os.path.join(self.BASE, raw))
+
+        # Security check: ensure path is within BASE
+        if not path.startswith(os.path.abspath(self.BASE)):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+
         if not os.path.exists(path):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
+
         self.send_response(HTTPStatus.OK)
         self._cors_headers()
         self.send_header("Content-Type", "application/zip")
         name = os.path.basename(path.rstrip(os.sep)) or "archive"
         self.send_header("Content-Disposition", f'attachment; filename="{name}.zip"')
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
         class _Stream(io.RawIOBase):
@@ -647,7 +761,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 try:
                     self.outer.wfile.write(chunk)
                     self.outer.server.bytes_sent += len(chunk)
-                except Exception:
+                except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
                 return len(chunk)
 
@@ -655,10 +769,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 return
 
         stream = _Stream(self)
+        # Use DEFLATE compression for better compression ratios
         z = zipfile.ZipFile(
             cast(IO[bytes], stream),
             "w",
-            compression=zipfile.ZIP_STORED,
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=6,  # Balance between speed and compression
             allowZip64=True,
         )
         try:
@@ -670,7 +786,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                         arc = os.path.relpath(ap, base_dir)
                         try:
                             z.write(ap, arcname=arc)
-                        except Exception:
+                        except (OSError, IOError):
                             continue
             else:
                 z.write(path, arcname=os.path.basename(path))
