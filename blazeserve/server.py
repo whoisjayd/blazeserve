@@ -187,7 +187,14 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
         super().server_bind()
 
     def handle_error(self, request, client_address) -> None:
+        """Handle errors and track them in metrics."""
         e = __import__("sys").exc_info()[1]
+
+        # Track errors in metrics
+        if hasattr(self, "metrics") and self.metrics:
+            self.metrics.errors_total += 1
+
+        # Silently ignore common network errors
         if isinstance(
             e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)
         ):
@@ -223,6 +230,10 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         super().setup()
         s = self.connection
 
+        # Track active requests
+        if hasattr(self.server, "metrics") and self.server.metrics:
+            self.server.metrics.requests_active += 1
+
         try:
             s.settimeout(self.server.conn_timeout)
         except (OSError, AttributeError):
@@ -252,6 +263,23 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         # Initialize buffer only once
         if self._buf is None:
             self._buf = bytearray(self.WINDOW)
+
+    def finish(self) -> None:
+        """Clean up connection and update metrics."""
+        try:
+            # Track request completion
+            if hasattr(self.server, "metrics") and self.server.metrics:
+                self.server.metrics.requests_total += 1
+                self.server.metrics.requests_active = max(
+                    0, self.server.metrics.requests_active - 1
+                )
+        except Exception:
+            pass
+
+        try:
+            super().finish()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def do_OPTIONS(self):
         if not self.CORS:
