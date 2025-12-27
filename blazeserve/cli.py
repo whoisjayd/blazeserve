@@ -1,6 +1,6 @@
 import os
-import sys
 import socket
+import sys
 import webbrowser
 from typing import Optional
 
@@ -16,14 +16,14 @@ try:
 except Exception:
     import click  # type: ignore
 
-from rich.table import Table
-from rich.panel import Panel
 from rich import box
+from rich.panel import Panel
+from rich.table import Table
 
-from .logging import setup_logging, get_console
-from .server import build_arg_parser, run_server
-from .utils import sha256_file, human_size
 from . import __version__
+from .logging import get_console, setup_logging
+from .server import build_arg_parser, run_server
+from .utils import human_size, sha256_file
 
 console = get_console()
 
@@ -61,9 +61,7 @@ def cli() -> None:
     show_default=True,
     help="Bind address (IPv4/IPv6 literal ok).",
 )
-@click.option(
-    "-p", "--port", type=int, default=8000, show_default=True, help="Port to listen on."
-)
+@click.option("-p", "--port", type=int, default=8000, show_default=True, help="Port to listen on.")
 @click.option(
     "--single",
     type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str),
@@ -97,12 +95,8 @@ def cli() -> None:
     default=None,
     help="Throttle to MB/s (omit for unlimited).",
 )
-@click.option(
-    "--auth", metavar="USER:PASS", envvar=None, help="Enable HTTP Basic Auth."
-)
-@click.option(
-    "--auth-env", metavar="ENVVAR", help="Load USER:PASS from environment variable."
-)
+@click.option("--auth", metavar="USER:PASS", envvar=None, help="Enable HTTP Basic Auth.")
+@click.option("--auth-env", metavar="ENVVAR", help="Load USER:PASS from environment variable.")
 @click.option(
     "--tls-cert",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
@@ -114,13 +108,9 @@ def cli() -> None:
     help="TLS private key (PEM).",
 )
 @click.option("--cors/--no-cors", default=False, show_default=True, help="Enable CORS.")
-@click.option(
-    "--cors-origin", default="*", show_default=True, help="CORS allow origin."
-)
+@click.option("--cors-origin", default="*", show_default=True, help="CORS allow origin.")
 @click.option("--no-cache", is_flag=True, help="Disable HTTP caching.")
-@click.option(
-    "--index", multiple=True, help="Additional index filenames to try (repeatable)."
-)
+@click.option("--index", multiple=True, help="Additional index filenames to try (repeatable).")
 @click.option(
     "--backlog",
     type=click.IntRange(1, 20000),
@@ -141,9 +131,7 @@ def cli() -> None:
     show_default=True,
     help="Max upload size (0 = unlimited).",
 )
-@click.option(
-    "--open", "open_browser", is_flag=True, help="Open the URL in a browser on start."
-)
+@click.option("--open", "open_browser", is_flag=True, help="Open the URL in a browser on start.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose startup banner.")
 def serve_cmd(
     path: str,
@@ -193,8 +181,25 @@ def serve_cmd(
     table.add_row("Serving", single or base)
     table.add_row("Local", f"[green]{scheme}://localhost:{port}/[/]")
     table.add_row("Network", f"[green]{scheme}://{lan}:{port}/[/]")
+
+    # Add performance info if verbose
+    if verbose:
+        table.add_row("", "")  # Spacer
+        table.add_row("Send Buffer", f"{sock_sndbuf_mb} MB")
+        table.add_row("Chunk Size", f"{chunk_mb} MB")
+        table.add_row("Backlog", str(backlog))
+        if rate_mbps:
+            table.add_row("Rate Limit", f"{rate_mbps} MB/s")
+        table.add_row("Metrics", f"{scheme}://{lan}:{port}/__perf__")
+
     console.print(
-        Panel(table, title="[bold magenta]BlazeServe", box=box.ROUNDED), soft_wrap=True
+        Panel(
+            table,
+            title=f"[bold magenta]⚡ BlazeServe v{__version__}[/]",
+            subtitle="Press Ctrl+C to stop",
+            box=box.ROUNDED,
+        ),
+        soft_wrap=True,
     )
     if open_browser:
         try:
@@ -229,9 +234,7 @@ def serve_cmd(
 
 
 @cli.command("send", short_help="Quick share a single file.")
-@click.argument(
-    "file", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str)
-)
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str))
 @click.option("--host", default="0.0.0.0", show_default=True)
 @click.option("-p", "--port", type=int, default=8000, show_default=True)
 @click.option("--rate-mbps", type=click.FloatRange(min=0.1), default=None)
@@ -242,13 +245,9 @@ def serve_cmd(
 @click.option("--cors/--no-cors", default=False, show_default=True)
 @click.option("--cors-origin", default="*", show_default=True)
 @click.option("--no-cache", is_flag=True)
-@click.option(
-    "--backlog", type=click.IntRange(1, 20000), default=8192, show_default=True
-)
+@click.option("--backlog", type=click.IntRange(1, 20000), default=8192, show_default=True)
 @click.option("--precompress/--no-precompress", default=True, show_default=True)
-@click.option(
-    "--max-upload-mb", type=click.IntRange(0, 1024 * 1024), default=0, show_default=True
-)
+@click.option("--max-upload-mb", type=click.IntRange(0, 1024 * 1024), default=0, show_default=True)
 def send_cmd(
     file: str,
     host: str,
@@ -305,9 +304,7 @@ def send_cmd(
 
 
 @cli.command("checksum", short_help="SHA256 for files.")
-@click.argument(
-    "files", nargs=-1, type=click.Path(exists=True, dir_okay=False, path_type=str)
-)
+@click.argument("files", nargs=-1, type=click.Path(exists=True, dir_okay=False, path_type=str))
 def checksum_cmd(files):
     if not files:
         raise click.ClickException("Provide at least one file.")
@@ -325,9 +322,112 @@ def checksum_cmd(files):
     console.print(tbl)
 
 
-@cli.command("version", short_help="Show version.")
+@cli.command("version", short_help="Show version and system info.")
 def version_cmd():
-    console.print(f"[bold]BlazeServe[/] {__version__}")
+    """Display version and system information."""
+    import platform
+    import sys
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    # Create info table
+    info_table = Table.grid(padding=(0, 2))
+    info_table.add_column(style="bold cyan")
+    info_table.add_column(style="white")
+
+    info_table.add_row("Version", __version__)
+    info_table.add_row(
+        "Python", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+    info_table.add_row("Platform", platform.system())
+    info_table.add_row("Architecture", platform.machine())
+
+    console.print(
+        Panel(
+            info_table,
+            title="[bold magenta]⚡ BlazeServe[/]",
+            subtitle="Ultra-fast HTTP file server",
+            box=box.ROUNDED,
+        )
+    )
+
+
+@cli.command("benchmark", short_help="Run performance benchmark.")
+@click.option(
+    "--url",
+    default="http://localhost:8000",
+    show_default=True,
+    help="Server URL to benchmark.",
+)
+@click.option(
+    "--size-mb",
+    type=click.IntRange(1, 1000),
+    default=100,
+    show_default=True,
+    help="Size of test download in MB.",
+)
+def benchmark_cmd(url: str, size_mb: int):
+    """Run a speed benchmark against a BlazeServe server."""
+    import time
+    import urllib.request
+
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TransferSpeedColumn,
+    )
+
+    test_url = f"{url}/__speed__?bytes={size_mb * 1024 * 1024}"
+
+    console.print(f"[cyan]Benchmarking:[/] {url}")
+    console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("[cyan]Downloading...", total=size_mb * 1024 * 1024)
+
+            start_time = time.time()
+            downloaded = 0
+
+            with urllib.request.urlopen(test_url) as response:
+                chunk_size = 1024 * 1024  # 1MB chunks
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    progress.update(task, advance=len(chunk))
+
+            elapsed = time.time() - start_time
+
+        # Display results
+        speed_mbps = (downloaded / (1024 * 1024)) / elapsed
+
+        result_table = Table(show_header=False, box=box.SIMPLE)
+        result_table.add_column(style="bold cyan")
+        result_table.add_column(style="bold green")
+
+        result_table.add_row("Downloaded", f"{downloaded / (1024 * 1024):.2f} MB")
+        result_table.add_row("Time", f"{elapsed:.2f} seconds")
+        result_table.add_row("Speed", f"{speed_mbps:.2f} MB/s")
+
+        console.print("\n[bold green]✓ Benchmark Complete[/]\n")
+        console.print(result_table)
+
+    except Exception as e:
+        console.print(f"[bold red]✗ Benchmark failed:[/] {e}")
+        raise click.Abort()
 
 
 def main():
@@ -336,6 +436,7 @@ def main():
         "send",
         "checksum",
         "version",
+        "benchmark",
         "-h",
         "--help",
         "--version",

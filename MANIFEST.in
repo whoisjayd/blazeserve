@@ -1,0 +1,17 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include DEPLOYMENT.md
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT.md
+include SECURITY.md
+include pyproject.toml
+
+recursive-include tests *.py
+recursive-exclude tests __pycache__
+recursive-exclude tests *.pyc
+recursive-exclude tests *.pyo
+
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .DS_Store
