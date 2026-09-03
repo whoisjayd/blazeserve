@@ -2,7 +2,10 @@
 
 ## Supported Versions
 
-We aim to support the latest minor release of BlazeServe. Security fixes will generally be released as patch versions.
+| Version | Supported          |
+| :------ | :----------------- |
+| `0.3.x` | :white_check_mark: |
+| `< 0.3` | :x:                |
 
 ## Reporting a Vulnerability
 
