@@ -63,6 +63,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "unit: Fast isolated unit tests with no I/O",
+    "integration: Subsystem and live HTTP server integration tests",
+    "e2e: End-to-end CLI workflow tests",
+    "slow: Tests that take longer to run",
+]
 
 [tool.coverage.run]
 source = ["blazeserve"]
