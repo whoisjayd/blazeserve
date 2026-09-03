@@ -1,9 +1,15 @@
+"""Common utility functions for hashing, size formatting, and auth parsing."""
+
+from __future__ import annotations
+
 import base64
 import hashlib
-import time
+
+from blazeserve.limiter import TokenBucket
 
 
 def human_size(n: int) -> str:
+    """Format byte count into human-readable unit string."""
     units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
     x = float(n)
     for u in units:
@@ -14,6 +20,7 @@ def human_size(n: int) -> str:
 
 
 def sha256_file(path: str, bufsize: int = 8 * 1024 * 1024) -> str:
+    """Compute SHA-256 hex digest of file in chunked buffer reads."""
     h = hashlib.sha256()
     with open(path, "rb", buffering=0) as f:
         while True:
@@ -25,6 +32,7 @@ def sha256_file(path: str, bufsize: int = 8 * 1024 * 1024) -> str:
 
 
 def parse_basic_auth(header: str | None) -> tuple[str, str] | None:
+    """Extract username and password from HTTP Basic Authorization header."""
     if not header or not header.startswith("Basic "):
         return None
     try:
@@ -37,22 +45,4 @@ def parse_basic_auth(header: str | None) -> tuple[str, str] | None:
         return None
 
 
-class TokenBucket:
-    def __init__(self, rate_bps: float):
-        self.capacity = max(rate_bps, 1.0)
-        self.tokens = self.capacity
-        self.rate = self.capacity
-        self.timestamp = time.perf_counter()
-
-    def consume(self, n: int) -> float:
-        now = time.perf_counter()
-        delta = now - self.timestamp
-        self.timestamp = now
-        self.tokens = min(self.capacity, self.tokens + delta * self.rate)
-        need = float(n)
-        if self.tokens >= need:
-            self.tokens -= need
-            return 0.0
-        short = need - self.tokens
-        self.tokens = 0.0
-        return short / self.rate
+__all__ = ["TokenBucket", "human_size", "parse_basic_auth", "sha256_file"]
