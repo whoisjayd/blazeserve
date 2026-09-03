@@ -5,6 +5,36 @@ All notable changes to BlazeServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-03
+
+### Added
+- **SRE Operational Probes**: Added Kubernetes liveness probe (`/__live__`) and readiness probe (`/__ready__`) verifying filesystem mount accessibility.
+- **Prometheus OpenMetrics Telemetry**: Native zero-dependency Prometheus exposition format available at `/__metrics__` and `/metrics` exposing Golden Signals (throughput, latency, active connections, error counters).
+- **RFC 7232 / 9110 HTTP Caching**: Full conditional request validation supporting `If-None-Match` (ETag) and `If-Modified-Since` (Last-Modified) returning `304 Not Modified` with zero network overhead.
+- **Per-IP Rate Limiting**: Added thread-safe `IPRateLimiterPool` with LRU eviction, returning standard `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers alongside HTTP `429 Too Many Requests` rejection.
+- **Defense-in-Depth Security Headers**: Automatic injection of `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, and `Strict-Transport-Security` (on TLS).
+- **Correlation Tracing**: Automatic generation and propagation of `X-Request-ID` headers for end-to-end distributed request tracing.
+- **Structured JSON Logging**: Added `--log-json` CLI flag and `BLAZE_LOG_JSON=1` environment variable support with ISO8601 timestamps, request IDs, and client IP tracking.
+- **Modern Responsive HTML5 Web UI**: Beautiful glassmorphic directory explorer with dark/light mode (`prefers-color-scheme`), client-side instant search filter, file type icons, and drag-and-drop upload zone.
+- **SRE Environment Diagnostic (`blaze doctor`)**: CLI command auditing directory read permissions, socket port availability, kernel zero-copy capabilities, and sequential read-ahead support.
+- **Machine-Readable Version**: Added `--json` flag to `blaze version` command.
+- **Cloud & Kubernetes Artifacts**: Added production Kubernetes manifests (`deploy/k8s/`: Deployment, Service, Ingress, and ServiceMonitor).
+- **SRE Monitoring Stack**: Added Prometheus scrape configuration (`deploy/monitoring/prometheus.yml`), Prometheus alert rules (`deploy/monitoring/alerts.yml`), and production Grafana dashboard JSON (`deploy/monitoring/grafana-dashboard.json`).
+- **DevOps Blueprints**: Hardened systemd service and socket activation units (`deploy/systemd/`), unbuffered streaming reverse proxy configs for Nginx, Caddy, and Traefik v3 (`deploy/reverse-proxy/`), and Linux kernel networking sysctl tuning script (`deploy/linux-tuning/tuning.sh`).
+- **Multi-Stage Dockerfile**: Hardened distroless-style build using unprivileged system user `blazeserve` (`uid: 10001`), read-only root filesystem, dropped Linux capabilities, and native Docker container `HEALTHCHECK`.
+
+### Changed
+- **Modular Code Architecture**: Decomposed monolithic server into single-responsibility modules: `metrics.py`, `limiter.py`, `security.py`, `ui.py`, `handlers.py`, and `server.py` while maintaining 100% backwards-compatible re-exports.
+- **Modern Toolchain & Dependencies**: Upgraded minimum Python support to `>=3.10` (Python 3.9 EOL), upgraded Click to `>=8.3.0`, Rich to `>=14.0.0`, Rich-Click to `>=1.8.0`, Ruff to `>=0.9.0`, Mypy to `>=1.11`, Pytest to `>=8.0`, and added `pytest-cov`.
+- **Enterprise CI/CD**: Modernized GitHub Actions workflow to matrix across Python 3.10–3.13, Ruff linting/formatting, strict Mypy typing, Pytest coverage enforcement, Docker smoke testing, and OIDC PyPI publishing.
+
+### Fixed
+- **Memory-Safe Mmap Lifecycle**: Fixed Windows `BufferError` and file-locking `PermissionError` by implementing deterministic `memoryview.release()` before closing `mmap` instances in `_send_range`.
+- **Graceful Server Shutdown**: Handled `SIGINT` and `SIGTERM` signals for non-blocking server shutdown, connection draining, and clean socket closure.
+- **Zero-Downtime TLS Hot-Reload**: Handled `SIGHUP` signal on POSIX systems to reload SSL certificates without dropping active connections.
+
+---
+
 ## [0.2.0] - 2025-12-27
 
 ### Added
@@ -39,18 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ZIP Security**: Added path validation in ZIP streaming endpoint
 - **Error Handling**: Removed unnecessary TypeError catch in upload handler
 
-### Performance
-- **Platform Optimizations**: Auto-enabled SO_REUSEPORT (Linux) for multi-core load balancing
-- **TCP Optimizations**: Enabled TCP_QUICKACK (Linux) for reduced ACK delay
-- **Network Stack**: TCP_NODELAY enabled by default for lower latency
-- **I/O Fast Paths**: Multiple optimization paths (sendfile → mmap → buffered)
-- **Speed Test**: Increased chunk size from 4MB to 8MB for better throughput testing
-
-### Documentation
-- **README**: Enhanced with performance highlights and ⚡ branding
-- **CHANGELOG**: Added comprehensive changelog following Keep a Changelog format
-- **DEPLOYMENT**: Complete production deployment guide
-- **MANIFEST**: Added for proper package distribution
+---
 
 ## [0.1.0] - Initial Release
 
@@ -61,19 +80,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory-mapped I/O for efficient file transfers
 - Per-connection rate limiting
 - Directory listing with automatic index.html
-- Single-file mode
-- Streaming ZIP downloads
-- File uploads via PUT/POST
-- Health check endpoint (`/__health__`)
-- Statistics endpoint (`/__stats__`)
-- Speed test endpoint (`/__speed__`)
-- TLS/HTTPS support
-- HTTP Basic Authentication
-- CORS support
-- Precompressed .gz file serving
-- Rich CLI with colorful output
-- Cross-platform support (Linux/macOS/Windows)
-
-[0.2.0]: https://github.com/whoisjayd/blazeserve/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/whoisjayd/blazeserve/releases/tag/v0.1.0
-
