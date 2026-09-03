@@ -1,10 +1,9 @@
 import logging
-from typing import Optional
 
 from rich.console import Console
 from rich.logging import RichHandler
 
-_console: Optional[Console] = None
+_console: Console | None = None
 
 
 def setup_logging(level: str = "WARNING") -> None:

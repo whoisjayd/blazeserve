@@ -2,7 +2,6 @@ import os
 import socket
 import sys
 import webbrowser
-from typing import Optional
 
 try:
     import rich_click as click  # type: ignore[import-not-found]
@@ -139,16 +138,16 @@ def serve_cmd(
     path: str,
     host: str,
     port: int,
-    single: Optional[str],
+    single: str | None,
     no_listing: bool,
     chunk_mb: int,
     sock_sndbuf_mb: int,
     timeout: int,
-    rate_mbps: Optional[float],
-    auth: Optional[str],
-    auth_env: Optional[str],
-    tls_cert: Optional[str],
-    tls_key: Optional[str],
+    rate_mbps: float | None,
+    auth: str | None,
+    auth_env: str | None,
+    tls_cert: str | None,
+    tls_key: str | None,
     cors: bool,
     cors_origin: str,
     no_cache: bool,
@@ -252,11 +251,11 @@ def send_cmd(
     file: str,
     host: str,
     port: int,
-    rate_mbps: Optional[float],
-    auth: Optional[str],
-    auth_env: Optional[str],
-    tls_cert: Optional[str],
-    tls_key: Optional[str],
+    rate_mbps: float | None,
+    auth: str | None,
+    auth_env: str | None,
+    tls_cert: str | None,
+    tls_key: str | None,
     cors: bool,
     cors_origin: str,
     no_cache: bool,
