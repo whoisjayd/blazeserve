@@ -395,3 +395,58 @@ class TestOperationalEndpoints:
                 assert resp.read() == b""
         finally:
             conn.close()
+
+
+class TestConditionalCaching:
+    """Test RFC-7232 compliant conditional requests (If-None-Match, If-Modified-Since)."""
+
+    def test_if_none_match_returns_304(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/test.txt")
+            resp1 = conn.getresponse()
+            assert resp1.status == 200
+            etag = resp1.headers["ETag"]
+            resp1.read()
+
+            conn.request("GET", "/test.txt", headers={"If-None-Match": etag})
+            resp2 = conn.getresponse()
+            assert resp2.status == 304
+            assert resp2.read() == b""
+            assert resp2.headers.get("ETag") == etag
+        finally:
+            conn.close()
+
+    def test_if_modified_since_returns_304(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/test.txt")
+            resp1 = conn.getresponse()
+            last_mod = resp1.headers["Last-Modified"]
+            resp1.read()
+
+            conn.request("GET", "/test.txt", headers={"If-Modified-Since": last_mod})
+            resp2 = conn.getresponse()
+            assert resp2.status == 304
+            assert resp2.read() == b""
+        finally:
+            conn.close()
+
+
+class TestSecurityHeaders:
+    """Test standard defense-in-depth HTTP security headers."""
+
+    def test_security_headers_present(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/test.txt")
+            resp = conn.getresponse()
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+            assert resp.headers.get("X-Frame-Options") == "DENY"
+            assert "X-Request-ID" in resp.headers
+            assert "strict-origin" in resp.headers.get("Referrer-Policy", "")
+        finally:
+            conn.close()
