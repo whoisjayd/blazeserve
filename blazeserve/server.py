@@ -166,6 +166,7 @@ def run_server(**kwargs: Any) -> None:
 
         # Zero-downtime TLS reload on SIGHUP (POSIX)
         if hasattr(signal, "SIGHUP") and kwargs.get("tls_cert") and kwargs.get("tls_key"):
+
             def _reload_tls(signum: int, frame: Any) -> None:
                 with contextlib.suppress(Exception):
                     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -174,12 +175,14 @@ def run_server(**kwargs: Any) -> None:
                     ctx.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM")
                     ctx.load_cert_chain(certfile=kwargs["tls_cert"], keyfile=kwargs["tls_key"])
                     httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+
             signal.signal(signal.SIGHUP, _reload_tls)
 
     try:
         httpd.serve_forever()
     finally:
         httpd.server_close()
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Construct argument parser for backwards-compatible legacy invocations."""

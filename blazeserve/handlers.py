@@ -131,7 +131,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         """Setup connection with optimized socket parameters and correlation ID."""
         super().setup()
         s = self.connection
-        self.request_id = generate_request_id(self.headers.get("X-Request-ID") if hasattr(self, "headers") else None)
+        self.request_id = generate_request_id(
+            self.headers.get("X-Request-ID") if hasattr(self, "headers") else None
+        )
 
         # Track active requests in metrics
         if hasattr(self.server, "metrics") and self.server.metrics:
@@ -143,7 +145,11 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         # Apply TCP socket optimizations
         opts = [
             (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
-            (socket.SOL_SOCKET, socket.SO_SNDBUF, getattr(self.server, "tcp_sendbuf", 128 * 1024 * 1024)),
+            (
+                socket.SOL_SOCKET,
+                socket.SO_SNDBUF,
+                getattr(self.server, "tcp_sendbuf", 128 * 1024 * 1024),
+            ),
             (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
         ]
         if hasattr(socket, "TCP_QUICKACK") and sys.platform.startswith("linux"):
@@ -337,7 +343,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return
         self.send_header("Access-Control-Allow-Origin", self.CORS_ORIGIN)
         self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, PUT, POST")
-        self.send_header("Access-Control-Allow-Headers", "Range, Content-Type, Authorization, X-Request-ID")
+        self.send_header(
+            "Access-Control-Allow-Headers", "Range, Content-Type, Authorization, X-Request-ID"
+        )
         self.send_header(
             "Access-Control-Expose-Headers",
             "Accept-Ranges, Content-Length, Content-Range, ETag, Last-Modified, X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining",
@@ -351,6 +359,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self._auth_required()
             return False
         import base64
+
         try:
             userpass = base64.b64decode(hdr.split(" ", 1)[1]).decode("utf-8")
             user, pw = userpass.split(":", 1)
@@ -382,7 +391,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         rel_path = os.path.relpath(str_path, self.BASE)
         if rel_path == ".":
             rel_path = ""
-        encoded = render_directory_index(str_path, rel_path, entries, allow_upload=(self.MAX_UPLOAD > 0))
+        encoded = render_directory_index(
+            str_path, rel_path, entries, allow_upload=(self.MAX_UPLOAD > 0)
+        )
         f = io.BytesIO()
         f.write(encoded)
         f.seek(0)
@@ -450,7 +461,11 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 self._send_security_headers()
                 self.send_header("ETag", etag)
                 self.send_header("Last-Modified", lastmod)
-                cache_hdr = "no-cache, no-store, must-revalidate" if self.NOCACHE else "public, max-age=3600"
+                cache_hdr = (
+                    "no-cache, no-store, must-revalidate"
+                    if self.NOCACHE
+                    else "public, max-age=3600"
+                )
                 self.send_header("Cache-Control", cache_hdr)
                 self.end_headers()
                 f.close()
@@ -467,7 +482,11 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     self._send_security_headers()
                     self.send_header("ETag", etag)
                     self.send_header("Last-Modified", lastmod)
-                    cache_hdr = "no-cache, no-store, must-revalidate" if self.NOCACHE else "public, max-age=3600"
+                    cache_hdr = (
+                        "no-cache, no-store, must-revalidate"
+                        if self.NOCACHE
+                        else "public, max-age=3600"
+                    )
                     self.send_header("Cache-Control", cache_hdr)
                     self.end_headers()
                     f.close()
@@ -493,7 +512,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self._cors_headers()
         self._send_security_headers()
-        cache_hdr = "no-cache, no-store, must-revalidate" if self.NOCACHE else "public, max-age=3600"
+        cache_hdr = (
+            "no-cache, no-store, must-revalidate" if self.NOCACHE else "public, max-age=3600"
+        )
         self.send_header("Cache-Control", cache_hdr)
         self.send_header("Connection", "keep-alive")
         if use_gzip:
@@ -609,7 +630,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     try:
                         off = 0
                         while off < len(view):
-                            to_send = limiter.take(len(view) - off) if limiter else (len(view) - off)
+                            to_send = (
+                                limiter.take(len(view) - off) if limiter else (len(view) - off)
+                            )
                             if to_send <= 0:
                                 continue
                             try:
@@ -692,12 +715,19 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
     def _health(self) -> None:
-        uptime = int(time.time() - self.server.metrics.start_time) if hasattr(self.server, "metrics") and self.server.metrics else 0
-        self._send_json(HTTPStatus.OK, {
-            "status": "ok",
-            "version": __version__,
-            "uptime_seconds": uptime,
-        })
+        uptime = (
+            int(time.time() - self.server.metrics.start_time)
+            if hasattr(self.server, "metrics") and self.server.metrics
+            else 0
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "status": "ok",
+                "version": __version__,
+                "uptime_seconds": uptime,
+            },
+        )
 
     def _live(self) -> None:
         self._send_json(HTTPStatus.OK, {"status": "alive"})
@@ -707,18 +737,24 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if ready:
             self._send_json(HTTPStatus.OK, {"status": "ready", "base": self.BASE})
         else:
-            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
-                "status": "not_ready",
-                "reason": f"Base directory {self.BASE} is not accessible",
-            })
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "status": "not_ready",
+                    "reason": f"Base directory {self.BASE} is not accessible",
+                },
+            )
 
     def _version(self) -> None:
-        self._send_json(HTTPStatus.OK, {
-            "name": "blazeserve",
-            "version": __version__,
-            "python": sys.version.split()[0],
-            "platform": sys.platform,
-        })
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "name": "blazeserve",
+                "version": __version__,
+                "python": sys.version.split()[0],
+                "platform": sys.platform,
+            },
+        )
 
     def _metrics(self) -> None:
         metrics = getattr(self.server, "metrics", None)
@@ -735,9 +771,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
     def _stats(self) -> None:
-        self._send_json(HTTPStatus.OK, {
-            "bytes_sent": getattr(self.server, "bytes_sent", 0)
-        })
+        self._send_json(HTTPStatus.OK, {"bytes_sent": getattr(self.server, "bytes_sent", 0)})
 
     def _perf(self) -> None:
         metrics = getattr(self.server, "metrics", None)
@@ -822,7 +856,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 return len(chunk)
 
         stream = _Stream(self)
-        z = zipfile.ZipFile(cast(IO[bytes], stream), "w", compression=self.ZIP_COMPRESSION, allowZip64=True)
+        z = zipfile.ZipFile(
+            cast(IO[bytes], stream), "w", compression=self.ZIP_COMPRESSION, allowZip64=True
+        )
         try:
             if os.path.isdir(path):
                 for root, _, files in os.walk(path):

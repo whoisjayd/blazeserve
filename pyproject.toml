@@ -1,43 +1,47 @@
-
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=75.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "blazeserve"
-version = "0.2.0"
+version = "0.3.0"
 description = "⚡ Ultra-fast HTTP file server with advanced performance optimizations, real-time metrics, and production-ready architecture — supports byte-range/multi-range downloads, TLS, Basic Auth, throttling, uploads, streaming ZIP, CORS, and a polished CLI."
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Jaydeep Solanki" }]
-keywords = ["http", "file-server", "range", "resume", "download", "cli", "rich", "click", "cors", "zip", "throttle"]
+keywords = ["http", "file-server", "range", "resume", "download", "cli", "rich", "click", "cors", "zip", "throttle", "prometheus", "metrics", "sre", "devops"]
 classifiers = [
-"Development Status :: 5 - Production/Stable",
-"Programming Language :: Python :: 3",
-"Programming Language :: Python :: 3 :: Only",
-"Programming Language :: Python :: 3.9",
-"Programming Language :: Python :: 3.10",
-"Programming Language :: Python :: 3.11",
-"Programming Language :: Python :: 3.12",
-"License :: OSI Approved :: MIT License",
-"Operating System :: OS Independent",
-"Topic :: Internet :: WWW/HTTP :: HTTP Servers",
-"Topic :: System :: Networking",
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Monitoring",
 ]
 
 dependencies = [
-"click>=8.1",
-"rich>=13.0.0",
-"rich-click>=1.8.0",
+    "click>=8.3.0",
+    "rich>=14.0.0",
+    "rich-click>=1.8.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-"pytest>=8.0",
-"mypy>=1.7",
-"ruff>=0.5",
-"types-click>=7.1.8",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "coverage[toml]>=7.5",
+    "mypy>=1.11",
+    "ruff>=0.9.0",
+    "types-click>=7.1.8",
+    "build>=1.2",
+    "twine>=6.0",
 ]
 
 [project.scripts]
@@ -60,16 +64,28 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
+[tool.coverage.run]
+source = ["blazeserve"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20", "SIM"]
-ignore = ["E501"]  # Line too long (handled by formatter)
+ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

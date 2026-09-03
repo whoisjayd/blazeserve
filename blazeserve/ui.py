@@ -29,7 +29,7 @@ def render_directory_index(
         rows.append(
             '<tr><td style="text-align:center">📁</td>'
             f'<td><a href="{html.escape(parent)}">.. (Parent Directory)</a></td>'
-            '<td>-</td><td>Directory</td></tr>'
+            "<td>-</td><td>Directory</td></tr>"
         )
 
     for entry in sorted_entries:
@@ -45,9 +45,9 @@ def render_directory_index(
                 f'<tr class="entry-row">'
                 f'  <td style="text-align:center">{icon}</td>'
                 f'  <td><a class="entry-link" href="{href}">{name_esc}</a></td>'
-                f'  <td>{size_str}</td>'
-                f'  <td>{type_str}</td>'
-                f'</tr>'
+                f"  <td>{size_str}</td>"
+                f"  <td>{type_str}</td>"
+                f"</tr>"
             )
         except OSError:
             continue

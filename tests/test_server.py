@@ -70,6 +70,7 @@ def server(test_dir):
         httpd.server_close()
         server_thread.join(timeout=2.0)
 
+
 class TestBasicServing:
     """Test basic file serving functionality."""
 
