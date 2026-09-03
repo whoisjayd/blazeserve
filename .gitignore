@@ -1,12 +1,9 @@
-
 # Byte-compiled / optimized / DLL files
-
-**pycache**/
+__pycache__/
 *.py[cod]
 *$py.class
 
 # Distribution / packaging
-
 .Python
 build/
 develop-eggs/
@@ -28,7 +25,6 @@ share/python-wheels/
 MANIFEST
 
 # Virtual environments
-
 .env
 .venv
 env/
@@ -38,35 +34,44 @@ env.bak/
 venv.bak/
 
 # Unit test / coverage reports
-
 htmlcov/
 .tox/
 .nox/
 .coverage
 .coverage.*
 .cache
-pytest_cache/
+.pytest_cache/
 coverage.xml
 *.cover
 *.py,cover
 
 # IDEs and editors
-
 .vscode/
 .idea/
 *.swp
 *.swo
 
 # Mypy / Ruff
-
 .mypy_cache/
 .ruff_cache/
 
 # OS files
-
 .DS_Store
 Thumbs.db
-
 digest.txt
-.pytest_cache/
 .ipynb_checkpoints/
+
+# Agent & Session scratch artifacts
+.serena/
+local_*.md
+local/
+*.log
+*.pid
+release_notes.txt
+
+# Runtime data & certificates
+data/
+certificates/
+*.pem
+*.key
+*.crt
