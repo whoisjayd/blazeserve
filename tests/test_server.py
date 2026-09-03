@@ -33,47 +33,42 @@ def test_dir():
 
 @pytest.fixture
 def server(test_dir):
-    """Start a test server instance."""
-    from blazeserve.server import run_server
+    """Start a test server instance with clean lifecycle teardown."""
+    from blazeserve.server import create_server
 
-    port = 18765  # Use non-standard port for testing
-
-    # Start server in background thread
-    server_thread = threading.Thread(
-        target=run_server,
-        kwargs={
-            "host": "127.0.0.1",
-            "port": port,
-            "base": test_dir,
-            "single": None,
-            "listing": True,
-            "chunk_mb": 256,
-            "sndbuf_mb": 128,
-            "timeout": 60,
-            "rate_mbps": None,
-            "auth": None,
-            "tls_cert": None,
-            "tls_key": None,
-            "cors": True,
-            "cors_origin": "*",
-            "no_cache": False,
-            "index": None,
-            "backlog": 8192,
-            "precompress": True,
-            "max_upload_mb": 100,
-            "verbose": False,
-        },
-        daemon=True,
+    httpd = create_server(
+        host="127.0.0.1",
+        port=0,
+        base=test_dir,
+        single=None,
+        listing=True,
+        chunk_mb=256,
+        sndbuf_mb=128,
+        timeout=10,
+        rate_mbps=None,
+        auth=None,
+        tls_cert=None,
+        tls_key=None,
+        cors=True,
+        cors_origin="*",
+        no_cache=False,
+        index=None,
+        backlog=8192,
+        precompress=True,
+        max_upload_mb=100,
+        verbose=False,
     )
+    actual_port = httpd.server_port
+    server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     server_thread.start()
+    time.sleep(0.05)
 
-    # Wait for server to start
-    time.sleep(0.5)
-
-    yield ("127.0.0.1", port)
-
-    # Server will be cleaned up automatically (daemon thread)
-
+    try:
+        yield ("127.0.0.1", actual_port)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        server_thread.join(timeout=2.0)
 
 class TestBasicServing:
     """Test basic file serving functionality."""
