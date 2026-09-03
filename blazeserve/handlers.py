@@ -340,6 +340,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             if hasattr(self, "client_address") and hasattr(self.server, "ip_limiters"):
                 limiter = self.server.ip_limiters.get_limiter(self.client_address[0], self.RATE_BPS)
                 self.send_header("X-RateLimit-Remaining", str(max(0, int(limiter.tokens))))
+
     def _cors_headers(self) -> None:
         if not self.CORS:
             return
