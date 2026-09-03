@@ -1,0 +1,29 @@
+groups:
+  - name: blazeserve_alerts
+    rules:
+      - alert: BlazeServeInstanceDown
+        expr: up{job="blazeserve"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "BlazeServe instance {{ $labels.instance }} is down"
+          description: "BlazeServe has failed health checks for more than 30 seconds."
+
+      - alert: BlazeServeHighErrorRate
+        expr: rate(blazeserve_errors_total[2m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated error rate detected on {{ $labels.instance }}"
+          description: "BlazeServe is experiencing > 5 HTTP errors/sec over 1 minute."
+
+      - alert: BlazeServeHighActiveConnections
+        expr: blazeserve_requests_active > 1000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High concurrent connections on {{ $labels.instance }}"
+          description: "Active requests exceeded 1000 for more than 2 minutes."
