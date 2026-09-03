@@ -176,7 +176,6 @@ def serve_cmd(
         if not os.path.exists(target):
             raise click.ClickException(f"Path not found: {target}")
         base = os.path.dirname(target) if os.path.isfile(target) else target
-    os.chdir(base)
     if not auth and auth_env:
         val = os.environ.get(auth_env, "")
         if val:
@@ -287,7 +286,6 @@ def send_cmd(
     setup_logging("INFO", json_logs=log_json)
     ap = os.path.abspath(file)
     base = os.path.dirname(ap)
-    os.chdir(base)
     if not auth and auth_env:
         val = os.environ.get(auth_env, "")
         if val:
@@ -549,7 +547,6 @@ def main():
                     base = os.path.dirname(single)
                 else:
                     base = os.path.dirname(target) if os.path.isfile(target) else target
-                os.chdir(base)
                 run_server(
                     host=args.host,
                     port=args.port,
@@ -576,7 +573,6 @@ def main():
             if args.cmd == "send":
                 ap = os.path.abspath(args.file)
                 base = os.path.dirname(ap)
-                os.chdir(base)
                 run_server(
                     host=args.host,
                     port=args.port,
