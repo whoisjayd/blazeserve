@@ -5,6 +5,7 @@ This module contains comprehensive tests for the HTTP server,
 including file serving, range requests, and special endpoints.
 """
 
+import json
 import tempfile
 import threading
 import time
@@ -321,5 +322,76 @@ class TestHTTPHeaders:
 
             assert "Content-Type" in resp.headers
             assert "text/plain" in resp.headers["Content-Type"]
+        finally:
+            conn.close()
+
+
+class TestOperationalEndpoints:
+    """Test k8s operational probes, version, and Prometheus metrics endpoints."""
+
+    def test_live_endpoint(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/__live__")
+            resp = conn.getresponse()
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert data["status"] == "alive"
+        finally:
+            conn.close()
+
+    def test_ready_endpoint_success(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/__ready__")
+            resp = conn.getresponse()
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert data["status"] == "ready"
+        finally:
+            conn.close()
+
+    def test_version_endpoint(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/__version__")
+            resp = conn.getresponse()
+            assert resp.status == 200
+            data = json.loads(resp.read())
+            assert data["name"] == "blazeserve"
+            assert data["version"] == "0.3.0"
+            assert "python" in data
+            assert "platform" in data
+        finally:
+            conn.close()
+
+    def test_prometheus_metrics_endpoint(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("GET", "/__metrics__")
+            resp = conn.getresponse()
+            assert resp.status == 200
+            assert "text/plain" in resp.headers.get("Content-Type", "")
+            body = resp.read().decode("utf-8")
+            assert "# HELP blazeserve_uptime_seconds" in body
+            assert "# TYPE blazeserve_uptime_seconds gauge" in body
+            assert "blazeserve_requests_total" in body
+            assert "blazeserve_bytes_sent_total" in body
+        finally:
+            conn.close()
+
+    def test_operational_head_requests(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            for ep in ["/__live__", "/__ready__", "/__version__", "/__metrics__", "/metrics"]:
+                conn.request("HEAD", ep)
+                resp = conn.getresponse()
+                assert resp.status == 200
+                assert resp.read() == b""
         finally:
             conn.close()
