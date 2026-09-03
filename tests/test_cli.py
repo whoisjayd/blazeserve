@@ -106,3 +106,28 @@ class TestCLIOptions:
 
         assert "--sock-sndbuf-mb" in result.output
         assert "128" in result.output  # Default value
+
+
+class TestDoctorAndVersionJson:
+    """Test doctor environment check and version --json."""
+
+    def test_version_json_flag(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["version", "--json"])
+        assert result.exit_code == 0
+        import json
+
+        data = json.loads(result.output)
+        assert data["version"] == __version__
+        assert data["name"] == "blazeserve"
+
+    def test_doctor_command_success(self, tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["doctor", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Diagnostic" in result.output or "OK" in result.output
+
+    def test_doctor_command_missing_dir(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["doctor", "/nonexistent_path_xyz_123"])
+        assert result.exit_code != 0

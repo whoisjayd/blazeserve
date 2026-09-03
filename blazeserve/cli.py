@@ -134,6 +134,12 @@ def cli() -> None:
 )
 @click.option("--open", "open_browser", is_flag=True, help="Open the URL in a browser on start.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose startup banner.")
+@click.option(
+    "--log-json/--no-log-json",
+    default=False,
+    envvar="BLAZE_LOG_JSON",
+    help="Emit structured JSON log records.",
+)
 def serve_cmd(
     path: str,
     host: str,
@@ -157,8 +163,9 @@ def serve_cmd(
     max_upload_mb: int,
     open_browser: bool,
     verbose: bool,
+    log_json: bool = False,
 ) -> None:
-    setup_logging("INFO" if verbose else "WARNING")
+    setup_logging("INFO" if verbose else "WARNING", json_logs=log_json)
     target = os.path.abspath(path)
     if single:
         single = os.path.abspath(single)
@@ -222,6 +229,7 @@ def serve_cmd(
             cors=cors,
             cors_origin=cors_origin,
             no_cache=no_cache,
+            log_json=log_json,
             index=list(index) if index else None,
             backlog=backlog,
             precompress=precompress,
@@ -246,7 +254,19 @@ def serve_cmd(
 @click.option("--no-cache", is_flag=True)
 @click.option("--backlog", type=click.IntRange(1, 20000), default=8192, show_default=True)
 @click.option("--precompress/--no-precompress", default=True, show_default=True)
-@click.option("--max-upload-mb", type=click.IntRange(0, 1024 * 1024), default=0, show_default=True)
+@click.option(
+    "--max-upload-mb",
+    type=click.IntRange(0, 1024 * 1024),
+    default=0,
+    show_default=True,
+    help="Max upload size in MB (0 = disabled).",
+)
+@click.option(
+    "--log-json/--no-log-json",
+    default=False,
+    envvar="BLAZE_LOG_JSON",
+    help="Emit structured JSON log records.",
+)
 def send_cmd(
     file: str,
     host: str,
@@ -262,8 +282,9 @@ def send_cmd(
     backlog: int,
     precompress: bool,
     max_upload_mb: int,
+    log_json: bool = False,
 ) -> None:
-    setup_logging("INFO")
+    setup_logging("INFO", json_logs=log_json)
     ap = os.path.abspath(file)
     base = os.path.dirname(ap)
     os.chdir(base)
@@ -293,6 +314,7 @@ def send_cmd(
             cors_origin=cors_origin,
             no_cache=no_cache,
             index=None,
+            log_json=log_json,
             backlog=backlog,
             precompress=precompress,
             max_upload_mb=max_upload_mb,
@@ -322,13 +344,26 @@ def checksum_cmd(files):
 
 
 @cli.command("version", short_help="Show version and system info.")
-def version_cmd():
+@click.option("--json", "json_output", is_flag=True, help="Display machine-readable JSON.")
+def version_cmd(json_output: bool = False) -> None:
     """Display version and system information."""
+    import json
     import platform
     import sys
 
     from rich.panel import Panel
     from rich.table import Table
+
+    if json_output:
+        data = {
+            "name": "blazeserve",
+            "version": __version__,
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "platform": platform.system(),
+            "architecture": platform.machine(),
+        }
+        click.echo(json.dumps(data, indent=2))
+        return
 
     # Create info table
     info_table = Table.grid(padding=(0, 2))
@@ -350,6 +385,62 @@ def version_cmd():
             box=box.ROUNDED,
         )
     )
+
+
+@cli.command("doctor", short_help="Validate system environment and server configuration.")
+@click.argument("path", default=".", type=click.Path(path_type=str))
+@click.option("-p", "--port", type=int, default=8000, help="Port to check availability.")
+def doctor_cmd(path: str, port: int) -> None:
+    """Run production readiness diagnostics on paths, ports, and OS capabilities."""
+    import socket
+
+    from rich.table import Table
+
+    tbl = Table(title="⚡ BlazeServe Production Diagnostics", border_style="cyan")
+    tbl.add_column("Component", style="bold")
+    tbl.add_column("Status", style="bold")
+    tbl.add_column("Details")
+
+    all_ok = True
+    abs_p = os.path.abspath(path)
+
+    # Check 1: Base directory
+    if os.path.isdir(abs_p) and os.access(abs_p, os.R_OK):
+        tbl.add_row("Base Path", "[green]OK[/]", f"Readable directory: {abs_p}")
+    else:
+        tbl.add_row("Base Path", "[red]FAIL[/]", f"Cannot read: {abs_p}")
+        all_ok = False
+
+    # Check 2: Port availability
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            tbl.add_row("Port Binding", "[green]OK[/]", f"Port {port} is free to bind")
+        except OSError as e:
+            tbl.add_row("Port Binding", "[red]FAIL[/]", f"Port {port} in use: {e}")
+            all_ok = False
+
+    # Check 3: Zero-Copy Kernel Sendfile
+    has_sendfile = hasattr(os, "sendfile") or hasattr(socket.socket, "sendfile")
+    status_str = "[green]ENABLED[/]" if has_sendfile else "[yellow]FALLBACK[/]"
+    details_str = (
+        "Zero-copy kernel sendfile available"
+        if has_sendfile
+        else "Using mmap/buffered I/O fallback"
+    )
+    tbl.add_row("Zero-Copy I/O", status_str, details_str)
+
+    # Check 4: Sequential Read Ahead
+    has_fadvise = hasattr(os, "posix_fadvise")
+    tbl.add_row(
+        "Sequential Read Ahead",
+        "[green]YES[/]" if has_fadvise else "[dim]N/A (Win32/Darwin)[/]",
+        "POSIX_FADV_SEQUENTIAL optimization",
+    )
+
+    console.print(tbl)
+    if not all_ok:
+        raise click.Abort()
 
 
 @cli.command("benchmark", short_help="Run performance benchmark.")
@@ -443,6 +534,7 @@ def main():
         "checksum",
         "version",
         "benchmark",
+        "doctor",
         "-h",
         "--help",
         "--version",
@@ -522,3 +614,7 @@ def main():
         except Exception as e:
             raise click.ClickException(str(e)) from e
     cli()
+
+
+if __name__ == "__main__":
+    main()
