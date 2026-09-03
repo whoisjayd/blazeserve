@@ -24,6 +24,7 @@ from blazeserve import __version__
 from blazeserve.limiter import TokenBucket
 from blazeserve.security import generate_request_id, is_safe_path
 from blazeserve.ui import render_directory_index
+from blazeserve.utils import parse_basic_auth
 
 DEFAULT_CHUNK_MB = 256
 DEFAULT_SNDBUF_MB = 128
@@ -358,18 +359,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if not self.AUTH_PAIR:
             return True
         hdr = self.headers.get("Authorization")
-        if not hdr or not hdr.startswith("Basic "):
-            self._auth_required()
-            return False
-        import base64
-
-        try:
-            userpass = base64.b64decode(hdr.split(" ", 1)[1]).decode("utf-8")
-            user, pw = userpass.split(":", 1)
-        except Exception:
-            self._auth_required()
-            return False
-        if (user, pw) != self.AUTH_PAIR:
+        creds = parse_basic_auth(hdr)
+        if creds != self.AUTH_PAIR:
             self._auth_required()
             return False
         return True
@@ -844,6 +835,8 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         name = os.path.basename(path.rstrip(os.sep)) or "archive"
         self.send_header("Content-Disposition", f'attachment; filename="{name}.zip"')
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
 
         class _Stream(io.RawIOBase):
