@@ -1,335 +1,208 @@
-# Production Deployment Guide
+# Production Deployment & Operations Guide for BlazeServe
 
-This guide covers deploying BlazeServe in production environments.
+This guide details enterprise deployment workflows, security sandboxing, containerization, systemd process management, reverse proxy optimization, Linux kernel performance tuning, and SRE monitoring for **BlazeServe**.
+
+---
 
 ## Table of Contents
 
-- [Installation](#installation)
-- [Systemd Service](#systemd-service)
-- [Docker Deployment](#docker-deployment)
-- [Reverse Proxy Setup](#reverse-proxy-setup)
-- [Performance Tuning](#performance-tuning)
-- [Security Best Practices](#security-best-practices)
-- [Monitoring](#monitoring)
+1. [Docker & Container Deployment](#1-docker--container-deployment)
+2. [Kubernetes Cloud-Native Deployment](#2-kubernetes-cloud-native-deployment)
+3. [Systemd Service & Socket Activation](#3-systemd-service--socket-activation)
+4. [Reverse Proxy Configurations (Nginx, Caddy, Traefik)](#4-reverse-proxy-configurations)
+5. [Linux Kernel Network Tuning (sysctl)](#5-linux-kernel-network-tuning)
+6. [SRE Monitoring (Prometheus & Grafana)](#6-sre-monitoring)
+7. [Production Health Diagnostics](#7-production-health-diagnostics)
 
-## Installation
+---
 
-### From PyPI (Recommended)
+## 1. Docker & Container Deployment
+
+BlazeServe includes a production-hardened multi-stage [Dockerfile](./Dockerfile) and [docker-compose.yml](./docker-compose.yml).
+
+### Security Architecture
+
+- **Unprivileged Runtime**: Runs as system user `blazeserve` (`uid: 10001`, `gid: 10001`) with no login shell (`/sbin/nologin`).
+- **Read-Only Root Filesystem**: `read_only: true` with a temporary `tmpfs` volume mounted on `/tmp`.
+- **Capability Drop**: Drops all Linux capabilities (`cap_drop: [ALL]`).
+- **Privilege Escalation Blocked**: `no-new-privileges:true`.
+- **Automated Healthcheck**: Native Docker `HEALTHCHECK` querying `http://127.0.0.1:8000/__live__`.
+
+### Quick Launch with Docker Compose
 
 ```bash
-pip install blazeserve
+# Start container with resource limits (2 CPUs, 512MB RAM)
+docker compose up -d
+
+# Inspect health and logs
+docker compose ps
+docker compose logs -f
 ```
 
-### From Source
+---
+
+## 2. Kubernetes Cloud-Native Deployment
+
+Production manifests are located in [`deploy/k8s/`](./deploy/k8s/):
+
+- [`deployment.yaml`](./deploy/k8s/deployment.yaml): 2 replicas with non-root security context, dropped capabilities, and resource requests/limits.
+- [`service.yaml`](./deploy/k8s/service.yaml): ClusterIP service exposing port 80.
+- [`ingress.yaml`](./deploy/k8s/ingress.yaml): Ingress routing with unbuffered streaming annotations for large range downloads.
+- [`servicemonitor.yaml`](./deploy/k8s/servicemonitor.yaml): Native Prometheus Operator configuration scraping `/__metrics__` every 10s.
+
+### Deployment with Kustomize
 
 ```bash
-git clone https://github.com/whoisjayd/blazeserve.git
-cd blazeserve
-pip install -e .
+# Apply all Kubernetes manifests
+kubectl apply -k deploy/k8s/
+
+# Monitor rollout status
+kubectl rollout status deployment/blazeserve
 ```
 
-## Systemd Service
+---
 
-Create a systemd service file for automatic startup and process management.
+## 3. Systemd Service & Socket Activation
 
-### Basic Service
+Systemd unit files are located in [`deploy/systemd/`](./deploy/systemd/):
 
-Create `/etc/systemd/system/blazeserve.service`:
+- [`blazeserve.service`](./deploy/systemd/blazeserve.service): Hardened daemon service unit.
+- [`blazeserve.socket`](./deploy/systemd/blazeserve.socket): Systemd socket activation unit.
+
+### Hardening Directives
 
 ```ini
-[Unit]
-Description=BlazeServe HTTP File Server
-After=network.target
-Documentation=https://github.com/whoisjayd/blazeserve
-
 [Service]
-Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/srv/downloads
-ExecStart=/usr/local/bin/blaze serve /srv/downloads \
-    --port 8080 \
-    --rate-mbps 200 \
-    --cors
-Restart=on-failure
-RestartSec=5s
-
-# Security hardening
-PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/srv/downloads
-
-[Install]
-WantedBy=multi-user.target
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=true
+ReadWritePaths=/srv/blazeserve
+LimitNOFILE=1048576
+LimitNPROC=512
 ```
 
-### Enable and Start
+### Setup on Linux Host
 
 ```bash
+# 1. Create system user and directory
+sudo useradd -r -u 10001 -s /sbin/nologin -d /srv/blazeserve blazeserve
+sudo mkdir -p /srv/blazeserve
+sudo chown -R blazeserve:blazeserve /srv/blazeserve
+
+# 2. Install unit files
+sudo cp deploy/systemd/blazeserve.service /etc/systemd/system/
+sudo cp deploy/systemd/blazeserve.socket /etc/systemd/system/
+
+# 3. Reload systemd and enable service
 sudo systemctl daemon-reload
-sudo systemctl enable blazeserve
-sudo systemctl start blazeserve
+sudo systemctl enable --now blazeserve.service
+
+# 4. Check status
 sudo systemctl status blazeserve
 ```
 
-### View Logs
+---
+
+## 4. Reverse Proxy Configurations
+
+Reverse proxy blueprints are located in [`deploy/reverse-proxy/`](./deploy/reverse-proxy/):
+
+### Critical Requirement: Disable Proxy Buffering
+Because BlazeServe delivers multi-gigabyte files via zero-copy `sendfile` and range streams, proxy buffering **must be disabled** to prevent disk buffer contention.
+
+### Nginx ([`deploy/reverse-proxy/nginx.conf`](./deploy/reverse-proxy/nginx.conf))
+```nginx
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_http_version 1.1;
+client_max_body_size 0;
+```
+
+### Caddy ([`deploy/reverse-proxy/Caddyfile`](./deploy/reverse-proxy/Caddyfile))
+```caddy
+reverse_proxy 127.0.0.1:8000 {
+    flush_interval -1
+}
+```
+
+### Traefik v3 ([`deploy/reverse-proxy/traefik.yml`](./deploy/reverse-proxy/traefik.yml))
+Includes automated health checks pointing to `/__live__` with dynamic load balancing.
+
+---
+
+## 5. Linux Kernel Network Tuning
+
+High-concurrency HTTP services require kernel socket adjustments to eliminate dropped packets during connection spikes.
+
+Files located in [`deploy/linux-tuning/`](./deploy/linux-tuning/):
+- [`sysctl-blazeserve.conf`](./deploy/linux-tuning/sysctl-blazeserve.conf): High-performance network knobs.
+- [`limits.conf`](./deploy/linux-tuning/limits.conf): Open file descriptor limits (`1048576`).
+- [`tuning.sh`](./deploy/linux-tuning/tuning.sh): Automated audit and apply script.
+
+### Key Tunables Applied
+
+| Parameter | Recommended Value | Purpose |
+| :--- | :--- | :--- |
+| `net.core.somaxconn` | `65535` | Maximum socket listen backlog queue. |
+| `net.ipv4.tcp_max_syn_backlog` | `32768` | SYN backlog queue length. |
+| `net.ipv4.tcp_fin_timeout` | `15` | Fast reclamation of closed sockets. |
+| `net.ipv4.tcp_tw_reuse` | `1` | Reuse TIME-WAIT sockets safely. |
+| `net.core.rmem_max` / `wmem_max` | `16777216` | 16MB TCP window buffer sizing. |
+| `fs.file-max` | `2097152` | System-wide open file limits. |
+
+### Run the Tuning Tool
 
 ```bash
-sudo journalctl -u blazeserve -f
+# Check current system configuration
+./deploy/linux-tuning/tuning.sh --check
+
+# Dry-run configuration changes
+./deploy/linux-tuning/tuning.sh --dry-run
+
+# Apply permanently (requires sudo)
+sudo ./deploy/linux-tuning/tuning.sh --apply
 ```
 
-## Docker Deployment
+---
 
-### Basic Dockerfile
+## 6. SRE Monitoring
 
-```dockerfile
-FROM python:3.12-slim
+Observability templates are located in [`deploy/monitoring/`](./deploy/monitoring/):
 
-# Install BlazeServe
-RUN pip install --no-cache-dir blazeserve
+- [`prometheus.yml`](./deploy/monitoring/prometheus.yml): Prometheus scrape job definition targeting `/__metrics__`.
+- [`alerts.yml`](./deploy/monitoring/alerts.yml): Pre-configured alerts for instance downtime, high error rates, and connection saturation.
+- [`grafana-dashboard.json`](./deploy/monitoring/grafana-dashboard.json): Ready-to-import Grafana dashboard.
 
-# Create data directory
-WORKDIR /data
-
-# Expose port
-EXPOSE 8000
-
-# Run server
-CMD ["blaze", "serve", ".",
-     "--host", "0.0.0.0",
-     "--port", "8000",
-     "--chunk-mb", "256",
-     "--sock-sndbuf-mb", "128"]
-```
-
-### Build and Run
-
-```bash
-docker build -t blazeserve .
-docker run -d \
-    -p 8000:8000 \
-    -v /path/to/files:/data:ro \
-    --name blazeserve \
-    blazeserve
-```
-
-### Docker Compose
-
-Create `docker-compose.yml`:
+### Prometheus Scrape Configuration
 
 ```yaml
-version: '3.8'
-
-services:
-  blazeserve:
-    image: blazeserve:latest
-    container_name: blazeserve
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    volumes:
-      - /path/to/files:/data:ro
-    environment:
-      - BLAZE_AUTH=user:password
-    command: >
-      blaze serve /data
-        --host 0.0.0.0
-        --port 8000
-        --auth-env BLAZE_AUTH
-        --cors
-        --rate-mbps 100
+scrape_configs:
+  - job_name: "blazeserve"
+    metrics_path: "/__metrics__"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
 ```
 
-## Reverse Proxy Setup
+---
 
-### Nginx
+## 7. Production Health Diagnostics
 
-```nginx
-upstream blazeserve {
-    server 127.0.0.1:8000;
-}
-
-server {
-    listen 80;
-    server_name files.example.com;
-
-    location / {
-        proxy_pass http://blazeserve;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Support for large files
-        proxy_request_buffering off;
-        proxy_buffering off;
-        
-        # Timeouts
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-    }
-}
-```
-
-### Caddy
-
-```caddyfile
-files.example.com {
-    reverse_proxy localhost:8000 {
-        flush_interval -1
-    }
-}
-```
-
-## Performance Tuning
-
-### For LAN/High-Speed Networks
+BlazeServe includes built-in diagnostic tools for pre-flight environment checks:
 
 ```bash
-blaze serve . \
-    --chunk-mb 512 \
-    --sock-sndbuf-mb 256 \
-    --backlog 16384
+# Validate directories, port bindings, and OS zero-copy support
+blaze doctor /data --port 8080
+
+# Machine-readable version check
+blaze version --json
+
+# Client throughput benchmark test
+blaze benchmark --url http://127.0.0.1:8080 --size-mb 100
 ```
-
-### For Internet Serving
-
-```bash
-blaze serve . \
-    --chunk-mb 256 \
-    --sock-sndbuf-mb 128 \
-    --rate-mbps 50 \
-    --backlog 8192
-```
-
-### System Limits
-
-Increase system limits for high-traffic scenarios:
-
-```bash
-# /etc/sysctl.conf
-net.core.somaxconn = 16384
-net.ipv4.tcp_max_syn_backlog = 8192
-net.core.netdev_max_backlog = 16384
-net.ipv4.tcp_fin_timeout = 30
-```
-
-Apply changes:
-
-```bash
-sudo sysctl -p
-```
-
-## Security Best Practices
-
-### 1. Use Authentication
-
-```bash
-export BLAZE_AUTH="username:strong_password"
-blaze serve . --auth-env BLAZE_AUTH
-```
-
-### 2. Enable TLS
-
-```bash
-blaze serve . \
-    --tls-cert /path/to/cert.pem \
-    --tls-key /path/to/key.pem
-```
-
-### 3. Limit Upload Size
-
-```bash
-blaze serve . --max-upload-mb 100
-```
-
-### 4. Run as Non-Root User
-
-Never run as root. Use a dedicated user:
-
-```bash
-sudo useradd -r -s /bin/false blazeserve
-sudo chown -R blazeserve:blazeserve /srv/files
-```
-
-### 5. Firewall Configuration
-
-```bash
-# Allow only specific IPs (example)
-sudo ufw allow from 192.168.1.0/24 to any port 8000
-sudo ufw enable
-```
-
-## Monitoring
-
-### Health Check
-
-```bash
-curl http://localhost:8000/__health__
-```
-
-### Performance Metrics
-
-```bash
-curl http://localhost:8000/__perf__ | jq
-```
-
-### Prometheus Integration
-
-Export metrics for Prometheus:
-
-```bash
-# Example script
-while true; do
-    curl -s http://localhost:8000/__perf__ | \
-        jq -r '"blazeserve_bytes_sent \(.bytes_sent)
-blazeserve_requests_total \(.requests_total)
-blazeserve_requests_active \(.requests_active)
-blazeserve_uptime_seconds \(.uptime_seconds)"' > /var/lib/node_exporter/blazeserve.prom
-    sleep 10
-done
-```
-
-### Log Aggregation
-
-Configure systemd journal forwarding to your log aggregation system.
-
-## Benchmarking
-
-Test your deployment:
-
-```bash
-blaze benchmark --url http://localhost:8000 --size-mb 100
-```
-
-## Troubleshooting
-
-### High CPU Usage
-
-- Reduce `--chunk-mb` value
-- Enable rate limiting with `--rate-mbps`
-
-### Memory Issues
-
-- Reduce `--chunk-mb` value
-- Reduce `--sock-sndbuf-mb` value
-- Lower `--backlog` value
-
-### Connection Refused
-
-- Check firewall settings
-- Verify port is not already in use
-- Check SELinux/AppArmor policies
-
-## Support
-
-- GitHub Issues: https://github.com/whoisjayd/blazeserve/issues
-- Documentation: https://github.com/whoisjayd/blazeserve
-
-## License
-
-MIT License - see LICENSE file for details.

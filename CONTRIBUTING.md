@@ -17,10 +17,10 @@ pip install -e ".[dev]"
 3. Run tests, lint, and type-check:
 
 ```bash
-pytest -q
+pytest -v --cov=blazeserve
 ruff check .
+ruff format --check .
 mypy blazeserve
-```
 
 4. (Optional) Install pre-commit hooks to run checks automatically:
 
@@ -39,12 +39,17 @@ pre-commit install
 
 ## Commit messages
 
-Use clear, descriptive messages. If your change fixes an issue, include `Fixes #123` in the description.
+We follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+- `feat:` New features or capabilities
+- `fix:` Bug fixes and corrections
+- `chore:` Dependencies, git hygiene, and tooling
+- `docs:` Documentation improvements
+- `ci:` GitHub Actions and release automation
 
 ## Code style
 
-The codebase prefers:
-
--   Python ≥ 3.9
--   `ruff` for linting
--   `mypy` for type hints (best effort)
+The codebase adheres to:
+- Python ≥ 3.10
+- `ruff` for linting and code formatting (line length 100)
+- `mypy` strict type checking on `blazeserve`
+- Google-style docstrings on public APIs
