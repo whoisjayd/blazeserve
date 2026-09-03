@@ -1,0 +1,24 @@
+# Production Caddyfile for BlazeServe
+:80 {
+    encode zstd gzip
+
+    # Immediate flush for zero-latency streaming of range downloads
+    reverse_proxy 127.0.0.1:8000 {
+        flush_interval -1
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Defense-in-depth security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

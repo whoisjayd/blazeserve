@@ -1,0 +1,40 @@
+[Unit]
+Description=BlazeServe High-Performance HTTP File Server
+Documentation=https://github.com/whoisjayd/blazeserve
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blazeserve
+Group=blazeserve
+WorkingDirectory=/srv/blazeserve
+ExecStart=/usr/local/bin/blaze serve /srv/blazeserve \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --chunk-mb 256 \
+    --sock-sndbuf-mb 128 \
+    --cors \
+    --log-json
+
+Restart=on-failure
+RestartSec=5s
+
+# Security Hardening Directives
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=true
+ReadWritePaths=/srv/blazeserve
+
+# Resource Limits
+LimitNOFILE=1048576
+LimitNPROC=512
+
+[Install]
+WantedBy=multi-user.target

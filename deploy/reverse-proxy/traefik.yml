@@ -1,0 +1,15 @@
+# Traefik v3 Static Configuration for BlazeServe
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  file:
+    filename: "/etc/traefik/traefik-dynamic.yml"
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json

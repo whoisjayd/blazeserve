@@ -1,0 +1,19 @@
+# Traefik v3 Dynamic Configuration for BlazeServe
+http:
+  routers:
+    blazeserve-router:
+      rule: "PathPrefix(`/`)"
+      service: blazeserve-service
+      entryPoints:
+        - web
+
+  services:
+    blazeserve-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8000"
+        healthCheck:
+          path: "/__live__"
+          interval: "10s"
+          timeout: "3s"
+        passHostHeader: true
