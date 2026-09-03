@@ -1,0 +1,17 @@
+# Prometheus Scrape Configuration for BlazeServe SRE Monitoring
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: "blazeserve"
+    metrics_path: "/__metrics__"
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+        labels:
+          environment: "production"
+          service: "blazeserve"
+          role: "edge-file-server"
