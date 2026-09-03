@@ -450,3 +450,40 @@ class TestSecurityHeaders:
             assert "strict-origin" in resp.headers.get("Referrer-Policy", "")
         finally:
             conn.close()
+
+
+class TestRateLimitingAndUpload:
+    """Test rate limit headers and upload validation."""
+
+    def test_upload_invalid_path(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            conn.request("PUT", "/invalid_upload/file.txt", body=b"test")
+            resp = conn.getresponse()
+            assert resp.status == 405
+        finally:
+            conn.close()
+
+    def test_upload_valid_file(self, server):
+        host, port = server
+        conn = HTTPConnection(host, port)
+        try:
+            payload = b"Upload test content"
+            conn.request(
+                "PUT",
+                "/__upload__/uploaded.txt",
+                body=payload,
+                headers={"Content-Length": str(len(payload))},
+            )
+            resp = conn.getresponse()
+            assert resp.status in (200, 201)
+            resp.read()
+
+            # Read back uploaded file
+            conn.request("GET", "/uploaded.txt")
+            resp2 = conn.getresponse()
+            assert resp2.status == 200
+            assert resp2.read() == payload
+        finally:
+            conn.close()

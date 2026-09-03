@@ -337,7 +337,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.send_header("X-Request-ID", req_id)
         if self.RATE_BPS:
             self.send_header("X-RateLimit-Limit", str(int(self.RATE_BPS)))
-
+            if hasattr(self, "client_address") and hasattr(self.server, "ip_limiters"):
+                limiter = self.server.ip_limiters.get_limiter(self.client_address[0], self.RATE_BPS)
+                self.send_header("X-RateLimit-Remaining", str(max(0, int(limiter.tokens))))
     def _cors_headers(self) -> None:
         if not self.CORS:
             return
@@ -578,7 +580,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         """Optimized range sender with zero-copy sendfile and memory-safe mmap."""
         s = self.connection
         total = end - start + 1
-        limiter = TokenBucket(self.RATE_BPS) if self.RATE_BPS else None
+        limiter = None
+        if self.RATE_BPS:
+            if hasattr(self, "client_address") and hasattr(self.server, "ip_limiters"):
+                limiter = self.server.ip_limiters.get_limiter(self.client_address[0], self.RATE_BPS)
+            else:
+                limiter = TokenBucket(self.RATE_BPS)
 
         # Fast path 1: Zero-copy sendfile
         if full and start == 0 and hasattr(s, "sendfile"):
