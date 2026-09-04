@@ -8,7 +8,7 @@ This guide details enterprise deployment workflows, security sandboxing, contain
 
 1. [Docker & Container Deployment](#1-docker--container-deployment)
 2. [Kubernetes Cloud-Native Deployment](#2-kubernetes-cloud-native-deployment)
-3. [Systemd Service & Socket Activation](#3-systemd-service--socket-activation)
+3. [Systemd Service](#3-systemd-service)
 4. [Reverse Proxy Configurations (Nginx, Caddy, Traefik)](#4-reverse-proxy-configurations)
 5. [Linux Kernel Network Tuning (sysctl)](#5-linux-kernel-network-tuning)
 6. [SRE Monitoring (Prometheus & Grafana)](#6-sre-monitoring)
@@ -43,31 +43,30 @@ docker compose logs -f
 
 ## 2. Kubernetes Cloud-Native Deployment
 
-Production manifests are located in [`deploy/k8s/`](./deploy/k8s/):
+The default Kustomize deployment contains:
 
-- [`deployment.yaml`](./deploy/k8s/deployment.yaml): 2 replicas with non-root security context, dropped capabilities, and resource requests/limits.
-- [`service.yaml`](./deploy/k8s/service.yaml): ClusterIP service exposing port 80.
-- [`ingress.yaml`](./deploy/k8s/ingress.yaml): Ingress routing with unbuffered streaming annotations for large range downloads.
-- [`servicemonitor.yaml`](./deploy/k8s/servicemonitor.yaml): Native Prometheus Operator configuration scraping `/__metrics__` every 10s.
+- [`deployment.yaml`](./deploy/k8s/deployment.yaml): one hardened replica with an ephemeral `emptyDir` data volume.
+- [`service.yaml`](./deploy/k8s/service.yaml): an internal ClusterIP Service exposing port 80.
+
+The single replica prevents clients from seeing inconsistent content across independent `emptyDir` volumes. Replace that volume with storage providing the required shared access semantics before scaling beyond one replica.
+
+[`ingress.yaml`](./deploy/k8s/ingress.yaml) and [`servicemonitor.yaml`](./deploy/k8s/servicemonitor.yaml) are optional and deliberately excluded from [`kustomization.yaml`](./deploy/k8s/kustomization.yaml). Apply them individually only after installing and configuring the corresponding Nginx Ingress or Prometheus Operator controller.
 
 ### Deployment with Kustomize
 
 ```bash
-# Apply all Kubernetes manifests
+# Apply the private, single-replica default.
 kubectl apply -k deploy/k8s/
 
-# Monitor rollout status
+# Monitor rollout status.
 kubectl rollout status deployment/blazeserve
 ```
 
 ---
 
-## 3. Systemd Service & Socket Activation
+## 3. Systemd Service
 
-Systemd unit files are located in [`deploy/systemd/`](./deploy/systemd/):
-
-- [`blazeserve.service`](./deploy/systemd/blazeserve.service): Hardened daemon service unit.
-- [`blazeserve.socket`](./deploy/systemd/blazeserve.socket): Systemd socket activation unit.
+[`deploy/systemd/blazeserve.service`](./deploy/systemd/blazeserve.service) runs BlazeServe as a hardened daemon bound to its own listening socket. BlazeServe does not consume systemd socket-activation file descriptors.
 
 ### Hardening Directives
 
@@ -95,9 +94,8 @@ sudo useradd -r -u 10001 -s /sbin/nologin -d /srv/blazeserve blazeserve
 sudo mkdir -p /srv/blazeserve
 sudo chown -R blazeserve:blazeserve /srv/blazeserve
 
-# 2. Install unit files
+# 2. Install the service unit
 sudo cp deploy/systemd/blazeserve.service /etc/systemd/system/
-sudo cp deploy/systemd/blazeserve.socket /etc/systemd/system/
 
 # 3. Reload systemd and enable service
 sudo systemctl daemon-reload
@@ -121,7 +119,7 @@ Because BlazeServe delivers multi-gigabyte files via zero-copy `sendfile` and ra
 proxy_buffering off;
 proxy_request_buffering off;
 proxy_http_version 1.1;
-client_max_body_size 0;
+client_max_body_size 100m;
 ```
 
 ### Caddy ([`deploy/reverse-proxy/Caddyfile`](./deploy/reverse-proxy/Caddyfile))
@@ -175,19 +173,18 @@ sudo ./deploy/linux-tuning/tuning.sh --apply
 
 Observability templates are located in [`deploy/monitoring/`](./deploy/monitoring/):
 
-- [`prometheus.yml`](./deploy/monitoring/prometheus.yml): Prometheus scrape job definition targeting `/__metrics__`.
-- [`alerts.yml`](./deploy/monitoring/alerts.yml): Pre-configured alerts for instance downtime, high error rates, and connection saturation.
-- [`grafana-dashboard.json`](./deploy/monitoring/grafana-dashboard.json): Ready-to-import Grafana dashboard.
+- [`prometheus.yml`](./deploy/monitoring/prometheus.yml): an in-cluster scrape job targeting the internal `blazeserve.default.svc.cluster.local:80` Service.
+- [`alerts.yml`](./deploy/monitoring/alerts.yml): alerts for instance downtime, errors, and request saturation.
+- [`grafana-dashboard.json`](./deploy/monitoring/grafana-dashboard.json): a Grafana dashboard to import.
 
-### Prometheus Scrape Configuration
+The default target is reachable from Prometheus running inside the Kubernetes cluster without publishing the ClusterIP Service. For a host Prometheus deployment, change the target to the systemd bind address `127.0.0.1:8080`; for Prometheus on the Docker Compose network, use `blazeserve:8000`.
 
 ```yaml
 scrape_configs:
   - job_name: "blazeserve"
     metrics_path: "/__metrics__"
-    scrape_interval: 10s
     static_configs:
-      - targets: ["127.0.0.1:8000"]
+      - targets: ["blazeserve.default.svc.cluster.local:80"]
 ```
 
 ---

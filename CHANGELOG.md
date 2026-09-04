@@ -18,9 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Modern Responsive HTML5 Web UI**: Beautiful glassmorphic directory explorer with dark/light mode (`prefers-color-scheme`), client-side instant search filter, file type icons, and drag-and-drop upload zone.
 - **SRE Environment Diagnostic (`blaze doctor`)**: CLI command auditing directory read permissions, socket port availability, kernel zero-copy capabilities, and sequential read-ahead support.
 - **Machine-Readable Version**: Added `--json` flag to `blaze version` command.
-- **Cloud & Kubernetes Artifacts**: Added production Kubernetes manifests (`deploy/k8s/`: Deployment, Service, Ingress, and ServiceMonitor).
+- **Cloud & Kubernetes Artifacts**: Added a production `Deployment` and `Service`, with optional Ingress and ServiceMonitor templates.
 - **SRE Monitoring Stack**: Added Prometheus scrape configuration (`deploy/monitoring/prometheus.yml`), Prometheus alert rules (`deploy/monitoring/alerts.yml`), and production Grafana dashboard JSON (`deploy/monitoring/grafana-dashboard.json`).
-- **DevOps Blueprints**: Hardened systemd service and socket activation units (`deploy/systemd/`), unbuffered streaming reverse proxy configs for Nginx, Caddy, and Traefik v3 (`deploy/reverse-proxy/`), and Linux kernel networking sysctl tuning script (`deploy/linux-tuning/tuning.sh`).
+- **DevOps Blueprints**: Added a hardened systemd service, unbuffered streaming reverse proxy configs for Nginx, Caddy, and Traefik v3 (`deploy/reverse-proxy/`), and Linux kernel networking sysctl tuning script (`deploy/linux-tuning/tuning.sh`).
 - **Multi-Stage Dockerfile**: Hardened distroless-style build using unprivileged system user `blazeserve` (`uid: 10001`), read-only root filesystem, dropped Linux capabilities, and native Docker container `HEALTHCHECK`.
 
 ### Changed
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Memory-Safe Mmap Lifecycle**: Fixed Windows `BufferError` and file-locking `PermissionError` by implementing deterministic `memoryview.release()` before closing `mmap` instances in `_send_range`.
 - **Graceful Server Shutdown**: Handled `SIGINT` and `SIGTERM` signals for non-blocking server shutdown, connection draining, and clean socket closure.
-- **Zero-Downtime TLS Hot-Reload**: Handled `SIGHUP` signal on POSIX systems to reload SSL certificates without dropping active connections.
+- **TLS Lifecycle**: Removed the unsafe `SIGHUP` listener rewrapping path; certificate rotation now uses a controlled process restart.
 
 ---
 
