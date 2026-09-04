@@ -56,7 +56,9 @@ def test_cli_serve_invalid_path():
     runner = CliRunner()
     result = runner.invoke(cli, ["serve", "/nonexistent_dir_random_12345"])
     assert result.exit_code != 0
-    assert "does not exist" in result.output.lower() or "not found" in result.output.lower()
+    output = (result.output + result.stderr).lower()
+    assert "invalid value" in output
+    assert "exist" in output
 
 
 @pytest.mark.e2e
@@ -64,4 +66,6 @@ def test_cli_serve_invalid_single():
     runner = CliRunner()
     result = runner.invoke(cli, ["serve", "--single", "/nonexistent_file_random_12345.txt"])
     assert result.exit_code != 0
-    assert "does not exist" in result.output.lower() or "not found" in result.output.lower()
+    output = (result.output + result.stderr).lower()
+    assert "invalid value" in output
+    assert "exist" in output
