@@ -28,7 +28,7 @@ spec:
         - name: blazeserve
           image: ghcr.io/whoisjayd/blazeserve:v0.3.0
           imagePullPolicy: IfNotPresent
-          args: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000", "--log-json", "--max-upload-mb", "100"]
+          args: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000", "--log-json"]
           ports:
             - containerPort: 8000
               name: http
@@ -61,7 +61,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-              readOnly: false
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:

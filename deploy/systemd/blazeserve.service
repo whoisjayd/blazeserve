@@ -11,7 +11,7 @@ Group=blazeserve
 WorkingDirectory=/srv/blazeserve
 ExecStart=/usr/local/bin/blaze serve /srv/blazeserve \
     --host 127.0.0.1 \
-    --port 8080 \
+    --port 8000 \
     --chunk-mb 256 \
     --sock-sndbuf-mb 128 \
     --cors \

@@ -9,7 +9,7 @@ kubectl apply -k deploy/k8s/
 kubectl rollout status deployment/blazeserve
 ```
 
-Only `deployment.yaml` and `service.yaml` are in `kustomization.yaml`. The pod runs as uid/gid 10001 with a read-only root filesystem, dropped capabilities, resource limits, and liveness/readiness probes.
+Only `deployment.yaml` and `service.yaml` are in `kustomization.yaml`. The pod runs as uid/gid 10001 with a read-only root filesystem, data mount, dropped capabilities, resource limits, and liveness/readiness probes. Uploads are disabled by default; enable them only with authenticated clients and explicitly writable storage.
 
 The replica count is intentionally `1`: independent `emptyDir` volumes do not share files. Before scaling out, replace the data volume with storage that provides the required shared access semantics and update the volume mount accordingly.
 
@@ -21,7 +21,7 @@ After replacing `files.example.com` and configuring an Nginx Ingress Controller,
 kubectl apply -f deploy/k8s/ingress.yaml
 ```
 
-The ingress disables request/response buffering for streaming and limits request bodies to `100m`, matching the deployment's `--max-upload-mb 100` setting. It is intentionally excluded from the default deployment so applying Kustomize does not expose BlazeServe publicly.
+The ingress disables request/response buffering for streaming. It is intentionally excluded from the default deployment so applying Kustomize does not expose BlazeServe publicly.
 
 ## Optional Prometheus Operator integration
 

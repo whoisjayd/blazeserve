@@ -4,7 +4,7 @@
 
 **High-Performance HTTP Edge Service & File Platform**
 
-*Engineered with Zero-Copy Kernel I/O, Prometheus Telemetry, RFC 7232 Caching, and Enterprise Cloud Workflows*
+_Engineered with Zero-Copy Kernel I/O, Prometheus Telemetry, RFC 7232 Caching, and Enterprise Cloud Workflows_
 
 [![PyPI Version](https://img.shields.io/pypi/v/blazeserve.svg?color=blue&style=flat-square)](https://pypi.org/project/blazeserve/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/blazeserve.svg?style=flat-square)](https://pypi.org/project/blazeserve/)
@@ -27,13 +27,12 @@
 
 </div>
 
----
-
 ## ⚡ Why BlazeServe?
 
 Standard HTTP file servers (like `python -m http.server`) suffer from high CPU utilization, memory bloat on large transfers, missing conditional cache headers, and a complete absence of production observability.
 
 **BlazeServe** re-engineers Python's HTTP transport into a production-grade edge service:
+
 - **Zero-Copy Kernel I/O**: Direct kernel-to-socket transfers using `sendfile(2)` bypasses user-space buffers for multi-gigabyte files.
 - **Deterministic Memory-Mapped Streaming**: High-throughput windowed `mmap` with strict `memoryview` pointer lifecycle management guarantees memory safety and eliminates Windows file-locking bugs.
 - **SRE-Native Observability**: Native Prometheus OpenMetrics exposition (`/__metrics__`, `/metrics`) exposing Golden Signals (throughput, latency, active connections, error counters) alongside Kubernetes liveness (`/__live__`) and readiness (`/__ready__`) health probes.
@@ -41,8 +40,6 @@ Standard HTTP file servers (like `python -m http.server`) suffer from high CPU u
 - **Traffic Shaping & Rate Limiting**: Thread-safe per-client-IP token bucket rate limiting with RFC 6585 standard headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`) and HTTP `429 Too Many Requests` backoff.
 - **Defense-in-Depth Security**: Automatic injection of `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security`, `Permissions-Policy`, and path traversal verification.
 - **Modern Responsive Web UI**: Glassmorphic HTML5 directory explorer with dark/light themes, instant client-side file filtering, SVG file type icons, and drag-and-drop uploads.
-
----
 
 ## 🏛️ Architecture
 
@@ -83,15 +80,15 @@ flowchart TD
 
 ## 🎯 Engineering Disciplines Demonstrated
 
-This project is architected as an end-to-end demonstration of senior engineering capabilities:
-
 ### 1. Backend Engineering
+
 - **Zero-Copy & Memory Safety**: Dual-path file transmission leveraging kernel `sendfile` and memoryview-managed `mmap` with strict pointer cleanup (`view.release()`) preventing file descriptor leaks across Windows and Linux.
 - **HTTP Specification Compliance**: Strict compliance with RFC 7232 (Conditional Requests), RFC 7233 (Range Requests & Multipart Byte-Ranges), and RFC 6585 (Rate Limiting).
 - **Graceful Lifecycle Management**: Signal traps (`SIGINT`, `SIGTERM`) initiate shutdown; the threaded server drains active request handlers before closing its listener.
 - **TLS by Explicit Restart**: TLS requires a certificate/key pair and uses TLS 1.2 or newer. Certificate rotation is performed by a controlled service restart.
 
 ### 2. Site Reliability Engineering (SRE)
+
 - **Golden Signals Monitoring**: Native metrics covering Latency, Traffic (`requests_total`, RPS), Errors (`errors_total`), and Saturation (`requests_active`, buffer usage).
 - **Prometheus Telemetry**: Zero-dependency OpenMetrics text format generator for Prometheus scraping (`deploy/monitoring/prometheus.yml`).
 - **Production Grafana Dashboard**: Ready-to-import dashboard (`deploy/monitoring/grafana-dashboard.json`) visualizing real-time bandwidth egress, active connections, and error ratios.
@@ -99,6 +96,7 @@ This project is architected as an end-to-end demonstration of senior engineering
 - **System Health Diagnostics**: Built-in `blaze doctor` verifying file readability, socket bindability, zero-copy support, and kernel optimization flags.
 
 ### 3. Cloud & DevOps Engineering
+
 - **Multi-Stage Containerization**: Hardened `Dockerfile` built on `python:3.13-slim` using a dedicated unprivileged user (`blazeserve:10001`), read-only root filesystem, dropped capabilities, and native container `HEALTHCHECK`.
 - **Cloud Orchestration**: Hardened `docker-compose.yml` with CPU/memory resource quotas and security constraints.
 - **Kubernetes Manifests**: Hardened `Deployment` and `Service` defaults. Optional Ingress and ServiceMonitor manifests are available for deployments that provide their required controllers.
@@ -118,7 +116,6 @@ blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
 
 Throughput, latency, and memory usage depend on the host kernel, storage, network, TLS, and reverse-proxy configuration. Publish benchmark figures only with the command, workload, machine specifications, and comparison methodology used to obtain them.
 
----
 
 ## 🚀 Quick Start
 
@@ -158,20 +155,19 @@ docker run -d \
 
 BlazeServe provides dedicated operational endpoints that do not conflict with served filesystem assets:
 
-| Endpoint | Method | Response Format | Purpose |
-| :--- | :---: | :---: | :--- |
-| `/__live__` | `GET`, `HEAD` | `application/json` | **Kubernetes Liveness Probe**: Returns `200 {"status":"alive"}` when process is healthy. |
-| `/__ready__` | `GET`, `HEAD` | `application/json` | **Kubernetes Readiness Probe**: Returns `200 {"status":"ready"}` if root directory is readable; returns `503` if storage is disconnected. |
-| `/__metrics__` | `GET`, `HEAD` | `text/plain` | **Prometheus Telemetry**: OpenMetrics text exposition format (`# HELP`, `# TYPE`, counters, gauges). |
-| `/__health__` | `GET`, `HEAD` | `application/json` | **Application Health**: Returns server version and continuous uptime seconds. |
-| `/__version__` | `GET`, `HEAD` | `application/json` | **Runtime Info**: Machine-readable JSON output of version, python runtime, and OS platform. |
-| `/__perf__` | `GET`, `HEAD` | `application/json` | **Performance Metrics**: In-depth statistics including total requests, active requests, bytes sent/received, and TCP buffer config. |
-| `/__stats__` | `GET`, `HEAD` | `application/json` | **Legacy Stats**: Lightweight counter tracking total bytes transmitted. |
-| `/__speed__` | `GET`, `HEAD` | `application/octet-stream`| **Synthetic Throughput Test**: Generates zeroed bytes (`?bytes=100000000`) for network throughput benchmarking without disk I/O. |
-| `/__zip__` | `GET`, `HEAD` | `application/zip` | **Dynamic Directory Archiver**: Streams on-the-fly ZIP archives of entire directories (`?path=subfolder`). |
-| `/__upload__/*`| `PUT`, `POST` | `application/json` | **Secure File Upload**: Chunked upload destination with path traversal protection and max file size gating. |
+| Endpoint        |    Method     |      Response Format       | Purpose                                                                                                                                   |
+| :-------------- | :-----------: | :------------------------: | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `/__live__`     | `GET`, `HEAD` |     `application/json`     | **Kubernetes Liveness Probe**: Returns `200 {"status":"alive"}` when process is healthy.                                                  |
+| `/__ready__`    | `GET`, `HEAD` |     `application/json`     | **Kubernetes Readiness Probe**: Returns `200 {"status":"ready"}` if root directory is readable; returns `503` if storage is disconnected. |
+| `/__metrics__`  | `GET`, `HEAD` |        `text/plain`        | **Prometheus Telemetry**: OpenMetrics text exposition format (`# HELP`, `# TYPE`, counters, gauges).                                      |
+| `/__health__`   | `GET`, `HEAD` |     `application/json`     | **Application Health**: Returns server version and continuous uptime seconds.                                                             |
+| `/__version__`  | `GET`, `HEAD` |     `application/json`     | **Runtime Info**: Machine-readable JSON output of version, python runtime, and OS platform.                                               |
+| `/__perf__`     | `GET`, `HEAD` |     `application/json`     | **Performance Metrics**: In-depth statistics including total requests, active requests, bytes sent/received, and TCP buffer config.       |
+| `/__stats__`    | `GET`, `HEAD` |     `application/json`     | **Legacy Stats**: Lightweight counter tracking total bytes transmitted.                                                                   |
+| `/__speed__`    | `GET`, `HEAD` | `application/octet-stream` | **Synthetic Throughput Test**: Generates zeroed bytes (`?bytes=100000000`) for network throughput benchmarking without disk I/O.          |
+| `/__zip__`      | `GET`, `HEAD` |     `application/zip`      | **Dynamic Directory Archiver**: Streams on-the-fly ZIP archives of entire directories (`?path=subfolder`).                                |
+| `/__upload__/*` | `PUT`, `POST` |     `application/json`     | **Secure File Upload**: Chunked upload destination with path traversal protection and max file size gating.                               |
 
----
 
 ## 💻 CLI Reference
 
@@ -208,7 +204,6 @@ blaze benchmark --url http://127.0.0.1:8000 --size-mb 200
 blaze version --json
 ```
 
----
 
 ## 📦 Production Deployment Workflows
 
@@ -223,7 +218,6 @@ Detailed deployment guides and verified configuration templates are provided in 
 
 See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for complete operational procedures.
 
----
 
 ## 🛠️ Development & Testing
 
@@ -246,7 +240,6 @@ mypy blazeserve
 pytest -v --cov=blazeserve --cov-report=term-missing
 ```
 
----
 
 ## 📄 License & Contributing
 
