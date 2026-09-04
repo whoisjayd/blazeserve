@@ -20,6 +20,22 @@ This guide details enterprise deployment workflows, security sandboxing, contain
 
 BlazeServe includes a production-hardened multi-stage [Dockerfile](./Dockerfile) and [docker-compose.yml](./docker-compose.yml).
 
+### Developer prerequisites
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) using the official installer, then create the locked development environment from the repository root:
+
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows PowerShell alternative:
+# powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+uv sync --all-extras --dev
+```
+
+BlazeServe supports Python 3.10 through 3.13. uv can use an installed supported interpreter or manage one with `uv python`; use `uv run ...` for project commands without activating `.venv`.
+
 ### Security Architecture
 
 - **Unprivileged Runtime**: Runs as system user `blazeserve` (`uid: 10001`, `gid: 10001`) with no login shell (`/sbin/nologin`).
@@ -94,8 +110,17 @@ sudo useradd -r -u 10001 -s /sbin/nologin -d /srv/blazeserve blazeserve
 sudo mkdir -p /srv/blazeserve
 sudo chown -R blazeserve:blazeserve /srv/blazeserve
 
-# 2. Install the project console script used by the service unit.
-sudo /usr/bin/python3 -m pip install --prefix /usr/local --upgrade .
+# 2. Install uv, if it is not already available on PATH (see the official
+#    installer instructions in the developer prerequisites above).
+#    Run this from the BlazeServe repository root. Keep the service isolated
+#    in its own uv-managed environment rather than modifying system Python.
+UV="$(command -v uv)"
+sudo mkdir -p /opt/blazeserve
+sudo env UV_PROJECT_ENVIRONMENT=/opt/blazeserve/.venv "$UV" sync --locked --no-dev --no-editable
+
+# The supplied unit invokes /usr/local/bin/blaze; expose the venv's console
+# script at that stable path without installing into the system prefix.
+sudo ln -sfn /opt/blazeserve/.venv/bin/blaze /usr/local/bin/blaze
 
 # 3. Install the service unit
 sudo cp deploy/systemd/blazeserve.service /etc/systemd/system/

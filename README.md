@@ -76,7 +76,6 @@ flowchart TD
     UploadEngine --> Storage
 ```
 
----
 
 ## 🎯 Engineering Disciplines Demonstrated
 
@@ -104,7 +103,6 @@ flowchart TD
 - **Reverse Proxy Blueprints**: Battle-tested, streaming-tuned configurations for Nginx, Caddy, and Traefik v3.
 - **Linux Kernel OS Tuning**: Idempotent performance tuning script (`deploy/linux-tuning/tuning.sh`) managing socket queue lengths (`somaxconn=65535`), TCP window memory (`16MB`), and file descriptor limits (`1M`).
 
----
 
 ## 📊 Benchmarking
 
@@ -121,9 +119,12 @@ Throughput, latency, and memory usage depend on the host kernel, storage, networ
 
 ### 1. Installation via PyPI
 
+Install uv using the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), then install BlazeServe as a standalone command-line tool:
+
 ```bash
-pip install blazeserve
+uv tool install blazeserve
 ```
+
 
 ### 2. Run Instantly
 
@@ -149,7 +150,6 @@ docker run -d \
   ghcr.io/whoisjayd/blazeserve:latest
 ```
 
----
 
 ## 📡 Operational & Telemetry Endpoints
 
@@ -221,23 +221,25 @@ See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for complete operational procedures.
 
 ## 🛠️ Development & Testing
 
+The development workflow uses uv to create and manage the project environment. Install uv using the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), then:
+
 ```bash
 # Clone repository
 git clone https://github.com/whoisjayd/blazeserve.git
 cd blazeserve
 
-# Install in editable mode with development dependencies
-pip install -e ".[dev]"
+# Install the project and development dependencies in uv's environment
+uv sync --all-extras --dev
 
 # Run Ruff linter and formatter checks
-ruff check .
-ruff format --check .
+uv run ruff check .
+uv run ruff format --check .
 
 # Run strict Mypy type validation
-mypy blazeserve
+uv run mypy blazeserve
 
-# Run automated test suite with coverage
-pytest -v --cov=blazeserve --cov-report=term-missing
+# Run the test suite concurrently with coverage
+uv run pytest -n auto -v --cov=blazeserve --cov-report=term-missing
 ```
 
 
