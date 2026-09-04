@@ -165,6 +165,7 @@ jobs:
         run: |
           docker run -d --name blazeserve-release -p 8000:8000 blazeserve:release-gate
           trap 'docker rm -f blazeserve-release' EXIT
+          sleep 4
           curl --fail --retry 5 --retry-delay 1 --retry-connrefused http://127.0.0.1:8000/__live__
           curl --fail --retry 5 --retry-delay 1 --retry-connrefused http://127.0.0.1:8000/__ready__
 
