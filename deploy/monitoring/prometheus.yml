@@ -1,4 +1,4 @@
-# Prometheus Scrape Configuration for BlazeServe SRE Monitoring
+# Prometheus configuration for an in-cluster server scraping the internal ClusterIP service.
 global:
   scrape_interval: 10s
   evaluation_interval: 10s
@@ -10,8 +10,8 @@ scrape_configs:
   - job_name: "blazeserve"
     metrics_path: "/__metrics__"
     static_configs:
-      - targets: ["127.0.0.1:8000"]
+      - targets: ["blazeserve.default.svc.cluster.local:80"]
         labels:
-          environment: "production"
+          environment: "kubernetes"
           service: "blazeserve"
           role: "edge-file-server"

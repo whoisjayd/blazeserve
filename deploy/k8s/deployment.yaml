@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: blazeserve
     app.kubernetes.io/part-of: edge-infrastructure
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: blazeserve
@@ -16,29 +16,34 @@ spec:
       labels:
         app.kubernetes.io/name: blazeserve
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: blazeserve
-          image: ghcr.io/whoisjayd/blazeserve:latest
+          image: ghcr.io/whoisjayd/blazeserve:v0.3.0
           imagePullPolicy: IfNotPresent
-          args: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000", "--cors", "--log-json"]
+          args: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000", "--log-json", "--max-upload-mb", "100"]
           ports:
             - containerPort: 8000
               name: http
           livenessProbe:
             httpGet:
               path: /__live__
-              port: 8000
+              port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /__ready__
-              port: 8000
+              port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 2
             periodSeconds: 5
           resources:
@@ -56,11 +61,13 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-              readOnly: true
+              readOnly: false
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: data
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Gi
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 64Mi
