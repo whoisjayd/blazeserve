@@ -21,25 +21,27 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
       - name: Install dependencies
-        run: |
-          python -m pip install -U pip
-          pip install -e ".[dev]"
+        run: uv sync --locked --all-extras --dev
       - name: Lint with Ruff
-        run: ruff check .
+        run: uv run ruff check .
       - name: Format check with Ruff
-        run: ruff format --check .
+        run: uv run ruff format --check .
       - name: Type check with Mypy
-        run: mypy blazeserve
+        run: uv run mypy blazeserve
 
   test:
-    name: Tests (Python ${{ matrix.python-version }})
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
     needs: [lint-and-typecheck]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
@@ -47,13 +49,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
       - name: Install dependencies
-        run: |
-          python -m pip install -U pip
-          pip install -e ".[dev]"
-      - name: Run Pytest with Coverage
-        run: pytest -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
+        run: uv sync --locked --all-extras --dev
+      - name: Run Pytest concurrently with Coverage
+        run: uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
 
   docker-smoke:
     name: Container Build & Probe Smoke Test
@@ -84,11 +87,16 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
       - name: Build Wheel & Sdist
         run: |
-          python -m pip install -U pip build twine
-          python -m build
-          twine check dist/*
+          uv run python -m build
+          uv run twine check dist/*
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
