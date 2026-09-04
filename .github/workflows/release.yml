@@ -175,9 +175,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/blazeserve/${{ needs.validate.outputs.version }}/
     permissions:
-      id-token: write
       contents: read
     steps:
       - name: Download distributions
@@ -185,9 +183,11 @@ jobs:
         with:
           name: release-dist
           path: dist/
-      - name: Publish through PyPI Trusted Publishing
+      - name: Publish through PyPI API token
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          username: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist/
 
   publish-container:
