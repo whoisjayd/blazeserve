@@ -7,7 +7,7 @@ try:
     import rich_click as click  # type: ignore[import-not-found]
 
     click.rich_click.SHOW_ARGUMENTS = True
-    click.rich_click.USE_MARKDOWN = True
+    click.rich_click.TEXT_MARKUP = "markdown"
     click.rich_click.STYLE_HELPTEXT = "cyan"
     click.rich_click.STYLE_OPTION = "bold bright_white"
     click.rich_click.STYLE_SWITCH = "bold bright_white"
