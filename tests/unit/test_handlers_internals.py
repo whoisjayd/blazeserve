@@ -1,8 +1,19 @@
 """Unit tests for low-level handler helpers and HTTP Range parser edge cases."""
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 
-from blazeserve.handlers import _etag_for_stat, _http_date, _parse_range_header
+from blazeserve.handlers import (
+    BlazeHandler,
+    _ClientDisconnectedError,
+    _etag_for_stat,
+    _http_date,
+    _if_none_match_matches,
+    _parse_range_header,
+    _ZipStream,
+)
 from blazeserve.server import build_arg_parser
 
 
@@ -23,23 +34,60 @@ def test_parse_range_header_all_branches():
 
     # Suffix ranges: "-N"
     assert _parse_range_header("bytes=-10", 100) == [(90, 99)]
-    assert _parse_range_header("bytes=-0", 100) is None  # n <= 0
+    assert _parse_range_header("bytes=-0", 100) == []  # valid but unsatisfiable
     assert _parse_range_header("bytes=-bad", 100) is None  # non-int
     assert _parse_range_header("bytes=-200", 100) == [(0, 99)]  # suffix > size
 
     # Prefix ranges: "N-"
     assert _parse_range_header("bytes=10-", 100) == [(10, 99)]
     assert _parse_range_header("bytes=bad-", 100) is None
-    assert _parse_range_header("bytes=200-", 100) is None  # start >= size
+    assert _parse_range_header("bytes=200-", 100) == []  # valid but unsatisfiable
 
     # Full ranges: "N-M"
     assert _parse_range_header("bytes=10-20", 100) == [(10, 20)]
     assert _parse_range_header("bytes=10-bad", 100) is None
-    assert _parse_range_header("bytes=20-10", 100) is None  # end < start
+    assert _parse_range_header("bytes=20-10", 100) == []  # valid but unsatisfiable
     assert _parse_range_header("bytes=10-200", 100) == [(10, 99)]  # end clamped
 
     # Multiple ranges and whitespace
     assert _parse_range_header("bytes=0-9, , 20-29", 100) == [(0, 9), (20, 29)]
+
+
+@pytest.mark.unit
+def test_if_none_match_uses_weak_entity_tag_comparison():
+    assert _if_none_match_matches('W/"current"', '"current"')
+    assert _if_none_match_matches('"other", W/"current"', '"current"')
+    assert not _if_none_match_matches('"other"', '"current"')
+    assert not _if_none_match_matches("current", '"current"')
+
+
+@pytest.mark.unit
+def test_auth_compares_both_basic_credentials_in_constant_time(monkeypatch):
+    handler = object.__new__(BlazeHandler)
+    handler.AUTH_PAIR = ("admin", "secret")
+    handler.headers = {"Authorization": "Basic YWRtaW46d3Jvbmc="}
+    handler._auth_required = Mock()
+    comparisons = []
+
+    def compare_digest(actual, expected):
+        comparisons.append((actual, expected))
+        return actual == expected
+
+    monkeypatch.setattr("blazeserve.handlers.hmac.compare_digest", compare_digest)
+
+    assert not handler._auth_ok()
+    assert comparisons == [("admin", "admin"), ("wrong", "secret")]
+    handler._auth_required.assert_called_once_with()
+
+
+@pytest.mark.unit
+def test_zip_stream_propagates_client_disconnect():
+    writer = Mock()
+    writer.write.side_effect = BrokenPipeError
+    outer = SimpleNamespace(wfile=writer, server=SimpleNamespace(metrics=None))
+
+    with pytest.raises(_ClientDisconnectedError):
+        _ZipStream(outer).write(b"archive data")
 
 
 @pytest.mark.unit

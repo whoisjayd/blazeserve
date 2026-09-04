@@ -40,6 +40,26 @@ def test_render_directory_index_subfolder_with_parent_link(tmp_path: Path):
 
 
 @pytest.mark.unit
+def test_render_directory_index_quotes_url_paths_and_special_names(tmp_path: Path):
+    nested = tmp_path / "folder" / "child"
+    nested.mkdir(parents=True)
+    # '?' is invalid in Windows filenames; '#' and '%' still exercise URL quoting.
+    (nested / "report #1%.txt").write_text("content")
+
+    entries = list(os.scandir(nested))
+    html_str = render_directory_index(
+        str(nested),
+        r"folder\child",
+        entries,
+        allow_upload=False,
+    ).decode("utf-8")
+
+    assert 'href="/folder/"' in html_str
+    assert 'href="/folder/child/report%20%231%25.txt"' in html_str
+    assert r'href="folder\child"' not in html_str
+
+
+@pytest.mark.unit
 def test_render_directory_index_with_upload_dropzone(tmp_path: Path):
     entries = list(os.scandir(tmp_path))
     html_bytes = render_directory_index(str(tmp_path), "", entries, allow_upload=True)

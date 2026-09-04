@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import email.utils
 import hashlib
+import hmac
 import io
 import json
 import mimetypes
@@ -22,12 +23,45 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from blazeserve import __version__
 from blazeserve.limiter import TokenBucket
-from blazeserve.security import generate_request_id, is_safe_path
+from blazeserve.security import (
+    UnsafePathError,
+    create_upload_file,
+    generate_request_id,
+    is_safe_path,
+)
 from blazeserve.ui import render_directory_index
 from blazeserve.utils import parse_basic_auth
 
 DEFAULT_CHUNK_MB = 256
 DEFAULT_SNDBUF_MB = 128
+
+
+MAX_SPEED_BYTES = 1000 * 1024 * 1024
+
+
+class _ClientDisconnectedError(ConnectionError):
+    """Raised to abort generated streaming work after a client disconnects."""
+
+
+class _ZipStream(io.RawIOBase):
+    """Write-only ZIP sink that stops archive generation on disconnect."""
+
+    def __init__(self, outer: BlazeHandler) -> None:
+        self.outer = outer
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, b: Any) -> int:
+        chunk = bytes(b)
+        try:
+            self.outer.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+            raise _ClientDisconnectedError from exc
+        metrics = getattr(self.outer.server, "metrics", None)
+        if metrics:
+            metrics.increment_bytes_sent(len(chunk))
+        return len(chunk)
 
 
 def _etag_for_stat(st: os.stat_result) -> str:
@@ -43,17 +77,23 @@ def _http_date(ts: float) -> str:
 
 
 def _parse_range_header(rh: str | None, size: int) -> list[tuple[int, int]] | None:
-    """Parse HTTP Range header per RFC 7233."""
+    """Parse an HTTP byte range.
+
+    ``None`` means absent or malformed. An empty list means syntactically
+    valid but unsatisfiable, which callers must answer with HTTP 416.
+    """
     if not rh or not rh.startswith("bytes="):
         return None
     spec = rh[6:].strip()
     if not spec:
         return None
     out: list[tuple[int, int]] = []
+    saw_range = False
     for part in spec.split(","):
         p = part.strip()
         if not p:
             continue
+        saw_range = True
         if "-" not in p:
             return None
         s_str, e_str = p.split("-", 1)
@@ -61,30 +101,35 @@ def _parse_range_header(rh: str | None, size: int) -> list[tuple[int, int]] | No
             if e_str == "":
                 return None
             try:
-                n = int(e_str)
+                suffix = int(e_str)
             except ValueError:
                 return None
-            if n <= 0:
+            if suffix <= 0 or size <= 0:
                 continue
-            start = max(0, size - n)
+            start = max(0, size - suffix)
             end = size - 1
         else:
             try:
                 start = int(s_str)
+                end = size - 1 if e_str == "" else int(e_str)
             except ValueError:
                 return None
-            if e_str == "":
-                end = size - 1
-            else:
-                try:
-                    end = int(e_str)
-                except ValueError:
-                    return None
         if start < 0 or start >= size or end < start:
             continue
-        end = min(end, size - 1)
-        out.append((start, end))
-    return out or None
+        out.append((start, min(end, size - 1)))
+    return out if saw_range else None
+
+
+def _if_none_match_matches(header: str, current_etag: str) -> bool:
+    """Apply weak entity-tag comparison required for GET and HEAD."""
+    current = current_etag[2:] if current_etag.startswith("W/") else current_etag
+    for token in (part.strip() for part in header.split(",")):
+        if token == "*":
+            return True
+        candidate = token[2:] if token.startswith("W/") else token
+        if candidate.startswith('"') and candidate.endswith('"') and candidate == current:
+            return True
+    return False
 
 
 class BlazeHandler(SimpleHTTPRequestHandler):
@@ -129,16 +174,10 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             sys.stdout.flush()
 
     def setup(self) -> None:
-        """Setup connection with optimized socket parameters and correlation ID."""
+        """Set up a connection and apply socket parameters."""
         super().setup()
         s = self.connection
-        self.request_id = generate_request_id(
-            self.headers.get("X-Request-ID") if hasattr(self, "headers") else None
-        )
-
-        # Track active requests in metrics
-        if hasattr(self.server, "metrics") and self.server.metrics:
-            self.server.metrics.increment_requests_active()
+        self._request_metrics_active = False
 
         with contextlib.suppress(OSError, AttributeError):
             s.settimeout(getattr(self.server, "conn_timeout", 60))
@@ -162,15 +201,32 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if self._buf is None:
             self._buf = bytearray(self.WINDOW)
 
-    def finish(self) -> None:
-        """Clean up connection and update server telemetry."""
-        try:
-            if hasattr(self.server, "metrics") and self.server.metrics:
-                self.server.metrics.increment_requests_total()
-                self.server.metrics.decrement_requests_active()
-        except Exception:
-            pass
+    def parse_request(self) -> bool:
+        """Parse headers, establish request tracing, and start request metrics."""
+        if not super().parse_request():
+            return False
+        self.request_id = generate_request_id(self.headers.get("X-Request-ID"))
+        metrics = getattr(self.server, "metrics", None)
+        if metrics:
+            metrics.increment_requests_total()
+            metrics.increment_requests_active()
+            self._request_metrics_active = True
+        return True
 
+    def handle_one_request(self) -> None:
+        """Ensure the in-flight request gauge is balanced on every exit path."""
+        self._request_metrics_active = False
+        try:
+            super().handle_one_request()
+        finally:
+            if self._request_metrics_active:
+                metrics = getattr(self.server, "metrics", None)
+                if metrics:
+                    metrics.decrement_requests_active()
+                self._request_metrics_active = False
+
+    def finish(self) -> None:
+        """Clean up a connection without hiding non-network failures."""
         with contextlib.suppress(BrokenPipeError, ConnectionResetError, OSError):
             super().finish()
 
@@ -188,55 +244,19 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if not self._auth_ok():
             return
         parsed = urlparse(self.path)
-        if parsed.path in (
-            "/__stats__",
-            "/__speed__",
-            "/__zip__",
-            "/__upload__",
-            "/__health__",
-            "/__perf__",
-            "/__live__",
-            "/__ready__",
-            "/__version__",
-            "/__metrics__",
-            "/metrics",
-        ):
-            self.send_response(HTTPStatus.OK)
-            self._cors_headers()
-            self._send_security_headers()
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        if self._dispatch_dynamic(parsed):
             return
-
-        f, extra = self._prepare(head_only=True)
+        f, _ = self._prepare(head_only=True)
         if f:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError):
                 f.close()
 
     def do_GET(self) -> None:
         if not self._auth_ok():
             return
         parsed = urlparse(self.path)
-        p = parsed.path
-        if p == "/__health__":
-            return self._health()
-        if p == "/__live__":
-            return self._live()
-        if p == "/__ready__":
-            return self._ready()
-        if p == "/__version__":
-            return self._version()
-        if p in ("/__metrics__", "/metrics"):
-            return self._metrics()
-        if p == "/__stats__":
-            return self._stats()
-        if p == "/__perf__":
-            return self._perf()
-        if p == "/__speed__":
-            return self._speed(parsed)
-        if p == "/__zip__":
-            return self._zip(parsed)
-
+        if self._dispatch_dynamic(parsed):
+            return
         f, extra = self._prepare(head_only=False)
         if f is None:
             return
@@ -251,8 +271,32 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             pass
         finally:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError):
                 f.close()
+
+    def _dispatch_dynamic(self, parsed: Any) -> bool:
+        """Dispatch an operational endpoint for GET or HEAD."""
+        routes = {
+            "/__health__": self._health,
+            "/__live__": self._live,
+            "/__ready__": self._ready,
+            "/__version__": self._version,
+            "/__metrics__": self._metrics,
+            "/metrics": self._metrics,
+            "/__stats__": self._stats,
+            "/__perf__": self._perf,
+        }
+        handler = routes.get(parsed.path)
+        if handler:
+            handler()
+            return True
+        if parsed.path == "/__speed__":
+            self._speed(parsed)
+            return True
+        if parsed.path == "/__zip__":
+            self._zip(parsed)
+            return True
+        return False
 
     def do_PUT(self) -> None:
         """Secure file upload handler."""
@@ -273,7 +317,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.FORBIDDEN)
             return
 
-        if os.path.exists(dst):
+        if os.path.lexists(dst):
             self.send_error(HTTPStatus.CONFLICT)
             return
 
@@ -287,14 +331,16 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         except ValueError:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
+        if length < 0:
+            self.send_error(HTTPStatus.BAD_REQUEST)
+            return
 
         if self.MAX_UPLOAD > 0 and length > self.MAX_UPLOAD:
             self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
 
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
         try:
-            with open(dst, "wb", buffering=0) as out:
+            with create_upload_file(self.BASE, dst) as out:
                 remain = length
                 buf = self._buf or bytearray(self.WINDOW)
                 mv = memoryview(buf)
@@ -302,11 +348,23 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     chunk_size = min(remain, len(buf))
                     n = self.rfile.readinto(mv[:chunk_size])
                     if not n:
-                        break
+                        raise EOFError("request body ended before Content-Length")
                     out.write(mv[:n])
                     remain -= n
-                    if hasattr(self.server, "metrics") and self.server.metrics:
-                        self.server.metrics.increment_bytes_received(n)
+                    metrics = getattr(self.server, "metrics", None)
+                    if metrics:
+                        metrics.increment_bytes_received(n)
+        except UnsafePathError:
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        except FileExistsError:
+            self.send_error(HTTPStatus.CONFLICT)
+            return
+        except EOFError:
+            with contextlib.suppress(OSError):
+                os.unlink(dst)
+            self.send_error(HTTPStatus.BAD_REQUEST)
+            return
         except OSError:
             with contextlib.suppress(OSError):
                 os.unlink(dst)
@@ -358,9 +416,12 @@ class BlazeHandler(SimpleHTTPRequestHandler):
     def _auth_ok(self) -> bool:
         if not self.AUTH_PAIR:
             return True
-        hdr = self.headers.get("Authorization")
-        creds = parse_basic_auth(hdr)
-        if creds != self.AUTH_PAIR:
+        creds = parse_basic_auth(self.headers.get("Authorization"))
+        actual_user, actual_password = creds if creds else ("", "")
+        expected_user, expected_password = self.AUTH_PAIR
+        valid_user = hmac.compare_digest(actual_user, expected_user)
+        valid_password = hmac.compare_digest(actual_password, expected_password)
+        if not (valid_user and valid_password):
             self._auth_required()
             return False
         return True
@@ -407,6 +468,9 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         else:
             urlp = urlparse(self.path)
             path = unquote(self.translate_path(urlp.path))
+            if not is_safe_path(self.BASE, path):
+                self.send_error(HTTPStatus.FORBIDDEN)
+                return None, {}
             if os.path.isdir(path):
                 if not self.LISTING:
                     self.send_error(HTTPStatus.FORBIDDEN)
@@ -420,13 +484,15 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     listing = self.list_directory(path)
                     return cast(BinaryIO | None, listing), {"mode": "passthrough"}
 
+        if not is_safe_path(self.BASE, path):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return None, {}
         if not os.path.exists(path):
             self.send_error(HTTPStatus.NOT_FOUND)
             return None, {}
         if not os.path.isfile(path):
             self.send_error(HTTPStatus.FORBIDDEN)
             return None, {}
-
         accept_enc = (self.headers.get("Accept-Encoding") or "").lower()
         wants_gzip = "gzip" in accept_enc
         use_gzip = False
@@ -446,10 +512,10 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         lastmod = _http_date(st.st_mtime)
 
         # RFC 7232: If-None-Match conditional check
+        # RFC 7232: If-None-Match conditional check (takes precedence over If-Modified-Since)
         inm = self.headers.get("If-None-Match")
         if inm:
-            tokens = [t.strip() for t in inm.split(",")]
-            if "*" in tokens or etag in tokens or etag.strip('"') in tokens:
+            if _if_none_match_matches(inm, etag):
                 self.send_response(HTTPStatus.NOT_MODIFIED)
                 self._cors_headers()
                 self._send_security_headers()
@@ -464,31 +530,43 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 f.close()
                 return None, {}
-
-        # RFC 7232: If-Modified-Since conditional check
-        ims = self.headers.get("If-Modified-Since")
-        if ims and not self.headers.get("Range"):
-            try:
-                ims_dt = email.utils.parsedate_to_datetime(ims)
-                if int(st.st_mtime) <= int(ims_dt.timestamp()):
-                    self.send_response(HTTPStatus.NOT_MODIFIED)
-                    self._cors_headers()
-                    self._send_security_headers()
-                    self.send_header("ETag", etag)
-                    self.send_header("Last-Modified", lastmod)
-                    cache_hdr = (
-                        "no-cache, no-store, must-revalidate"
-                        if self.NOCACHE
-                        else "public, max-age=3600"
-                    )
-                    self.send_header("Cache-Control", cache_hdr)
-                    self.end_headers()
-                    f.close()
-                    return None, {}
-            except Exception:
-                pass
+        elif not self.headers.get("Range"):
+            # RFC 7232: If-Modified-Since only evaluated when If-None-Match is absent
+            ims = self.headers.get("If-Modified-Since")
+            if ims:
+                try:
+                    ims_dt = email.utils.parsedate_to_datetime(ims)
+                    if int(st.st_mtime) <= int(ims_dt.timestamp()):
+                        self.send_response(HTTPStatus.NOT_MODIFIED)
+                        self._cors_headers()
+                        self._send_security_headers()
+                        self.send_header("ETag", etag)
+                        self.send_header("Last-Modified", lastmod)
+                        cache_hdr = (
+                            "no-cache, no-store, must-revalidate"
+                            if self.NOCACHE
+                            else "public, max-age=3600"
+                        )
+                        self.send_header("Cache-Control", cache_hdr)
+                        self.end_headers()
+                        f.close()
+                        return None, {}
+                except (AttributeError, OverflowError, TypeError, ValueError):
+                    pass
 
         ranges = _parse_range_header(self.headers.get("Range"), size)
+        if ranges == []:
+            # Syntactically valid but unsatisfiable range -> 416
+            self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            self._cors_headers()
+            self._send_security_headers()
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            f.close()
+            return None, {}
+
+        # ranges already parsed above
         ifr = self.headers.get("If-Range")
         if ifr and ranges:
             ok = False
@@ -497,7 +575,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             else:
                 try:
                     ok = email.utils.parsedate_to_datetime(ifr).timestamp() == int(st.st_mtime)
-                except Exception:
+                except (AttributeError, OverflowError, TypeError, ValueError):
                     ok = False
             if not ok:
                 ranges = None
@@ -572,7 +650,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         """Optimized range sender with zero-copy sendfile and memory-safe mmap."""
         s = self.connection
         total = end - start + 1
-        limiter = None
+        limiter = TokenBucket(self.RATE_BPS) if self.RATE_BPS else None
         if self.RATE_BPS:
             if hasattr(self, "client_address") and hasattr(self.server, "ip_limiters"):
                 limiter = self.server.ip_limiters.get_limiter(self.client_address[0], self.RATE_BPS)
@@ -663,10 +741,15 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
-                to_send = limiter.take(len(chunk)) if limiter else len(chunk)
-                s.sendall(chunk[:to_send])
-                if hasattr(self.server, "metrics") and self.server.metrics:
-                    self.server.metrics.increment_bytes_sent(to_send)
+                off = 0
+                while off < len(chunk):
+                    to_send = limiter.take(len(chunk) - off) if limiter else (len(chunk) - off)
+                    if to_send <= 0:
+                        continue
+                    s.sendall(chunk[off : off + to_send])
+                    off += to_send
+                    if hasattr(self.server, "metrics") and self.server.metrics:
+                        self.server.metrics.increment_bytes_sent(to_send)
                 rem -= len(chunk)
             except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                 return
@@ -677,7 +760,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         for hdr, start, end in extra["parts"]:
             try:
                 s.sendall(hdr)
-            except Exception:
+            except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                 return
             self._send_range(f, start, end, full=False)
             chunk = b"\r\n"
@@ -688,7 +771,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                     continue
                 try:
                     s.sendall(chunk[off : off + to_send])
-                except Exception:
+                except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                     return
                 off += to_send
                 if hasattr(self.server, "metrics") and self.server.metrics:
@@ -698,7 +781,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             s.sendall(closing)
             if hasattr(self.server, "metrics") and self.server.metrics:
                 self.server.metrics.increment_bytes_sent(len(closing))
-        except Exception:
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             return
 
     def _send_json(self, code: HTTPStatus, data: dict[str, Any]) -> None:
@@ -710,15 +793,14 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        with contextlib.suppress(Exception):
+        if self.command == "HEAD":
+            return
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             self.wfile.write(body)
 
     def _health(self) -> None:
-        uptime = (
-            int(time.time() - self.server.metrics.start_time)
-            if hasattr(self.server, "metrics") and self.server.metrics
-            else 0
-        )
+        metrics = getattr(self.server, "metrics", None)
+        uptime = metrics.get_stats()["uptime_seconds"] if metrics else 0
         self._send_json(
             HTTPStatus.OK,
             {
@@ -766,11 +848,14 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        with contextlib.suppress(Exception):
+        if self.command == "HEAD":
+            return
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
             self.wfile.write(body)
 
     def _stats(self) -> None:
-        self._send_json(HTTPStatus.OK, {"bytes_sent": getattr(self.server, "bytes_sent", 0)})
+        metrics = getattr(self.server, "metrics", None)
+        self._send_json(HTTPStatus.OK, {"bytes_sent": metrics.bytes_sent if metrics else 0})
 
     def _perf(self) -> None:
         metrics = getattr(self.server, "metrics", None)
@@ -786,7 +871,24 @@ class BlazeHandler(SimpleHTTPRequestHandler):
 
     def _speed(self, parsed: Any) -> None:
         q = parse_qs(parsed.query or "")
-        total = int(q.get("bytes", ["100000000"])[0])
+        raw_bytes = q.get("bytes", ["100000000"])[0]
+        try:
+            total = int(raw_bytes)
+        except ValueError:
+            self.send_error(HTTPStatus.BAD_REQUEST)
+            return
+        if total < 0 or total > MAX_SPEED_BYTES:
+            self.send_error(HTTPStatus.BAD_REQUEST)
+            return
+        if self.command == "HEAD":
+            self.send_response(HTTPStatus.OK)
+            self._cors_headers()
+            self._send_security_headers()
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(total))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         chunk = min(self.WINDOW, 8 * 1024 * 1024)
         zeros = b"\0" * chunk
         limiter = TokenBucket(self.RATE_BPS) if self.RATE_BPS else None
@@ -839,24 +941,10 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self.close_connection = True
         self.end_headers()
 
-        class _Stream(io.RawIOBase):
-            def __init__(self, outer: BlazeHandler) -> None:
-                self.outer = outer
+        if self.command == "HEAD":
+            return
 
-            def writable(self) -> bool:
-                return True
-
-            def write(self, b: Any) -> int:
-                chunk = bytes(b)
-                try:
-                    self.outer.wfile.write(chunk)
-                    if hasattr(self.outer.server, "metrics") and self.outer.server.metrics:
-                        self.outer.server.metrics.increment_bytes_sent(len(chunk))
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
-                return len(chunk)
-
-        stream = _Stream(self)
+        stream = _ZipStream(self)
         z = zipfile.ZipFile(
             cast(IO[bytes], stream), "w", compression=self.ZIP_COMPRESSION, allowZip64=True
         )
@@ -865,11 +953,15 @@ class BlazeHandler(SimpleHTTPRequestHandler):
                 for root, _, files in os.walk(path):
                     for fn in files:
                         ap = os.path.join(root, fn)
+                        if not is_safe_path(self.BASE, ap):
+                            continue
                         arc = os.path.relpath(ap, path)
                         with contextlib.suppress(OSError):
                             z.write(ap, arcname=arc)
             else:
                 z.write(path, arcname=os.path.basename(path))
+        except _ClientDisconnectedError:
+            pass
         finally:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(_ClientDisconnectedError):
                 z.close()
