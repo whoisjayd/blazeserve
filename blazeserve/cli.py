@@ -12,7 +12,7 @@ try:
     click.rich_click.STYLE_OPTION = "bold bright_white"
     click.rich_click.STYLE_SWITCH = "bold bright_white"
     click.rich_click.STYLE_HELPTEXT_FIRST_LINE = "bold cyan"
-except Exception:
+except ImportError:
     import click  # type: ignore
 
 import contextlib
@@ -23,21 +23,48 @@ from rich.table import Table
 
 from . import __version__
 from .logging import get_console, setup_logging
-from .server import build_arg_parser, run_server
+from .server import run_server
 from .utils import human_size, sha256_file
 
 console = get_console()
 
 
+def _resolve_auth(auth: str | None, auth_env: str | None) -> str | None:
+    """Resolve and validate credentials without silently disabling requested auth."""
+    if auth is None and auth_env:
+        auth = os.environ.get(auth_env)
+        if not auth:
+            raise click.ClickException(
+                f"Authentication environment variable {auth_env!r} is missing or empty."
+            )
+    if auth is not None and ":" not in auth:
+        raise click.ClickException("Auth must be USER:PASS.")
+    return auth
+
+
+def _validate_tls_pair(tls_cert: str | None, tls_key: str | None) -> None:
+    """Reject an incomplete TLS configuration instead of falling back to plaintext HTTP."""
+    if bool(tls_cert) != bool(tls_key):
+        raise click.ClickException("--tls-cert and --tls-key must be provided together.")
+
+
+def _print_status(renderable, *, json_logs: bool) -> None:
+    """Keep human-oriented status output out of a JSON log stream."""
+    if json_logs:
+        from rich.console import Console
+
+        Console(stderr=True).print(renderable)
+    else:
+        console.print(renderable)
+
+
 def _lan_ip() -> str:
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.05)
-        s.connect(("8.8.8.8", 80))
-        ip: str = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.05)
+            sock.connect(("8.8.8.8", 80))
+            return str(sock.getsockname()[0])
+    except OSError:
         return "127.0.0.1"
 
 
@@ -62,7 +89,14 @@ def cli() -> None:
     show_default=True,
     help="Bind address (IPv4/IPv6 literal ok).",
 )
-@click.option("-p", "--port", type=int, default=8000, show_default=True, help="Port to listen on.")
+@click.option(
+    "-p",
+    "--port",
+    type=click.IntRange(1, 65535),
+    default=8000,
+    show_default=True,
+    help="Port to listen on.",
+)
 @click.option(
     "--single",
     type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str),
@@ -172,15 +206,16 @@ def serve_cmd(
         if not os.path.isfile(single):
             raise click.ClickException(f"Single file not found: {single}")
         base = os.path.dirname(single)
+    elif os.path.isfile(target):
+        single = target
+        base = os.path.dirname(target)
     else:
-        if not os.path.exists(target):
+        if not os.path.isdir(target):
             raise click.ClickException(f"Path not found: {target}")
-        base = os.path.dirname(target) if os.path.isfile(target) else target
-    if not auth and auth_env:
-        val = os.environ.get(auth_env, "")
-        if val:
-            auth = val
-    scheme = "https" if (tls_cert and tls_key) else "http"
+        base = target
+    auth = _resolve_auth(auth, auth_env)
+    _validate_tls_pair(tls_cert, tls_key)
+    scheme = "https" if tls_cert else "http"
     lan = _lan_ip()
     table = Table.grid(padding=(0, 2))
     table.add_column(justify="right", style="bold cyan")
@@ -199,18 +234,19 @@ def serve_cmd(
             table.add_row("Rate Limit", f"{rate_mbps} MB/s")
         table.add_row("Metrics", f"{scheme}://{lan}:{port}/__perf__")
 
-    console.print(
-        Panel(
-            table,
-            title=f"[bold magenta]⚡ BlazeServe v{__version__}[/]",
-            subtitle="Press Ctrl+C to stop",
-            box=box.ROUNDED,
-        ),
-        soft_wrap=True,
+    status_panel = Panel(
+        table,
+        title=f"[bold magenta]⚡ BlazeServe v{__version__}[/]",
+        subtitle="Press Ctrl+C to stop",
+        box=box.ROUNDED,
     )
-    if open_browser:
-        with contextlib.suppress(Exception):
-            webbrowser.open(f"{scheme}://localhost:{port}/")
+
+    def report_started(_server: object) -> None:
+        _print_status(status_panel, json_logs=log_json)
+        if open_browser:
+            with contextlib.suppress(OSError, webbrowser.Error):
+                webbrowser.open(f"{scheme}://localhost:{port}/")
+
     try:
         run_server(
             host=host,
@@ -234,6 +270,7 @@ def serve_cmd(
             precompress=precompress,
             max_upload_mb=max_upload_mb,
             verbose=False,
+            on_bound=report_started,
         )
     except KeyboardInterrupt:
         console.print("[yellow]Shutting down...[/]")
@@ -242,7 +279,7 @@ def serve_cmd(
 @cli.command("send", short_help="Quick share a single file.")
 @click.argument("file", type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=str))
 @click.option("--host", default="0.0.0.0", show_default=True)
-@click.option("-p", "--port", type=int, default=8000, show_default=True)
+@click.option("-p", "--port", type=click.IntRange(1, 65535), default=8000, show_default=True)
 @click.option("--rate-mbps", type=click.FloatRange(min=0.1), default=None)
 @click.option("--auth", metavar="USER:PASS")
 @click.option("--auth-env", metavar="ENVVAR")
@@ -286,14 +323,15 @@ def send_cmd(
     setup_logging("INFO", json_logs=log_json)
     ap = os.path.abspath(file)
     base = os.path.dirname(ap)
-    if not auth and auth_env:
-        val = os.environ.get(auth_env, "")
-        if val:
-            auth = val
-    scheme = "https" if (tls_cert and tls_key) else "http"
+    auth = _resolve_auth(auth, auth_env)
+    _validate_tls_pair(tls_cert, tls_key)
+    scheme = "https" if tls_cert else "http"
     lan = _lan_ip()
-    console.print(f"[bold green]Share:[/] {ap}")
-    console.print(f"[cyan]{scheme}://{lan}:{port}/[/]")
+
+    def report_started(_server: object) -> None:
+        _print_status(f"[bold green]Share:[/] {ap}", json_logs=log_json)
+        _print_status(f"[cyan]{scheme}://{lan}:{port}/[/]", json_logs=log_json)
+
     try:
         run_server(
             host=host,
@@ -317,6 +355,7 @@ def send_cmd(
             precompress=precompress,
             max_upload_mb=max_upload_mb,
             verbose=False,
+            on_bound=report_started,
         )
     except KeyboardInterrupt:
         console.print("[yellow]Shutting down...[/]")
@@ -347,7 +386,6 @@ def version_cmd(json_output: bool = False) -> None:
     """Display version and system information."""
     import json
     import platform
-    import sys
 
     from rich.panel import Panel
     from rich.table import Table
@@ -387,7 +425,13 @@ def version_cmd(json_output: bool = False) -> None:
 
 @cli.command("doctor", short_help="Validate system environment and server configuration.")
 @click.argument("path", default=".", type=click.Path(path_type=str))
-@click.option("-p", "--port", type=int, default=8000, help="Port to check availability.")
+@click.option(
+    "-p",
+    "--port",
+    type=click.IntRange(1, 65535),
+    default=8000,
+    help="Port to check availability.",
+)
 def doctor_cmd(path: str, port: int) -> None:
     """Run production readiness diagnostics on paths, ports, and OS capabilities."""
     import socket
@@ -459,6 +503,7 @@ def benchmark_cmd(url: str, size_mb: int):
     """Run a speed benchmark against a BlazeServe server."""
     import time
     import urllib.request
+    from urllib.parse import urlsplit
 
     from rich.progress import (
         BarColumn,
@@ -469,9 +514,23 @@ def benchmark_cmd(url: str, size_mb: int):
         TransferSpeedColumn,
     )
 
-    test_url = f"{url}/__speed__?bytes={size_mb * 1024 * 1024}"
+    parsed_url = urlsplit(url)
+    if (
+        parsed_url.scheme not in {"http", "https"}
+        or not parsed_url.hostname
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        raise click.ClickException(
+            "Benchmark URL must be an HTTP(S) origin without credentials, query, or fragment."
+        )
+    benchmark_origin = url.rstrip("/")
+    expected_bytes = size_mb * 1024 * 1024
+    test_url = f"{benchmark_origin}/__speed__?bytes={expected_bytes}"
 
-    console.print(f"[cyan]Benchmarking:[/] {url}")
+    console.print(f"[cyan]Benchmarking:[/] {benchmark_origin}")
     console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
 
     # Warn for very large benchmarks
@@ -490,9 +549,9 @@ def benchmark_cmd(url: str, size_mb: int):
             TransferSpeedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("[cyan]Downloading...", total=size_mb * 1024 * 1024)
+            task = progress.add_task("[cyan]Downloading...", total=expected_bytes)
 
-            start_time = time.time()
+            start_time = time.perf_counter()
             downloaded = 0
 
             with urllib.request.urlopen(test_url) as response:
@@ -504,7 +563,12 @@ def benchmark_cmd(url: str, size_mb: int):
                     downloaded += len(chunk)
                     progress.update(task, advance=len(chunk))
 
-            elapsed = time.time() - start_time
+            elapsed = time.perf_counter() - start_time
+            if downloaded != expected_bytes:
+                raise click.ClickException(
+                    f"Benchmark download was incomplete: expected {expected_bytes} bytes, "
+                    f"received {downloaded}."
+                )
 
         # Display results
         speed_mbps = (downloaded / (1024 * 1024)) / elapsed
@@ -520,95 +584,14 @@ def benchmark_cmd(url: str, size_mb: int):
         console.print("\n[bold green]✓ Benchmark Complete[/]\n")
         console.print(result_table)
 
+    except click.ClickException:
+        raise
     except Exception as e:
-        console.print(f"[bold red]✗ Benchmark failed:[/] {e}")
-        raise click.Abort() from e
+        raise click.ClickException(f"Benchmark failed: {e}") from e
 
 
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] not in (
-        "serve",
-        "send",
-        "checksum",
-        "version",
-        "benchmark",
-        "doctor",
-        "-h",
-        "--help",
-        "--version",
-    ):
-        try:
-            parser = build_arg_parser()
-            args = parser.parse_args()
-            if getattr(args, "cmd", None) in (None, "serve"):
-                target = os.path.abspath(getattr(args, "path", "."))
-                if getattr(args, "single", None):
-                    single = os.path.abspath(args.single)
-                    base = os.path.dirname(single)
-                else:
-                    base = os.path.dirname(target) if os.path.isfile(target) else target
-                run_server(
-                    host=args.host,
-                    port=args.port,
-                    base=base,
-                    single=getattr(args, "single", None),
-                    listing=not getattr(args, "no_listing", False),
-                    chunk_mb=getattr(args, "chunk_mb", 256),
-                    sndbuf_mb=getattr(args, "sock_sndbuf_mb", 128),
-                    timeout=getattr(args, "timeout", 1800),
-                    rate_mbps=getattr(args, "rate_mbps", None),
-                    auth=getattr(args, "auth", None),
-                    tls_cert=getattr(args, "tls_cert", None),
-                    tls_key=getattr(args, "tls_key", None),
-                    cors=False,
-                    cors_origin="*",
-                    no_cache=False,
-                    index=None,
-                    backlog=8192,
-                    precompress=True,
-                    max_upload_mb=0,
-                    verbose=False,
-                )
-                return
-            if args.cmd == "send":
-                ap = os.path.abspath(args.file)
-                base = os.path.dirname(ap)
-                run_server(
-                    host=args.host,
-                    port=args.port,
-                    base=base,
-                    single=ap,
-                    listing=False,
-                    chunk_mb=256,
-                    sndbuf_mb=128,
-                    timeout=1800,
-                    rate_mbps=args.rate_mbps,
-                    auth=args.auth,
-                    tls_cert=args.tls_cert,
-                    tls_key=args.tls_key,
-                    cors=False,
-                    cors_origin="*",
-                    no_cache=False,
-                    index=None,
-                    backlog=8192,
-                    precompress=True,
-                    max_upload_mb=0,
-                    verbose=False,
-                )
-                return
-            if args.cmd == "checksum":
-                rc = 0
-                for p in args.files:
-                    ap = os.path.abspath(p)
-                    if not os.path.isfile(ap):
-                        sys.stderr.write(f"Skip (not a file): {p}\n")
-                        rc = 2
-                        continue
-                sys.exit(rc)
-        except SystemExit:
-            raise
-        except Exception as e:
-            raise click.ClickException(str(e)) from e
+def main() -> None:
+    """Dispatch all invocations through Click's validated command boundary."""
     cli()
 
 

@@ -10,6 +10,7 @@ import socket
 import ssl
 import sys
 import threading
+from collections.abc import Callable
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any
@@ -31,12 +32,12 @@ RECVBUF_MB = 64
 
 
 class BlazeServer(ThreadingMixIn, HTTPServer):
-    """Optimized multi-threaded HTTP server with socket performance tuning."""
+    """Optimized multi-threaded HTTP server with draining shutdown semantics."""
 
-    daemon_threads = True
+    daemon_threads = False
     request_queue_size = 8192
     allow_reuse_address = True
-    block_on_close = False
+    block_on_close = True
     tcp_sendbuf = DEFAULT_SNDBUF_MB * 1024 * 1024
     conn_timeout = 1800
     bytes_sent: int = 0
@@ -79,9 +80,31 @@ class BlazeServer(ThreadingMixIn, HTTPServer):
         if hasattr(self, "metrics") and self.metrics:
             self.metrics.increment_errors_total()
 
-        if isinstance(e, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)):
+        if isinstance(e, BrokenPipeError | ConnectionResetError | TimeoutError | OSError):
             return
         return super().handle_error(request, client_address)
+
+
+def _resolve_address_family(host: str, port: int) -> socket.AddressFamily:
+    """Resolve a bind host, preferring IPv4 when both families are available."""
+    try:
+        addresses = socket.getaddrinfo(
+            host,
+            port,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+            0,
+            socket.AI_PASSIVE,
+        )
+    except socket.gaierror:
+        return socket.AF_INET
+
+    families = {address[0] for address in addresses}
+    if socket.AF_INET in families:
+        return socket.AF_INET
+    if socket.AF_INET6 in families:
+        return socket.AF_INET6
+    return socket.AF_INET
 
 
 def create_server(
@@ -109,78 +132,93 @@ def create_server(
     log_json: bool = False,
 ) -> BlazeServer:
     """Instantiate and configure a high-performance BlazeServer."""
-    BlazeHandler.BASE = os.path.abspath(base)
-    BlazeHandler.WINDOW = max(4, int(chunk_mb)) * 1024 * 1024
-    BlazeHandler.SINGLE = single
-    BlazeHandler.LISTING = listing
-    BlazeHandler.RATE_BPS = (rate_mbps * 1024 * 1024) if rate_mbps else None
-    BlazeHandler.CORS = bool(cors)
-    BlazeHandler.CORS_ORIGIN = cors_origin or "*"
-    BlazeHandler.NOCACHE = bool(no_cache)
-    BlazeHandler.INDEX = list(index or [])
-    BlazeHandler.PRECOMPRESS = bool(precompress)
-    BlazeHandler.MAX_UPLOAD = max(0, int(max_upload_mb)) * 1024 * 1024
-    BlazeHandler.LOG_JSON = bool(log_json)
+    if rate_mbps is not None and rate_mbps <= 0:
+        raise ValueError("rate_mbps must be greater than zero when configured")
+    if bool(tls_cert) != bool(tls_key):
+        raise ValueError("TLS certificate and key must be provided together")
+
+    class _Handler(BlazeHandler):
+        pass
+
+    _Handler.BASE = os.path.abspath(base)
+    _Handler.WINDOW = max(4, int(chunk_mb)) * 1024 * 1024
+    _Handler.SINGLE = single
+    _Handler.LISTING = listing
+    _Handler.RATE_BPS = (rate_mbps * 1024 * 1024) if rate_mbps else None
+    _Handler.CORS = bool(cors)
+    _Handler.CORS_ORIGIN = cors_origin or "*"
+    _Handler.NOCACHE = bool(no_cache)
+    _Handler.INDEX = list(index or [])
+    _Handler.PRECOMPRESS = bool(precompress)
+    _Handler.MAX_UPLOAD = max(0, int(max_upload_mb)) * 1024 * 1024
+    _Handler.LOG_JSON = bool(log_json)
 
     if auth:
         if ":" not in auth:
             raise SystemExit("Auth must be USER:PASS")
         user, pw = auth.split(":", 1)
-        BlazeHandler.AUTH_PAIR = (user, pw)
+        _Handler.AUTH_PAIR = (user, pw)
     else:
-        BlazeHandler.AUTH_PAIR = None
+        _Handler.AUTH_PAIR = None
 
-    fam = socket.AF_INET6 if ":" in host else socket.AF_INET
+    fam = _resolve_address_family(host, port)
 
     class _S(BlazeServer):
-        pass
+        tcp_sendbuf = max(256 * 1024, int(sndbuf_mb) * 1024 * 1024)
+        request_queue_size = max(1, int(backlog))
 
     _S.address_family = fam
-    httpd = _S((host, port), BlazeHandler)
-    httpd.tcp_sendbuf = max(256 * 1024, int(sndbuf_mb) * 1024 * 1024)
+    httpd = _S((host, port), _Handler)
     httpd.conn_timeout = max(5, int(timeout))
-    httpd.request_queue_size = max(1, int(backlog))
 
     if tls_cert and tls_key:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.options |= ssl.OP_NO_COMPRESSION
-        ctx.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM")
-        ctx.load_cert_chain(certfile=tls_cert, keyfile=tls_key)
-        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.options |= ssl.OP_NO_COMPRESSION
+            ctx.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM")
+            ctx.load_cert_chain(certfile=tls_cert, keyfile=tls_key)
+            httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+        except Exception:
+            httpd.server_close()
+            raise
 
     return httpd
 
 
-def run_server(**kwargs: Any) -> None:
-    """Run BlazeServer with graceful signal interception and socket draining."""
+def run_server(
+    *,
+    on_bound: Callable[[BlazeServer], None] | None = None,
+    **kwargs: Any,
+) -> None:
+    """Run BlazeServer with restorable signal handling and request-thread draining."""
     httpd = create_server(**kwargs)
+    previous_handlers: dict[int, Any] = {}
 
     def _shutdown_signal(signum: int, frame: Any) -> None:
-        threading.Thread(target=httpd.shutdown, daemon=True).start()
+        threading.Thread(target=httpd.shutdown, name="blazeserve-shutdown").start()
 
-    with contextlib.suppress(Exception):
-        signal.signal(signal.SIGINT, _shutdown_signal)
-        if hasattr(signal, "SIGTERM"):
-            signal.signal(signal.SIGTERM, _shutdown_signal)
-
-        # Zero-downtime TLS reload on SIGHUP (POSIX)
-        if hasattr(signal, "SIGHUP") and kwargs.get("tls_cert") and kwargs.get("tls_key"):
-
-            def _reload_tls(signum: int, frame: Any) -> None:
-                with contextlib.suppress(Exception):
-                    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-                    ctx.options |= ssl.OP_NO_COMPRESSION
-                    ctx.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM")
-                    ctx.load_cert_chain(certfile=kwargs["tls_cert"], keyfile=kwargs["tls_key"])
-                    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
-
-            signal.signal(signal.SIGHUP, _reload_tls)
+    def _install_shutdown_handler(signum: int) -> None:
+        try:
+            previous = signal.getsignal(signum)
+            signal.signal(signum, _shutdown_signal)
+        except (OSError, RuntimeError, ValueError):
+            return
+        previous_handlers[signum] = previous
 
     try:
+        if on_bound is not None:
+            on_bound(httpd)
+
+        _install_shutdown_handler(signal.SIGINT)
+        if hasattr(signal, "SIGTERM"):
+            _install_shutdown_handler(signal.SIGTERM)
+
         httpd.serve_forever()
     finally:
+        for signum, previous in previous_handlers.items():
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                signal.signal(signum, previous)
         httpd.server_close()
 
 

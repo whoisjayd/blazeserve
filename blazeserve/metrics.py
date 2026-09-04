@@ -12,6 +12,7 @@ class ServerMetrics:
 
     def __init__(self) -> None:
         self.start_time: float = time.time()
+        self._started_at: float = time.monotonic()
         self._lock = threading.Lock()
         self._bytes_sent: int = 0
         self._bytes_received: int = 0
@@ -99,9 +100,13 @@ class ServerMetrics:
         with self._lock:
             self._errors_total += 1
 
+    def _uptime(self) -> float:
+        """Return nonnegative elapsed runtime from a monotonic clock."""
+        return max(0.0, time.monotonic() - self._started_at)
+
     def get_stats(self) -> dict[str, Any]:
         """Get current server statistics in a thread-safe manner."""
-        uptime = time.time() - self.start_time
+        uptime = self._uptime()
         with self._lock:
             return {
                 "uptime_seconds": int(uptime),
@@ -115,7 +120,7 @@ class ServerMetrics:
 
     def to_prometheus(self) -> str:
         """Render metrics in Prometheus OpenMetrics text format."""
-        uptime = time.time() - self.start_time
+        uptime = self._uptime()
         with self._lock:
             lines = [
                 "# HELP blazeserve_uptime_seconds Total server uptime in seconds",
