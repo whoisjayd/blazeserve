@@ -21,6 +21,7 @@ pytest -v --cov=blazeserve
 ruff check .
 ruff format --check .
 mypy blazeserve
+```
 
 4. (Optional) Install pre-commit hooks to run checks automatically:
 
@@ -51,5 +52,5 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 The codebase adheres to:
 - Python ≥ 3.10
 - `ruff` for linting and code formatting (line length 100)
-- `mypy` strict type checking on `blazeserve`
+- `mypy` checks annotated code and the bodies of unannotated functions; annotations are not globally required
 - Google-style docstrings on public APIs
