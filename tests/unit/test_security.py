@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from blazeserve.security import generate_request_id, is_safe_path
+from blazeserve.security import (
+    UnsafePathError,
+    create_upload_file,
+    generate_request_id,
+    is_safe_path,
+)
 
 
 @pytest.mark.unit
@@ -30,6 +35,38 @@ def test_is_safe_path_sibling_prefix_attack(tmp_path: Path):
     base = os.path.join(str(tmp_path), "data")
     sibling = os.path.join(str(tmp_path), "data_leak", "file.txt")
     assert not is_safe_path(base, sibling)
+
+
+@pytest.mark.unit
+def test_is_safe_path_rejects_symlink_escape(tmp_path: Path):
+    base = tmp_path / "base"
+    outside = tmp_path / "outside"
+    base.mkdir()
+    outside.mkdir()
+    link = base / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    assert not is_safe_path(str(base), str(link / "secret.txt"))
+
+
+@pytest.mark.unit
+def test_create_upload_file_rejects_symlink_parent(tmp_path: Path):
+    base = tmp_path / "base"
+    outside = tmp_path / "outside"
+    base.mkdir()
+    outside.mkdir()
+    link = base / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(UnsafePathError):
+        create_upload_file(str(base), str(link / "escaped.txt"))
+    assert not (outside / "escaped.txt").exists()
 
 
 @pytest.mark.unit

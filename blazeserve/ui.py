@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import os
+from urllib.parse import quote
 
 from blazeserve.utils import human_size
 
@@ -15,20 +16,26 @@ def render_directory_index(
     allow_upload: bool = False,
 ) -> bytes:
     """Render a polished, mobile-responsive directory index with search and file icons."""
-    display_path = "/" + rel_path.strip("/")
-    if display_path == "//":
-        display_path = "/"
+    url_parts = [part for part in rel_path.replace("\\", "/").split("/") if part]
+    encoded_parts = [quote(part, safe="") for part in url_parts]
+    current_url = "/" + "/".join(encoded_parts)
+    if current_url != "/":
+        current_url += "/"
+    display_path = "/" + "/".join(url_parts)
     title = f"Index of {html.escape(display_path)}"
 
     # Sort directories first, then files alphabetically
     sorted_entries = sorted(entries, key=lambda e: (not e.is_dir(), e.name.lower()))
 
     rows = []
-    if rel_path and rel_path != "/":
-        parent = os.path.dirname(rel_path.rstrip("/")) or "/"
+    if url_parts:
+        parent_parts = encoded_parts[:-1]
+        parent = "/" + "/".join(parent_parts)
+        if parent != "/":
+            parent += "/"
         rows.append(
             '<tr><td style="text-align:center">📁</td>'
-            f'<td><a href="{html.escape(parent)}">.. (Parent Directory)</a></td>'
+            f'<td><a href="{html.escape(parent, quote=True)}">.. (Parent Directory)</a></td>'
             "<td>-</td><td>Directory</td></tr>"
         )
 
@@ -39,12 +46,14 @@ def render_directory_index(
             icon = "📁" if is_dir else "📄"
             size_str = "-" if is_dir else human_size(stat.st_size)
             name_esc = html.escape(entry.name)
-            href = f"{name_esc}/" if is_dir else name_esc
+            href = current_url + quote(entry.name, safe="")
+            if is_dir:
+                href += "/"
             type_str = "Directory" if is_dir else "File"
             rows.append(
                 f'<tr class="entry-row">'
                 f'  <td style="text-align:center">{icon}</td>'
-                f'  <td><a class="entry-link" href="{href}">{name_esc}</a></td>'
+                f'  <td><a class="entry-link" href="{html.escape(href, quote=True)}">{name_esc}</a></td>'
                 f"  <td>{size_str}</td>"
                 f"  <td>{type_str}</td>"
                 f"</tr>"

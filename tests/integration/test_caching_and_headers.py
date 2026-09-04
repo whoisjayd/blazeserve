@@ -60,6 +60,67 @@ def test_if_modified_since_conditional_get_304(server: tuple[str, int]):
 
 
 @pytest.mark.integration
+def test_if_none_match_weak_tag_returns_304(server: tuple[str, int]):
+    host, port = server
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", "/test.txt")
+        initial = conn.getresponse()
+        etag = initial.headers["ETag"]
+        initial.read()
+
+        conn.request("GET", "/test.txt", headers={"If-None-Match": f"W/{etag}"})
+        conditional = conn.getresponse()
+        assert conditional.status == 304
+        assert conditional.read() == b""
+    finally:
+        conn.close()
+
+
+@pytest.mark.integration
+def test_if_none_match_takes_precedence_over_if_modified_since(server: tuple[str, int]):
+    host, port = server
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", "/test.txt")
+        initial = conn.getresponse()
+        last_modified = initial.headers["Last-Modified"]
+        initial.read()
+
+        conn.request(
+            "GET",
+            "/test.txt",
+            headers={
+                "If-None-Match": '"different"',
+                "If-Modified-Since": last_modified,
+            },
+        )
+        conditional = conn.getresponse()
+        assert conditional.status == 200
+        assert conditional.read() == b"Hello, BlazeServe!"
+    finally:
+        conn.close()
+
+
+@pytest.mark.integration
+def test_request_id_is_parsed_per_keep_alive_request(server: tuple[str, int]):
+    host, port = server
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", "/__live__", headers={"X-Request-ID": "first-request"})
+        first = conn.getresponse()
+        assert first.headers.get("X-Request-ID") == "first-request"
+        first.read()
+
+        conn.request("GET", "/__live__", headers={"X-Request-ID": "second-request"})
+        second = conn.getresponse()
+        assert second.headers.get("X-Request-ID") == "second-request"
+        second.read()
+    finally:
+        conn.close()
+
+
+@pytest.mark.integration
 def test_security_headers_present(server: tuple[str, int]):
     host, port = server
     conn = HTTPConnection(host, port)

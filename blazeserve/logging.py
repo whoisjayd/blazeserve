@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 
@@ -11,6 +12,24 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 _console: Console | None = None
+
+_CREDENTIAL_PATTERNS = (
+    (
+        re.compile(r"(\bauthorization\s*[:=]\s*(?:basic|bearer)\s+)[^,\s;]+", re.IGNORECASE),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@", re.IGNORECASE),
+        r"\1[REDACTED]@",
+    ),
+)
+
+
+def _redact_credentials(value: str) -> str:
+    """Remove common HTTP credentials from structured log fields."""
+    for pattern, replacement in _CREDENTIAL_PATTERNS:
+        value = pattern.sub(replacement, value)
+    return value
 
 
 class JsonFormatter(logging.Formatter):
@@ -21,10 +40,10 @@ class JsonFormatter(logging.Formatter):
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": _redact_credentials(record.getMessage()),
         }
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = _redact_credentials(self.formatException(record.exc_info))
         return json.dumps(payload)
 
 

@@ -102,3 +102,29 @@ def test_directory_index_html_resolution(
         assert b"Welcome Home" in resp.read()
     finally:
         conn.close()
+
+
+@pytest.mark.integration
+def test_static_file_symlink_cannot_escape_base(
+    server_factory: Callable[..., tuple[str, int]], tmp_path: Path
+):
+    base = tmp_path / "base"
+    outside = tmp_path / "outside"
+    base.mkdir()
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("secret")
+    try:
+        (base / "leak.txt").symlink_to(secret)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    host, port = server_factory(base=str(base))
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", "/leak.txt")
+        resp = conn.getresponse()
+        assert resp.status == 403
+        assert b"secret" not in resp.read()
+    finally:
+        conn.close()

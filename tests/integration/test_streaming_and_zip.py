@@ -25,6 +25,20 @@ def test_speed_benchmark_endpoint(server: tuple[str, int]):
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("value", ["not-a-number", "-1", "1048576001"])
+def test_speed_benchmark_rejects_invalid_or_excessive_size(server: tuple[str, int], value: str):
+    host, port = server
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", f"/__speed__?bytes={value}")
+        resp = conn.getresponse()
+        assert resp.status == 400
+        resp.read()
+    finally:
+        conn.close()
+
+
+@pytest.mark.integration
 def test_precompressed_gzip_asset_serving(
     server_factory: Callable[..., tuple[str, int]], test_dir: Path
 ):
@@ -105,3 +119,37 @@ def test_zip_not_found(server: tuple[str, int]):
         assert resp.status == 404
     finally:
         conn.close()
+
+
+@pytest.mark.integration
+def test_zip_excludes_symlinked_file_outside_base(
+    server_factory: Callable[..., tuple[str, int]], tmp_path: Path
+):
+    import io
+    import zipfile
+
+    base = tmp_path / "base"
+    outside = tmp_path / "outside"
+    archive_dir = base / "archive"
+    archive_dir.mkdir(parents=True)
+    outside.mkdir()
+    (archive_dir / "inside.txt").write_text("inside")
+    secret = outside / "secret.txt"
+    secret.write_text("secret")
+    try:
+        (archive_dir / "leak.txt").symlink_to(secret)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    host, port = server_factory(base=str(base))
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", "/__zip__?path=archive")
+        resp = conn.getresponse()
+        assert resp.status == 200
+        body = resp.read()
+    finally:
+        conn.close()
+
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        assert archive.namelist() == ["inside.txt"]

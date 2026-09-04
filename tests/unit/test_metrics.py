@@ -1,5 +1,7 @@
 """Unit tests for ServerMetrics telemetry and Prometheus exporter."""
 
+from unittest.mock import patch
+
 import pytest
 
 from blazeserve.metrics import ServerMetrics
@@ -53,6 +55,24 @@ def test_server_metrics_get_stats():
     assert stats["errors_total"] == 1
     assert "uptime_seconds" in stats
     assert "bytes_per_second" in stats
+
+
+@pytest.mark.unit
+def test_server_metrics_uses_monotonic_elapsed_time_when_wall_clock_moves_backward():
+    with (
+        patch("blazeserve.metrics.time.time", return_value=1_000.0),
+        patch("blazeserve.metrics.time.monotonic", side_effect=[10.0, 15.0, 17.0]),
+    ):
+        sm = ServerMetrics()
+        sm.increment_bytes_sent(50)
+
+        assert sm.start_time == 1_000.0
+        stats = sm.get_stats()
+        prometheus = sm.to_prometheus()
+
+    assert stats["uptime_seconds"] == 5
+    assert stats["bytes_per_second"] == 10
+    assert "blazeserve_uptime_seconds 7" in prometheus
 
 
 @pytest.mark.unit

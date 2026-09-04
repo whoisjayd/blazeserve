@@ -4,70 +4,110 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 
 
 class TokenBucket:
-    """Token bucket rate limiter with 2-second burst capacity and smooth replenishment."""
+    """Thread-safe token bucket with 2-second burst capacity."""
 
     def __init__(self, rate_bps: float | None) -> None:
-        self.rate: float = float(rate_bps) if rate_bps and rate_bps > 0 else 0.0
-        self.capacity: float = self.rate * 2.0 if self.rate > 0 else 0.0  # 2-second burst capacity
+        self._lock = threading.Lock()
+        self.rate: float = self._normalize_rate(rate_bps)
+        self.capacity: float = max(1.0, self.rate * 2.0) if self.rate > 0 else 0.0
         self.tokens: float = self.capacity
         self.last: float = time.perf_counter()
 
-    def consume(self, n: int) -> float:
-        """Consume n tokens. Return seconds to sleep if not enough tokens."""
-        if self.rate <= 0:
-            return 0.0
-        now = time.perf_counter()
-        delta = now - self.last
+    @staticmethod
+    def _normalize_rate(rate_bps: float | None) -> float:
+        return float(rate_bps) if rate_bps and rate_bps > 0 else 0.0
+
+    def _refill_locked(self, now: float) -> None:
+        elapsed = max(0.0, now - self.last)
         self.last = now
-        self.tokens = min(self.capacity, self.tokens + delta * self.rate)
-        need = float(n)
-        if self.tokens >= need:
-            self.tokens -= need
-            return 0.0
-        short = need - self.tokens
-        self.tokens = 0.0
-        return short / self.rate
-
-    def take(self, n: int) -> int:
-        """Return how many bytes can be sent right now, sleeping if necessary."""
-        if self.rate <= 0:
-            return n
-
-        now = time.perf_counter()
-        elapsed = now - self.last
-        self.last = now
-
-        # Refill tokens based on elapsed time
         self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
 
-        if self.tokens < 1:
-            wait_for = (1 - self.tokens) / self.rate
-            if wait_for > 0:
-                time.sleep(min(wait_for, 0.05))
-            self.tokens = 1.0
+    def update_rate(self, rate_bps: float | None) -> None:
+        """Update throughput while preserving already accrued tokens."""
+        new_rate = self._normalize_rate(rate_bps)
+        with self._lock:
+            if new_rate == self.rate:
+                return
+            self._refill_locked(time.perf_counter())
+            was_unlimited = self.rate <= 0
+            self.rate = new_rate
+            self.capacity = max(1.0, new_rate * 2.0) if new_rate > 0 else 0.0
+            if new_rate <= 0:
+                self.tokens = 0.0
+            elif was_unlimited:
+                self.tokens = self.capacity
+            else:
+                self.tokens = min(self.tokens, self.capacity)
 
-        allowed = min(float(n), self.tokens)
-        send = max(1, int(allowed))
-        self.tokens -= send
-        return send
+    def consume(self, n: int) -> float:
+        """Reserve tokens and return the wait required for any deficit."""
+        if n <= 0:
+            return 0.0
+        with self._lock:
+            if self.rate <= 0:
+                return 0.0
+            self._refill_locked(time.perf_counter())
+            need = float(n)
+            if self.tokens >= need:
+                self.tokens -= need
+                return 0.0
+            short = need - self.tokens
+            self.tokens = 0.0
+            return short / self.rate
+
+    def take(self, n: int) -> int:
+        """Return currently permitted bytes after at most one short sleep."""
+        if n <= 0:
+            return 0
+
+        with self._lock:
+            if self.rate <= 0:
+                return n
+            self._refill_locked(time.perf_counter())
+            allowed = min(n, int(self.tokens))
+            if allowed > 0:
+                self.tokens -= allowed
+                return allowed
+            wait_for = (1.0 - self.tokens) / self.rate
+
+        if wait_for > 0:
+            time.sleep(min(wait_for, 0.05))
+
+        with self._lock:
+            if self.rate <= 0:
+                return n
+            self._refill_locked(time.perf_counter())
+            allowed = min(n, int(self.tokens))
+            if allowed > 0:
+                self.tokens -= allowed
+            return allowed
 
 
 class IPRateLimiterPool:
-    """Thread-safe per-client-IP rate limiter registry with LRU-style eviction."""
+    """Thread-safe bounded least-recently-used client limiter registry."""
 
     def __init__(self, max_entries: int = 4096) -> None:
         self._lock = threading.Lock()
-        self._limiters: dict[str, TokenBucket] = {}
-        self._max: int = max_entries
+        self._limiters: OrderedDict[str, TokenBucket] = OrderedDict()
+        self._max: int = max(0, int(max_entries))
 
-    def get_limiter(self, ip: str, rate_bps: float) -> TokenBucket:
-        """Fetch or create a rate limiter for client IP address."""
+    def get_limiter(self, ip: str, rate_bps: float | None) -> TokenBucket:
+        """Fetch or create a rate limiter for a client IP address."""
         with self._lock:
-            if ip not in self._limiters:
-                if len(self._limiters) >= self._max:
-                    self._limiters.pop(next(iter(self._limiters)))
-                self._limiters[ip] = TokenBucket(rate_bps)
-            return self._limiters[ip]
+            limiter = self._limiters.get(ip)
+            if limiter is not None:
+                limiter.update_rate(rate_bps)
+                self._limiters.move_to_end(ip)
+                return limiter
+
+            limiter = TokenBucket(rate_bps)
+            if self._max == 0:
+                return limiter
+            if len(self._limiters) >= self._max:
+                self._limiters.popitem(last=False)
+            self._limiters[ip] = limiter
+            return limiter

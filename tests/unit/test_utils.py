@@ -41,6 +41,8 @@ def test_parse_basic_auth_invalid():
     assert parse_basic_auth(None) is None
     assert parse_basic_auth("Bearer token") is None
     assert parse_basic_auth("Basic !!!invalid-base64") is None
+
+    assert parse_basic_auth("Basic YWRtaW46cHc=!") is None
     # Valid base64 but missing colon
     import base64
 

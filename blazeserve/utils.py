@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 
 from blazeserve.limiter import TokenBucket
@@ -36,12 +37,12 @@ def parse_basic_auth(header: str | None) -> tuple[str, str] | None:
     if not header or not header.startswith("Basic "):
         return None
     try:
-        raw = base64.b64decode(header[6:].strip()).decode("utf-8")
+        raw = base64.b64decode(header[6:].strip(), validate=True).decode("utf-8")
         if ":" not in raw:
             return None
         u, p = raw.split(":", 1)
         return u, p
-    except Exception:
+    except (binascii.Error, UnicodeDecodeError):
         return None
 
 
