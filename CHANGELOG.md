@@ -5,7 +5,7 @@ All notable changes to BlazeServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-09-03
+## [0.3.0] - 2026-09-04
 
 ### Added
 - **SRE Operational Probes**: Added Kubernetes liveness probe (`/__live__`) and readiness probe (`/__ready__`) verifying filesystem mount accessibility.
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Modular Code Architecture**: Decomposed monolithic server into single-responsibility modules: `metrics.py`, `limiter.py`, `security.py`, `ui.py`, `handlers.py`, and `server.py` while maintaining 100% backwards-compatible re-exports.
 - **Modern Toolchain & Dependencies**: Upgraded minimum Python support to `>=3.10` (Python 3.9 EOL), upgraded Click to `>=8.3.0`, Rich to `>=14.0.0`, Rich-Click to `>=1.8.0`, Ruff to `>=0.9.0`, Mypy to `>=1.11`, Pytest to `>=8.0`, and added `pytest-cov`.
 - **Enterprise CI/CD**: Modernized GitHub Actions workflow to matrix across Python 3.10–3.13, Ruff linting/formatting, strict Mypy typing, Pytest coverage enforcement, Docker smoke testing, and OIDC PyPI publishing.
-
+- **Safe Deployment Defaults**: Compose and Kubernetes deployments now mount served data read-only and leave uploads disabled unless operators explicitly configure authenticated writable storage; systemd now matches the reverse-proxy backend on port 8000.
 ### Fixed
 - **Memory-Safe Mmap Lifecycle**: Fixed Windows `BufferError` and file-locking `PermissionError` by implementing deterministic `memoryview.release()` before closing `mmap` instances in `_send_range`.
 - **Graceful Server Shutdown**: Handled `SIGINT` and `SIGTERM` signals for non-blocking server shutdown, connection draining, and clean socket closure.
