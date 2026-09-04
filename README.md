@@ -52,22 +52,22 @@ BlazeServe decouples socket orchestration, connection lifecycle, traffic limitin
 flowchart TD
     Client([Client / Browser / Ingress]) -->|HTTP/1.1 TCP| RevProxy[Reverse Proxy / Ingress\nNginx • Caddy • Traefik]
     RevProxy -->|Proxy Pass Unbuffered| BlazeSocket[BlazeServer Socket Layer\nSO_REUSEADDR • SO_REUSEPORT • TCP_NODELAY • TCP_QUICKACK]
-    
+
     subgraph BlazeServe Core Engine
         BlazeSocket --> Handler[BlazeHandler Dispatcher]
-        
+
         Handler -->|Security & Correlation| SecEngine[Security Engine\nHeaders • CORS • X-Request-ID]
         Handler -->|IP Token Bucket| Limiter[IPRateLimiterPool\nRFC 6585 • HTTP 429]
-        
+
         Handler -->|GET /__metrics__| PromMetrics[ServerMetrics Collector\nPrometheus OpenMetrics Exposition]
         Handler -->|GET /__live__ /__ready__| K8sProbes[K8s Health Probes\nAlive Status • Directory Validation]
-        
+
         Handler -->|RFC 7232 Validation| Caching[Conditional Engine\nETag • If-None-Match • 304 Not Modified]
-        
+
         Caching -->|Full Transfer| Sendfile[Zero-Copy sendfile Fast Path]
         Caching -->|Range / Windowed| SafeMmap[Safe Windowed mmap Fast Path]
         Caching -->|Small Chunks / Streams| Buffered[Buffered I/O Fallback]
-        
+
         Handler -->|GET /| WebUI[Modern HTML5 Directory UI\nDark/Light • Live Search • Uploads]
         Handler -->|PUT /__upload__| UploadEngine[Upload Engine\nPath Sandbox • Length Gated]
         Handler -->|GET /__zip__| ZipEngine[Dynamic Streaming ZIP\nStore / Deflate]
@@ -88,8 +88,8 @@ This project is architected as an end-to-end demonstration of senior engineering
 ### 1. Backend Engineering
 - **Zero-Copy & Memory Safety**: Dual-path file transmission leveraging kernel `sendfile` and memoryview-managed `mmap` with strict pointer cleanup (`view.release()`) preventing file descriptor leaks across Windows and Linux.
 - **HTTP Specification Compliance**: Strict compliance with RFC 7232 (Conditional Requests), RFC 7233 (Range Requests & Multipart Byte-Ranges), and RFC 6585 (Rate Limiting).
-- **Graceful Lifecycle Management**: Signal traps (`SIGINT`, `SIGTERM`) executing non-blocking connection draining and socket closure.
-- **Zero-Downtime TLS Hot-Reload**: `SIGHUP` signal handler reloads SSL certificates on-the-fly without dropping active client connections.
+- **Graceful Lifecycle Management**: Signal traps (`SIGINT`, `SIGTERM`) initiate shutdown; the threaded server drains active request handlers before closing its listener.
+- **TLS by Explicit Restart**: TLS requires a certificate/key pair and uses TLS 1.2 or newer. Certificate rotation is performed by a controlled service restart.
 
 ### 2. Site Reliability Engineering (SRE)
 - **Golden Signals Monitoring**: Native metrics covering Latency, Traffic (`requests_total`, RPS), Errors (`errors_total`), and Saturation (`requests_active`, buffer usage).
@@ -101,25 +101,22 @@ This project is architected as an end-to-end demonstration of senior engineering
 ### 3. Cloud & DevOps Engineering
 - **Multi-Stage Containerization**: Hardened `Dockerfile` built on `python:3.13-slim` using a dedicated unprivileged user (`blazeserve:10001`), read-only root filesystem, dropped capabilities, and native container `HEALTHCHECK`.
 - **Cloud Orchestration**: Hardened `docker-compose.yml` with CPU/memory resource quotas and security constraints.
-- **Kubernetes Native**: Production manifests in `deploy/k8s/` including `Deployment`, `Service`, `Ingress` (with unbuffered streaming), and `ServiceMonitor` for the Prometheus Operator.
-- **Systemd Architecture**: Sandboxed systemd service (`ProtectSystem=strict`, `ProtectHome=true`, `PrivateTmp=true`, `LimitNOFILE=1048576`) paired with systemd socket activation (`blazeserve.socket`).
+- **Kubernetes Manifests**: Hardened `Deployment` and `Service` defaults. Optional Ingress and ServiceMonitor manifests are available for deployments that provide their required controllers.
+- **Systemd Architecture**: Sandboxed systemd service (`ProtectSystem=strict`, `ProtectHome=true`, `PrivateTmp=true`, `LimitNOFILE=1048576`); BlazeServe binds its own listening socket.
 - **Reverse Proxy Blueprints**: Battle-tested, streaming-tuned configurations for Nginx, Caddy, and Traefik v3.
 - **Linux Kernel OS Tuning**: Idempotent performance tuning script (`deploy/linux-tuning/tuning.sh`) managing socket queue lengths (`somaxconn=65535`), TCP window memory (`16MB`), and file descriptor limits (`1M`).
 
 ---
 
-## 📊 Benchmarks
+## 📊 Benchmarking
 
-*Benchmarked on 10GbE network, Ubuntu 24.04 LTS, AMD Ryzen 5, downloading 10GB test dataset.*
+Run a reproducible benchmark against a controlled BlazeServe deployment:
 
-| Metric | BlazeServe | `python -m http.server` | Nginx (Single Worker) | Caddy |
-| :--- | :---: | :---: | :---: | :---: |
-| **Throughput (10GB file)** | **1.14 GB/s** | 184 MB/s | 1.18 GB/s | 1.09 GB/s |
-| **Memory Consumption** | **< 32 MB** (Constant) | 840 MB (Spikes) | 18 MB (Constant) | 45 MB |
-| **P99 Latency (Range Req)** | **1.8 ms** | 42.6 ms | 1.4 ms | 2.1 ms |
-| **Prometheus Telemetry** | **Native Built-in** | None | Exporter Required | Metrics Endpoint |
-| **K8s Health Probes** | **Native Built-in** | None | Requires Lua/Modules | Native Built-in |
-| **Hot TLS Reload** | **Yes (`SIGHUP`)** | None | Yes (`nginx -s reload`)| Yes (API/Signal) |
+```bash
+blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
+```
+
+Throughput, latency, and memory usage depend on the host kernel, storage, network, TLS, and reverse-proxy configuration. Publish benchmark figures only with the command, workload, machine specifications, and comparison methodology used to obtain them.
 
 ---
 
@@ -218,8 +215,8 @@ blaze version --json
 Detailed deployment guides and verified configuration templates are provided in the [`deploy/`](./deploy) directory:
 
 - **[Docker & Compose](./deploy/README.md)**: Hardened multi-stage build, unprivileged user (`uid 10001`), and Docker Compose resource limits.
-- **[Kubernetes Manifests](./deploy/k8s/)**: Production `Deployment`, `Service`, `Ingress`, and `ServiceMonitor` for the Prometheus Operator.
-- **[Systemd Service & Socket](./deploy/systemd/)**: Hardened Linux systemd units with kernel sandboxing (`ProtectSystem=strict`) and socket activation.
+- **[Kubernetes Manifests](./deploy/k8s/)**: Hardened `Deployment` and `Service` defaults, plus optional Ingress and ServiceMonitor templates.
+- **[Systemd Service](./deploy/systemd/)**: Hardened Linux service unit with kernel sandboxing (`ProtectSystem=strict`); it does not use socket activation.
 - **[Reverse Proxies](./deploy/reverse-proxy/)**: Unbuffered streaming configurations for **Nginx**, **Caddy**, and **Traefik v3**.
 - **[Linux Kernel Tuning](./deploy/linux-tuning/)**: Production `sysctl-blazeserve.conf` settings and automated `tuning.sh` script.
 - **[SRE Monitoring](./deploy/monitoring/)**: Prometheus scrape specs, Prometheus alert rules, and complete Grafana dashboard JSON.
