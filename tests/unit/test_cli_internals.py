@@ -238,9 +238,14 @@ def test_serve_rejects_incomplete_tls_configuration(tmp_path):
 
     runner = CliRunner()
     with patch("blazeserve.cli.run_server") as mock_run:
-        result = runner.invoke(cli, ["serve", str(tmp_path), "--tls-cert", str(cert)])
+        result = runner.invoke(
+            cli,
+            ["serve", str(tmp_path), "--tls-cert", str(cert)],
+            standalone_mode=False,
+        )
     assert result.exit_code != 0
-    assert "--tls-cert and --tls-key must be provided together" in result.output
+    assert isinstance(result.exception, cli_mod.click.ClickException)
+    assert str(result.exception) == "--tls-cert and --tls-key must be provided together."
     mock_run.assert_not_called()
 
 
