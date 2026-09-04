@@ -66,7 +66,7 @@ kubectl rollout status deployment/blazeserve
 
 ## 3. Systemd Service
 
-[`deploy/systemd/blazeserve.service`](./deploy/systemd/blazeserve.service) runs BlazeServe as a hardened daemon bound to its own listening socket. BlazeServe does not consume systemd socket-activation file descriptors.
+[`deploy/systemd/blazeserve.service`](./deploy/systemd/blazeserve.service) runs BlazeServe as a hardened daemon bound to `127.0.0.1:8000`, the backend address used by the supplied local Nginx, Caddy, and Traefik reverse-proxy configurations. BlazeServe does not consume systemd socket-activation file descriptors.
 
 ### Hardening Directives
 
@@ -94,14 +94,17 @@ sudo useradd -r -u 10001 -s /sbin/nologin -d /srv/blazeserve blazeserve
 sudo mkdir -p /srv/blazeserve
 sudo chown -R blazeserve:blazeserve /srv/blazeserve
 
-# 2. Install the service unit
+# 2. Install the project console script used by the service unit.
+sudo /usr/bin/python3 -m pip install --prefix /usr/local --upgrade .
+
+# 3. Install the service unit
 sudo cp deploy/systemd/blazeserve.service /etc/systemd/system/
 
-# 3. Reload systemd and enable service
+# 4. Reload systemd and enable service
 sudo systemctl daemon-reload
 sudo systemctl enable --now blazeserve.service
 
-# 4. Check status
+# 5. Check status
 sudo systemctl status blazeserve
 ```
 
@@ -119,7 +122,6 @@ Because BlazeServe delivers multi-gigabyte files via zero-copy `sendfile` and ra
 proxy_buffering off;
 proxy_request_buffering off;
 proxy_http_version 1.1;
-client_max_body_size 100m;
 ```
 
 ### Caddy ([`deploy/reverse-proxy/Caddyfile`](./deploy/reverse-proxy/Caddyfile))
@@ -177,7 +179,7 @@ Observability templates are located in [`deploy/monitoring/`](./deploy/monitorin
 - [`alerts.yml`](./deploy/monitoring/alerts.yml): alerts for instance downtime, errors, and request saturation.
 - [`grafana-dashboard.json`](./deploy/monitoring/grafana-dashboard.json): a Grafana dashboard to import.
 
-The default target is reachable from Prometheus running inside the Kubernetes cluster without publishing the ClusterIP Service. For a host Prometheus deployment, change the target to the systemd bind address `127.0.0.1:8080`; for Prometheus on the Docker Compose network, use `blazeserve:8000`.
+The default target is reachable from Prometheus running inside the Kubernetes cluster without publishing the ClusterIP Service. For a host Prometheus deployment, change the target to the systemd bind address `127.0.0.1:8000`; for Prometheus on the Docker Compose network, use `blazeserve:8000`.
 
 ```yaml
 scrape_configs:
@@ -195,11 +197,11 @@ BlazeServe includes built-in diagnostic tools for pre-flight environment checks:
 
 ```bash
 # Validate directories, port bindings, and OS zero-copy support
-blaze doctor /data --port 8080
+blaze doctor /data --port 8000
 
 # Machine-readable version check
 blaze version --json
 
 # Client throughput benchmark test
-blaze benchmark --url http://127.0.0.1:8080 --size-mb 100
+blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
 ```
