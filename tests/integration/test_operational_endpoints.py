@@ -44,7 +44,7 @@ def test_version_endpoint(server: tuple[str, int]):
         assert resp.status == 200
         data = json.loads(resp.read())
         assert data["name"] == "blazeserve"
-        assert data["version"] == "0.3.0"
+        assert data["version"] == "0.3.1"
         assert "python" in data
         assert "platform" in data
     finally:

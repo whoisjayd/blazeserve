@@ -23,10 +23,27 @@ from rich.table import Table
 
 from . import __version__
 from .logging import get_console, setup_logging
-from .server import run_server
+from .server import create_server, run_server
 from .utils import human_size, sha256_file
 
 console = get_console()
+
+
+def _auth_env_hint(auth_env: str) -> str:
+    """Explain how to set an auth environment variable in common shells."""
+    return (
+        f"Set it before retrying: PowerShell: $env:{auth_env} = 'USER:PASS'; "
+        f"macOS/Linux: export {auth_env}='USER:PASS'."
+    )
+
+
+def _port_diagnostic_hint(port: int) -> str:
+    """Return a read-only command for inspecting a listener on a port."""
+    if os.name == "nt":
+        return f"Inspect it in PowerShell with: Get-NetTCPConnection -LocalPort {port}."
+    if sys.platform == "darwin":
+        return f"Inspect it with: lsof -nP -iTCP:{port} -sTCP:LISTEN."
+    return f"Inspect it with: ss -ltnp 'sport = :{port}'."
 
 
 def _resolve_auth(auth: str | None, auth_env: str | None) -> str | None:
@@ -35,7 +52,8 @@ def _resolve_auth(auth: str | None, auth_env: str | None) -> str | None:
         auth = os.environ.get(auth_env)
         if not auth:
             raise click.ClickException(
-                f"Authentication environment variable {auth_env!r} is missing or empty."
+                f"Authentication environment variable {auth_env!r} is missing or empty. "
+                + _auth_env_hint(auth_env)
             )
     if auth is not None and ":" not in auth:
         raise click.ClickException("Auth must be USER:PASS.")
@@ -130,8 +148,17 @@ def cli() -> None:
     default=None,
     help="Throttle to MB/s (omit for unlimited).",
 )
-@click.option("--auth", metavar="USER:PASS", envvar=None, help="Enable HTTP Basic Auth.")
-@click.option("--auth-env", metavar="ENVVAR", help="Load USER:PASS from environment variable.")
+@click.option(
+    "--auth",
+    metavar="USER:PASS",
+    envvar=None,
+    help="Enable HTTP Basic Auth; missing --auth-env values include PowerShell/POSIX examples.",
+)
+@click.option(
+    "--auth-env",
+    metavar="ENVVAR",
+    help="Load USER:PASS from an environment variable.",
+)
 @click.option(
     "--tls-cert",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
@@ -281,8 +308,16 @@ def serve_cmd(
 @click.option("--host", default="0.0.0.0", show_default=True)
 @click.option("-p", "--port", type=click.IntRange(1, 65535), default=8000, show_default=True)
 @click.option("--rate-mbps", type=click.FloatRange(min=0.1), default=None)
-@click.option("--auth", metavar="USER:PASS")
-@click.option("--auth-env", metavar="ENVVAR")
+@click.option(
+    "--auth",
+    metavar="USER:PASS",
+    help="Enable HTTP Basic Auth; missing --auth-env values include PowerShell/POSIX examples.",
+)
+@click.option(
+    "--auth-env",
+    metavar="ENVVAR",
+    help="Load USER:PASS from an environment variable.",
+)
 @click.option("--tls-cert", type=click.Path(exists=True, dir_okay=False, path_type=str))
 @click.option("--tls-key", type=click.Path(exists=True, dir_okay=False, path_type=str))
 @click.option("--cors/--no-cors", default=False, show_default=True)
@@ -452,14 +487,17 @@ def doctor_cmd(path: str, port: int) -> None:
     else:
         tbl.add_row("Base Path", "[red]FAIL[/]", f"Cannot read: {abs_p}")
         all_ok = False
-
     # Check 2: Port availability
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind(("127.0.0.1", port))
             tbl.add_row("Port Binding", "[green]OK[/]", f"Port {port} is free to bind")
         except OSError as e:
-            tbl.add_row("Port Binding", "[red]FAIL[/]", f"Port {port} in use: {e}")
+            tbl.add_row(
+                "Port Binding",
+                "[red]FAIL[/]",
+                f"Port {port} could not be bound: {e}. {_port_diagnostic_hint(port)}",
+            )
             all_ok = False
 
     # Check 3: Zero-Copy Kernel Sendfile
@@ -474,11 +512,13 @@ def doctor_cmd(path: str, port: int) -> None:
 
     # Check 4: Sequential Read Ahead
     has_fadvise = hasattr(os, "posix_fadvise")
-    tbl.add_row(
-        "Sequential Read Ahead",
-        "[green]YES[/]" if has_fadvise else "[dim]N/A (Win32/Darwin)[/]",
-        "POSIX_FADV_SEQUENTIAL optimization",
+    fadvise_status = "[green]YES[/]" if has_fadvise else "[yellow]FALLBACK[/]"
+    fadvise_details = (
+        "POSIX_FADV_SEQUENTIAL optimization"
+        if has_fadvise
+        else "Not available on this platform; using regular sequential reads"
     )
+    tbl.add_row("Sequential Read Ahead", fadvise_status, fadvise_details)
 
     console.print(tbl)
     if not all_ok:
@@ -488,9 +528,8 @@ def doctor_cmd(path: str, port: int) -> None:
 @cli.command("benchmark", short_help="Run performance benchmark.")
 @click.option(
     "--url",
-    default="http://localhost:8000",
-    show_default=True,
-    help="Server URL to benchmark.",
+    default=None,
+    help="Existing BlazeServe URL to benchmark instead of a temporary local server.",
 )
 @click.option(
     "--size-mb",
@@ -499,9 +538,12 @@ def doctor_cmd(path: str, port: int) -> None:
     show_default=True,
     help="Size of test download in MB.",
 )
-def benchmark_cmd(url: str, size_mb: int):
+def benchmark_cmd(url: str | None, size_mb: int) -> None:
     """Run a speed benchmark against a BlazeServe server."""
+    import tempfile
+    import threading
     import time
+    import urllib.error
     import urllib.request
     from urllib.parse import urlsplit
 
@@ -514,33 +556,57 @@ def benchmark_cmd(url: str, size_mb: int):
         TransferSpeedColumn,
     )
 
-    parsed_url = urlsplit(url)
-    if (
-        parsed_url.scheme not in {"http", "https"}
-        or not parsed_url.hostname
-        or parsed_url.username is not None
-        or parsed_url.password is not None
-        or parsed_url.query
-        or parsed_url.fragment
-    ):
-        raise click.ClickException(
-            "Benchmark URL must be an HTTP(S) origin without credentials, query, or fragment."
-        )
-    benchmark_origin = url.rstrip("/")
+    if url is not None:
+        parsed_url = urlsplit(url)
+        if (
+            parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            raise click.ClickException(
+                "Benchmark URL must be an HTTP(S) origin without credentials, query, or fragment."
+            )
+        benchmark_origin = url.rstrip("/")
+    else:
+        benchmark_origin = ""
+
     expected_bytes = size_mb * 1024 * 1024
-    test_url = f"{benchmark_origin}/__speed__?bytes={expected_bytes}"
-
-    console.print(f"[cyan]Benchmarking:[/] {benchmark_origin}")
-    console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
-
-    # Warn for very large benchmarks
-    if size_mb > 500:
-        console.print(
-            f"[yellow]⚠ Warning:[/] Large benchmark size ({size_mb} MB) "
-            f"may impact server performance\n"
-        )
+    benchmark_directory = None
+    benchmark_server = None
+    benchmark_thread = None
+    benchmark_thread_started = False
 
     try:
+        if url is None:
+            benchmark_directory = tempfile.TemporaryDirectory(prefix="blazeserve-benchmark-")
+            benchmark_server = create_server(
+                host="127.0.0.1",
+                port=0,
+                base=benchmark_directory.name,
+            )
+            benchmark_thread = threading.Thread(
+                target=benchmark_server.serve_forever,
+                name="blazeserve-benchmark",
+            )
+            benchmark_thread.start()
+            benchmark_thread_started = True
+            benchmark_origin = f"http://127.0.0.1:{benchmark_server.server_port}"
+
+        test_url = f"{benchmark_origin}/__speed__?bytes={expected_bytes}"
+
+        console.print(f"[cyan]Benchmarking:[/] {benchmark_origin}")
+        console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
+
+        # Warn for very large benchmarks
+        if size_mb > 500:
+            console.print(
+                f"[yellow]⚠ Warning:[/] Large benchmark size ({size_mb} MB) "
+                f"may impact server performance\n"
+            )
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -584,10 +650,35 @@ def benchmark_cmd(url: str, size_mb: int):
         console.print("\n[bold green]✓ Benchmark Complete[/]\n")
         console.print(result_table)
 
+    except urllib.error.HTTPError as e:
+        raise click.ClickException(
+            f"Benchmark server at {benchmark_origin} returned HTTP {e.code}. "
+            "Verify that the URL points to a running BlazeServe server."
+        ) from None
+    except urllib.error.URLError:
+        raise click.ClickException(
+            f"Could not connect to a BlazeServe server at {benchmark_origin}. "
+            "Start one with `blaze serve`, then run the benchmark again."
+        ) from None
     except click.ClickException:
         raise
     except Exception as e:
         raise click.ClickException(f"Benchmark failed: {e}") from e
+    finally:
+        try:
+            if benchmark_server is not None:
+                try:
+                    if benchmark_thread_started:
+                        benchmark_server.shutdown()
+                finally:
+                    try:
+                        benchmark_server.server_close()
+                    finally:
+                        if benchmark_thread_started and benchmark_thread is not None:
+                            benchmark_thread.join()
+        finally:
+            if benchmark_directory is not None:
+                benchmark_directory.cleanup()
 
 
 def main() -> None:

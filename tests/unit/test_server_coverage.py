@@ -4,6 +4,7 @@ import contextlib
 import signal
 import socket
 import ssl
+import threading
 from http.server import HTTPServer
 from unittest.mock import MagicMock, patch
 
@@ -91,6 +92,7 @@ def test_run_server_restores_signal_handlers_and_does_not_claim_tls_reload():
         patch("blazeserve.server.create_server", return_value=mock_httpd),
         patch("blazeserve.server.signal.getsignal", side_effect=previous.__getitem__),
         patch("blazeserve.server.signal.signal") as set_signal,
+        patch("blazeserve.server.os.name", "posix"),
     ):
         run_server(
             host="127.0.0.1",
@@ -113,6 +115,52 @@ def test_run_server_restores_signal_handlers_and_does_not_claim_tls_reload():
 
 
 @pytest.mark.unit
+def test_run_server_on_windows_preserves_keyboard_interrupt_and_closes_listener():
+    mock_httpd = MagicMock()
+    mock_httpd.serve_forever.side_effect = KeyboardInterrupt
+
+    with (
+        patch("blazeserve.server.create_server", return_value=mock_httpd),
+        patch("blazeserve.server.os.name", "nt"),
+        patch("blazeserve.server.signal.getsignal", return_value=signal.default_int_handler),
+        patch("blazeserve.server.signal.signal") as set_signal,
+        pytest.raises(KeyboardInterrupt),
+    ):
+        run_server(host="127.0.0.1", port=0)
+
+    sigint_registrations = [
+        call for call in set_signal.call_args_list if call.args[0] == signal.SIGINT
+    ]
+    assert sigint_registrations == []
+    mock_httpd.server_close.assert_called_once_with()
+
+
+@pytest.mark.unit
+def test_posix_shutdown_signal_unwinds_the_server_and_closes_listener():
+    mock_httpd = MagicMock()
+    installed_handlers = {}
+
+    def set_signal(signum, handler):
+        installed_handlers.setdefault(signum, handler)
+
+    def interrupt_server():
+        installed_handlers[signal.SIGINT](signal.SIGINT, None)
+
+    mock_httpd.serve_forever.side_effect = interrupt_server
+
+    with (
+        patch("blazeserve.server.create_server", return_value=mock_httpd),
+        patch("blazeserve.server.os.name", "posix"),
+        patch("blazeserve.server.signal.getsignal", return_value=signal.default_int_handler),
+        patch("blazeserve.server.signal.signal", side_effect=set_signal),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        run_server(host="127.0.0.1", port=0)
+
+    mock_httpd.server_close.assert_called_once_with()
+
+
+@pytest.mark.unit
 def test_run_server_calls_on_bound_before_serving_and_closes_on_callback_error():
     mock_httpd = MagicMock()
     callback = MagicMock(side_effect=RuntimeError("open failed"))
@@ -129,9 +177,38 @@ def test_run_server_calls_on_bound_before_serving_and_closes_on_callback_error()
 
 
 @pytest.mark.unit
-def test_threaded_server_close_drains_non_daemon_request_threads():
-    assert BlazeServer.daemon_threads is False
-    assert BlazeServer.block_on_close is True
+def test_server_close_returns_promptly_with_an_idle_client(tmp_path):
+    request_started = threading.Event()
+    close_finished = threading.Event()
+    original_process_request = BlazeServer.process_request_thread
+
+    def tracked_process_request(server, request, client_address):
+        request_started.set()
+        original_process_request(server, request, client_address)
+
+    with patch.object(BlazeServer, "process_request_thread", tracked_process_request):
+        server = create_server(host="127.0.0.1", port=0, base=str(tmp_path), timeout=30)
+        serve_thread = threading.Thread(target=server.serve_forever)
+        serve_thread.start()
+        idle_client = socket.create_connection(server.server_address, timeout=1.0)
+        idle_client.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+        assert request_started.wait(1.0)
+        server.shutdown()
+
+        def close_server():
+            server.server_close()
+            close_finished.set()
+
+        close_thread = threading.Thread(target=close_server)
+        close_thread.start()
+        try:
+            assert close_finished.wait(1.0), "server_close waited for the idle request thread"
+        finally:
+            with contextlib.suppress(OSError):
+                idle_client.shutdown(socket.SHUT_RDWR)
+            idle_client.close()
+            close_thread.join(timeout=2.0)
+            serve_thread.join(timeout=2.0)
 
 
 @pytest.mark.unit
