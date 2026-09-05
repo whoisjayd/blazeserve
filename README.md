@@ -83,7 +83,7 @@ flowchart TD
 
 - **Zero-Copy & Memory Safety**: Dual-path file transmission leveraging kernel `sendfile` and memoryview-managed `mmap` with strict pointer cleanup (`view.release()`) preventing file descriptor leaks across Windows and Linux.
 - **HTTP Specification Compliance**: Strict compliance with RFC 7232 (Conditional Requests), RFC 7233 (Range Requests & Multipart Byte-Ranges), and RFC 6585 (Rate Limiting).
-- **Graceful Lifecycle Management**: Signal traps (`SIGINT`, `SIGTERM`) initiate shutdown; the threaded server drains active request handlers before closing its listener.
+- **Prompt Lifecycle Management**: Press `Ctrl+C` in the foreground server terminal to stop BlazeServe. Shutdown closes the listener promptly, and request threads do not keep the process alive.
 - **TLS by Explicit Restart**: TLS requires a certificate/key pair and uses TLS 1.2 or newer. Certificate rotation is performed by a controlled service restart.
 
 ### 2. Site Reliability Engineering (SRE)
@@ -106,11 +106,21 @@ flowchart TD
 
 ## 📊 Benchmarking
 
-Run a reproducible benchmark against a controlled BlazeServe deployment:
+Run a self-contained benchmark:
 
-```bash
+```console
+blaze benchmark
+```
+
+By default, BlazeServe starts a temporary server on an OS-assigned free port, binds it only to loopback, benchmarks the synthetic `/__speed__` endpoint, and tears the server down automatically. This mode does not serve your files or expose them outside the local machine.
+
+To benchmark an existing local or remote BlazeServe process, pass its origin explicitly:
+
+```console
 blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
 ```
+
+Explicit `--url` mode never starts a replacement server. A connection-refused error means the target server or port is unavailable; confirm that the server is running and that its port matches `--url`.
 
 Throughput, latency, and memory usage depend on the host kernel, storage, network, TLS, and reverse-proxy configuration. Publish benchmark figures only with the command, workload, machine specifications, and comparison methodology used to obtain them.
 
@@ -128,25 +138,38 @@ uv tool install blazeserve
 
 ### 2. Run Instantly
 
-```bash
-# Serve current directory on port 8000
+```console
+# Serve the current directory on port 8000
 blaze serve .
 
-# Serve with rate limiting, CORS, and structured JSON logs
-blaze serve /data --port 8080 --rate-mbps 100 --cors --log-json
+# Serve a relative data directory with rate limiting, CORS, and JSON logs
+blaze serve data --port 8080 --rate-mbps 100 --cors --log-json
 
-# Validate production environment readiness
-blaze doctor .
+# Validate the current directory and port
+blaze doctor . --port 8000
 ```
 
 ### 3. Run with Docker
+
+POSIX shell:
 
 ```bash
 docker run -d \
   --name blazeserve \
   -p 8000:8000 \
-  -v $(pwd)/data:/data:ro \
+  -v "$(pwd)/data:/data:ro" \
   --read-only \
+  ghcr.io/whoisjayd/blazeserve:latest
+```
+
+Windows PowerShell:
+
+```powershell
+docker run -d `
+  --name blazeserve `
+  -p 8000:8000 `
+  -v "${PWD}\data:/data:ro" `
+  --read-only `
   ghcr.io/whoisjayd/blazeserve:latest
 ```
 
@@ -180,27 +203,30 @@ Commands:
   serve      Serve a directory or a single file.
   send       Quick share a single file with one command.
   doctor     Validate system environment and server configuration.
-  benchmark  Run high-speed throughput benchmark against a server.
+  benchmark  Run a high-speed throughput benchmark.
   checksum   Compute SHA256 checksums for files.
   version    Show version and system info (--json for machine-readable).
 ```
 
 ### Command Highlights
 
-```bash
-# Production file serving with bandwidth throttle and CORS
-blaze serve /srv/files --port 8080 --rate-mbps 250 --cors --log-json
+```console
+# Serve a relative directory with bandwidth throttle and CORS
+blaze serve files --port 8080 --rate-mbps 250 --cors --log-json
 
-# Quick single-file share with TLS encryption
+# Share one file with TLS
 blaze send archive.tar.gz --port 8443 --tls-cert cert.pem --tls-key key.pem
 
-# Self-diagnostic health check
-blaze doctor /data --port 8080
+# Check a relative directory and port
+blaze doctor data --port 8080
 
-# Synthetic bandwidth benchmark
+# Run a self-contained benchmark with a temporary loopback-only server
+blaze benchmark
+
+# Benchmark the existing server at this URL
 blaze benchmark --url http://127.0.0.1:8000 --size-mb 200
 
-# Machine-readable version extraction (CI/CD integration)
+# Print machine-readable version data
 blaze version --json
 ```
 
@@ -223,13 +249,13 @@ See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for complete operational procedures.
 
 The development workflow uses uv to create and manage the project environment. Install uv using the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), then:
 
-```bash
+```console
 # Clone repository
 git clone https://github.com/whoisjayd/blazeserve.git
 cd blazeserve
 
 # Install the project and development dependencies in uv's environment
-uv sync --all-extras --dev
+uv sync --locked --all-extras --dev
 
 # Run Ruff linter and formatter checks
 uv run ruff check .
@@ -239,7 +265,7 @@ uv run ruff format --check .
 uv run mypy blazeserve
 
 # Run the test suite concurrently with coverage
-uv run pytest -n auto -v --cov=blazeserve --cov-report=term-missing
+uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
 ```
 
 
