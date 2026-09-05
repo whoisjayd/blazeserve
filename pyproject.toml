@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blazeserve"
-version = "0.3.0"
+version = "0.3.1"
 description = "⚡ Ultra-fast HTTP file server with advanced performance optimizations, real-time metrics, and production-ready architecture — supports byte-range/multi-range downloads, TLS, Basic Auth, throttling, uploads, streaming ZIP, CORS, and a polished CLI."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "click>=8.3.0",
+    "click>=8.3.0,<8.5",
     "rich>=14.0.0",
     "rich-click>=1.8.0",
 ]
