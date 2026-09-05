@@ -5,6 +5,21 @@ All notable changes to BlazeServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-05
+
+### Added
+- **Self-Contained Local Benchmark**: Running `blaze benchmark` without `--url` now starts a temporary loopback BlazeServe instance for the benchmark and shuts it down afterward; explicit `--url` targets continue to benchmark the specified server.
+
+### Changed
+- **Cross-Platform Operational Guidance**: Separated PowerShell and POSIX instructions for `uv` installation, virtual-environment activation, Docker commands and paths, and release version variables, while keeping shared commands portable.
+- **Contributor Guidance**: Expanded `AGENTS.md` with detailed repository structure, development commands, code-style expectations, testing guidance, and contribution workflow.
+
+### Fixed
+- **Actionable Remote Benchmark Errors**: Connection failures for explicit `--url` targets now identify the validated origin and suggest how to start a server; HTTP failures are reported separately, without echoing credentials or low-level exceptions.
+- **Prompt Ctrl+C Shutdown**: Server shutdown now exits promptly and closes the listener even when idle or keep-alive clients remain connected, preserving native Windows `KeyboardInterrupt` handling and safe POSIX signal unwinding.
+
+---
+
 ## [0.3.0] - 2026-09-04
 
 ### Added
@@ -25,8 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Modular Code Architecture**: Decomposed monolithic server into single-responsibility modules: `metrics.py`, `limiter.py`, `security.py`, `ui.py`, `handlers.py`, and `server.py` while maintaining 100% backwards-compatible re-exports.
-- **Modern Toolchain & Dependencies**: Upgraded minimum Python support to `>=3.10` (Python 3.9 EOL), upgraded Click to `>=8.3.0`, Rich to `>=14.0.0`, Rich-Click to `>=1.8.0`, Ruff to `>=0.9.0`, Mypy to `>=1.11`, Pytest to `>=8.0`, and added `pytest-cov`.
-- **Enterprise CI/CD**: Modernized GitHub Actions workflow to matrix across Python 3.10–3.13, Ruff linting/formatting, strict Mypy typing, Pytest coverage enforcement, Docker smoke testing, and OIDC PyPI publishing.
+- **Modern Toolchain & Dependencies**: Upgraded minimum Python support to `>=3.10` (Python 3.9 EOL), upgraded Click to `>=8.3.0,<8.5` for Rich-Click compatibility, Rich to `>=14.0.0`, Rich-Click to `>=1.8.0`, Ruff to `>=0.9.0`, Mypy to `>=1.11`, Pytest to `>=8.0`, and added `pytest-cov`.
+- **Enterprise CI/CD**: Modernized GitHub Actions workflow to matrix across Python 3.10–3.13, Ruff linting/formatting, strict Mypy typing, Pytest coverage enforcement, Docker smoke testing, and PyPI publishing authenticated by `PYPI_API_TOKEN`.
 - **Safe Deployment Defaults**: Compose and Kubernetes deployments now mount served data read-only and leave uploads disabled unless operators explicitly configure authenticated writable storage; systemd now matches the reverse-proxy backend on port 8000.
 ### Fixed
 - **Memory-Safe Mmap Lifecycle**: Fixed Windows `BufferError` and file-locking `PermissionError` by implementing deterministic `memoryview.release()` before closing `mmap` instances in `_send_range`.
