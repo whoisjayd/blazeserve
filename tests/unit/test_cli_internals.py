@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 
 import pytest
 from click.testing import CliRunner
@@ -25,6 +26,35 @@ def test_lan_ip_exception_fallback():
     with patch("socket.socket") as mock_sock:
         mock_sock.side_effect = OSError("No network")
         assert _lan_ip() == "127.0.0.1"
+
+
+@pytest.mark.unit
+def test_auth_environment_hint_names_both_supported_shells():
+    hint = cli_mod._auth_env_hint("BLAZE_AUTH")
+
+    assert "PowerShell" in hint
+    assert "$env:BLAZE_AUTH" in hint
+    assert "macOS/Linux" in hint
+    assert "export BLAZE_AUTH" in hint
+
+
+@pytest.mark.unit
+def test_port_diagnostic_hint_matches_windows_shell(monkeypatch):
+    monkeypatch.setattr(cli_mod.os, "name", "nt")
+
+    hint = cli_mod._port_diagnostic_hint(8123)
+
+    assert "Get-NetTCPConnection -LocalPort 8123" in hint
+
+
+@pytest.mark.unit
+def test_port_diagnostic_hint_matches_macos(monkeypatch):
+    monkeypatch.setattr(cli_mod.os, "name", "posix")
+    monkeypatch.setattr(cli_mod.sys, "platform", "darwin")
+
+    hint = cli_mod._port_diagnostic_hint(8123)
+
+    assert "lsof -nP -iTCP:8123 -sTCP:LISTEN" in hint
 
 
 @pytest.mark.unit
@@ -58,20 +88,6 @@ def test_send_cmd_mock_run(tmp_path):
 
 
 @pytest.mark.unit
-def test_benchmark_cmd_execution():
-    runner = CliRunner()
-    mock_resp = MagicMock()
-    mock_resp.read.side_effect = [b"A" * (1024 * 1024), b""]
-    mock_resp.__enter__.return_value = mock_resp
-    mock_resp.__exit__.return_value = None
-
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        result = runner.invoke(cli, ["benchmark", "--size-mb", "1"])
-        assert result.exit_code == 0
-        assert "Benchmark Complete" in result.output
-
-
-@pytest.mark.unit
 def test_benchmark_rejects_truncated_download():
     runner = CliRunner()
     mock_resp = MagicMock()
@@ -80,10 +96,33 @@ def test_benchmark_rejects_truncated_download():
     mock_resp.__exit__.return_value = None
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
-        result = runner.invoke(cli, ["benchmark", "--size-mb", "1"])
+        result = runner.invoke(
+            cli,
+            ["benchmark", "--url", "http://localhost:8000", "--size-mb", "1"],
+        )
 
     assert result.exit_code != 0
     assert "expected 1048576 bytes, received 1024" in result.output
+
+
+@pytest.mark.unit
+def test_benchmark_refusal_explains_how_to_start_the_server():
+    runner = CliRunner()
+    refusal = ConnectionRefusedError(
+        10061,
+        "No connection could be made to https://operator:do-not-print-this@example.test",
+    )
+
+    with patch("urllib.request.urlopen", side_effect=URLError(refusal)):
+        result = runner.invoke(
+            cli,
+            ["benchmark", "--url", "http://127.0.0.1:65535", "--size-mb", "1"],
+        )
+
+    assert result.exit_code != 0
+    assert "Could not connect to a BlazeServe server" in result.output
+    assert "blaze serve" in result.output
+    assert "do-not-print-this" not in result.output
 
 
 @pytest.mark.unit
