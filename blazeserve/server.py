@@ -9,7 +9,6 @@ import signal
 import socket
 import ssl
 import sys
-import threading
 from collections.abc import Callable
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
@@ -32,9 +31,9 @@ RECVBUF_MB = 64
 
 
 class BlazeServer(ThreadingMixIn, HTTPServer):
-    """Optimized multi-threaded HTTP server with draining shutdown semantics."""
+    """Optimized multi-threaded HTTP server with prompt listener shutdown."""
 
-    daemon_threads = False
+    daemon_threads = True
     request_queue_size = 8192
     allow_reuse_address = True
     block_on_close = True
@@ -191,12 +190,12 @@ def run_server(
     on_bound: Callable[[BlazeServer], None] | None = None,
     **kwargs: Any,
 ) -> None:
-    """Run BlazeServer with restorable signal handling and request-thread draining."""
+    """Run BlazeServer with restorable signal handling and guaranteed listener cleanup."""
     httpd = create_server(**kwargs)
     previous_handlers: dict[int, Any] = {}
 
     def _shutdown_signal(signum: int, frame: Any) -> None:
-        threading.Thread(target=httpd.shutdown, name="blazeserve-shutdown").start()
+        raise KeyboardInterrupt
 
     def _install_shutdown_handler(signum: int) -> None:
         try:
@@ -210,7 +209,8 @@ def run_server(
         if on_bound is not None:
             on_bound(httpd)
 
-        _install_shutdown_handler(signal.SIGINT)
+        if os.name != "nt":
+            _install_shutdown_handler(signal.SIGINT)
         if hasattr(signal, "SIGTERM"):
             _install_shutdown_handler(signal.SIGTERM)
 
