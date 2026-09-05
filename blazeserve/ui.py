@@ -117,7 +117,7 @@ def render_directory_index(
   <div class="container">
     <header>
       <h1>⚡ {title}</h1>
-      <span>BlazeServe 0.3.0</span>
+      <span>BlazeServe 0.3.1</span>
     </header>
     {upload_ui}
     <input type="text" id="search" class="search-box" placeholder="Filter files in directory..." autofocus>
