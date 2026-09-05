@@ -12,7 +12,7 @@ BlazeServe releases are produced by `.github/workflows/release.yml`. The workflo
 
 ## Recommended release
 
-From **Actions → Release → Run workflow**, select `main` and enter the exact version from `pyproject.toml` (for example, `0.3.0`).
+From **Actions → Release → Run workflow**, select `main` and enter the exact version from `pyproject.toml`. Do not reuse a version that has already been published.
 
 The release workflow:
 
@@ -27,14 +27,25 @@ The package and container publication jobs depend on every release gate. Tag cre
 
 ## Tag-triggered release
 
-Maintainers may instead push a tag that exactly matches the package metadata:
+Maintainers may instead push a tag that exactly matches the package metadata. The following commands read `[project].version` through uv before creating the tag.
+
+POSIX shell:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+VERSION="$(uv version --short)"
+git tag "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
-The tag commit must be contained in `main`, and `v0.3.0` must match `project.version = "0.3.0"`. The same gates and API-token publication jobs run before the GitHub release is created. Manual dispatch is preferred because it avoids creating a tag before the gates complete.
+Windows PowerShell:
+
+```powershell
+$Version = uv version --short
+git tag "v$Version"
+git push origin "v$Version"
+```
+
+The tag commit must be contained in `main`, and the tag must match `project.version`. The same gates and API-token publication jobs run before the GitHub release is created. Manual dispatch is preferred because it avoids creating a tag before the gates complete. Keep `PYPI_API_TOKEN` in GitHub secrets; neither release path requires exporting it in a local shell.
 
 ## Failure handling
 

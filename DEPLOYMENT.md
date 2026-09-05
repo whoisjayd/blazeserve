@@ -22,16 +22,24 @@ BlazeServe includes a production-hardened multi-stage [Dockerfile](./Dockerfile)
 
 ### Developer prerequisites
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) using the official installer, then create the locked development environment from the repository root:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) using the official installer.
+
+macOS or Linux:
 
 ```bash
-# macOS/Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-# Windows PowerShell alternative:
-# powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+Windows PowerShell:
 
-uv sync --all-extras --dev
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+```
+
+Then create the locked development environment from the repository root in either shell:
+
+```console
+uv sync --locked --all-extras --dev
 ```
 
 BlazeServe supports Python 3.10 through 3.13. uv can use an installed supported interpreter or manage one with `uv python`; use `uv run ...` for project commands without activating `.venv`.
@@ -46,7 +54,7 @@ BlazeServe supports Python 3.10 through 3.13. uv can use an installed supported 
 
 ### Quick Launch with Docker Compose
 
-```bash
+```console
 # Start container with resource limits (2 CPUs, 512MB RAM)
 docker compose up -d
 
@@ -70,7 +78,7 @@ The single replica prevents clients from seeing inconsistent content across inde
 
 ### Deployment with Kustomize
 
-```bash
+```console
 # Apply the private, single-replica default.
 kubectl apply -k deploy/k8s/
 
@@ -102,7 +110,7 @@ LimitNOFILE=1048576
 LimitNPROC=512
 ```
 
-### Setup on Linux Host
+### Setup on a Linux host (POSIX shell)
 
 ```bash
 # 1. Create system user and directory
@@ -218,15 +226,25 @@ scrape_configs:
 
 ## 7. Production Health Diagnostics
 
-BlazeServe includes built-in diagnostic tools for pre-flight environment checks:
+Run diagnostics against the directory and port that the service will use:
 
-```bash
-# Validate directories, port bindings, and OS zero-copy support
-blaze doctor /data --port 8000
-
-# Machine-readable version check
+```console
+blaze doctor . --port 8000
 blaze version --json
+```
 
-# Client throughput benchmark test
+Run a self-contained local benchmark:
+
+```console
+blaze benchmark
+```
+
+By default, BlazeServe starts a temporary server on an OS-assigned free port, binds it only to loopback, benchmarks the synthetic `/__speed__` endpoint, and tears the server down automatically. It does not serve user files or expose them outside the local machine.
+
+To benchmark an existing local or remote deployment, pass its origin explicitly:
+
+```console
 blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
 ```
+
+Explicit `--url` mode never starts a replacement server. A connection-refused error means the target server or port is unavailable; confirm that the deployment is running and that its port matches `--url`.

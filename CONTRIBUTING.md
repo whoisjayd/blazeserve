@@ -7,16 +7,26 @@ Thanks for your interest! This project welcomes issues, discussions, and pull re
 1. Fork and clone the repo.
 2. Install uv using the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), then sync the project environment and development dependencies:
 
-```bash
-uv sync --all-extras --dev
+```console
+uv sync --locked --all-extras --dev
 ```
 
-uv creates and manages the project virtual environment in `.venv`. Activation is optional when using `uv run`; if you prefer an activated environment, use `. .venv/bin/activate` (Windows: `.venv\Scripts\activate`).
+uv creates and manages `.venv`. You do not need to activate it when using `uv run`. If you choose to activate it, use the command for your shell:
+
+```bash
+# POSIX shell
+. .venv/bin/activate
+```
+
+```powershell
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
 
 3. Run tests, lint, and type-check:
 
-```bash
-uv run pytest -n auto -v --cov=blazeserve
+```console
+uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy blazeserve
@@ -24,7 +34,7 @@ uv run mypy blazeserve
 
 ### Makefile shortcuts
 
-GNU Make is optional. After running `uv sync --all-extras --dev`, Make users can use these self-contained shortcuts:
+GNU Make is optional. After running `uv sync --locked --all-extras --dev`, Make users can use these self-contained shortcuts:
 
 ```text
 make install       # Install the package and development dependencies
@@ -41,17 +51,17 @@ The uv commands above work without Make, including on Windows.
 
 4. (Optional) Install pre-commit hooks to run checks automatically:
 
-```bash
+```console
 uv run pre-commit install
 ```
 
 ## Pull requests
 
--   Create a feature branch from `main`.
--   Keep PRs focused and small when possible.
--   Include tests for new behavior where practical.
--   Update docs where needed.
--   Make sure `uv run pytest`, `uv run ruff`, and `uv run mypy` pass locally.
+- Create a feature branch from `main`.
+- Keep PRs focused and small when possible.
+- Include tests for changed behavior where practical.
+- Update the relevant documentation. Label shell-specific commands as PowerShell or POSIX, and use portable relative paths when either shell works.
+- Run the full commands from Development setup before opening the PR.
 
 ## Commit messages
 
