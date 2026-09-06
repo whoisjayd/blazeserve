@@ -9,6 +9,9 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+permissions:
+  contents: read
+
 
 jobs:
   lint-and-typecheck:
@@ -70,12 +73,12 @@ jobs:
       - name: Run Container & Verify Liveness Probe
         run: |
           docker run -d --name test-srv -p 8000:8000 blazeserve:ci
+          trap 'docker rm -f test-srv >/dev/null 2>&1 || true' EXIT
           sleep 4
           curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8000/__live__
           curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8000/__ready__
           curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8000/__metrics__
           docker stop test-srv
-
   build-package:
     name: Build & Validate Distribution Packages
     needs: [test]

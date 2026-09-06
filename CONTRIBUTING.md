@@ -1,6 +1,38 @@
 # Contributing to BlazeServe
 
-Thanks for your interest! This project welcomes issues, discussions, and pull requests.
+Thanks for your interest in BlazeServe. Contributions are welcome, whether you are reporting a bug, improving documentation, or changing the server. Start with the guidance below so work is easy to review and safe to merge.
+
+## Ways to contribute
+
+- Report reproducible bugs and request actionable features through the appropriate [issue form](https://github.com/whoisjayd/blazeserve/issues/new/choose).
+- Improve HTTP behavior, performance, security, observability, deployment examples, documentation, or tests.
+- Help triage issues, reproduce reports, review pull requests, and improve examples.
+
+## Before you start
+
+1. Search existing [issues](https://github.com/whoisjayd/blazeserve/issues) and [Discussions](https://github.com/whoisjayd/blazeserve/discussions) before opening a request.
+2. Use the issue form that best matches the work. Usage questions and design exploration belong in Discussions; reproducible bugs and actionable feature requests belong in Issues.
+3. Open an issue before implementing a substantial change so the approach can be discussed. Large, unrequested changes may be redirected before implementation.
+4. Never include credentials, tokens, private keys, or exploit details in a public issue, discussion, pull request, or log. Use [SECURITY.md](SECURITY.md) for vulnerabilities.
+
+New contributors can browse the [`good first issue`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and [`help wanted`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) lists. Comment on an issue before starting, and release the issue if you are no longer working on it; claiming an issue does not reserve it indefinitely.
+
+## Repository map
+
+The main implementation and test areas are:
+
+- `blazeserve/cli.py`: CLI commands and input validation.
+- `blazeserve/server.py`: address selection, socket and TLS setup, configuration, and lifecycle.
+- `blazeserve/handlers.py`: HTTP protocol, transfers, caching, uploads, ZIPs, operational routes, CORS, authentication, and headers.
+- `blazeserve/security.py`: filesystem containment, safe upload creation, and request IDs.
+- `blazeserve/limiter.py`: token buckets and the per-IP rate-limit pool.
+- `blazeserve/metrics.py`: counters, gauges, and Prometheus output.
+- `blazeserve/logging.py`: human/JSON logging and credential redaction.
+- `blazeserve/ui.py`: escaped and URL-quoted directory listings.
+- `blazeserve/utils.py`: hashes, sizes, authentication parsing, and compatibility exports.
+- `tests/unit/`: isolated logic and module-level behavior.
+- `tests/integration/`: live HTTP behavior through the shared server fixtures.
+- `tests/e2e/`: user-visible Click workflows and command contracts.
 
 ## Development setup
 
@@ -23,49 +55,44 @@ uv creates and manages `.venv`. You do not need to activate it when using `uv ru
 .venv\Scripts\Activate.ps1
 ```
 
-3. Run tests, lint, and type-check:
+3. Run the focused checks relevant to your change. These commands work without Make, including on Windows:
 
 ```console
-uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
+uv run pytest tests/unit/test_security.py -q
+uv run pytest tests/integration/test_range_requests.py -q
+uv run pytest tests/e2e/test_cli_commands.py -q
+uv run pytest tests/integration/test_http_serving.py::test_serve_file -q
+uv run pytest -m unit -q
+uv run pytest -m "integration and not slow" -q
+```
+
+Run the full quality gate before handoff:
+
+```console
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy blazeserve
+uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
 ```
 
-### Makefile shortcuts
-
-GNU Make is optional. After running `uv sync --locked --all-extras --dev`, Make users can use these self-contained shortcuts:
-
-```text
-make install       # Install the package and development dependencies
-make test          # Run the test suite with coverage
-make lint          # Run Ruff lint and format checks
-make typecheck     # Run Mypy
-make check         # Run tests, lint, and type checks
-make build         # Build and validate distribution packages
-make pre-commit    # Run all configured pre-commit hooks
-make clean         # Remove Python build and cache artifacts
-```
-
-The uv commands above work without Make, including on Windows.
-
-4. (Optional) Install pre-commit hooks to run checks automatically:
-
-```console
-uv run pre-commit install
-```
+Coverage is branch-aware and must remain at least 85%. Behavior changes should include tests where practical. Use `uv run pre-commit run --all-files` when pre-commit is available. To install the optional hooks, run `uv run pre-commit install`. GNU Make is optional; the existing `make install`, `make test`, `make lint`, `make typecheck`, `make check`, `make build`, `make pre-commit`, and `make clean` shortcuts are available where supported. The uv commands above work without Make, including on Windows.
 
 ## Pull requests
 
-- Create a feature branch from `main`.
-- Keep PRs focused and small when possible.
-- Include tests for changed behavior where practical.
-- Update the relevant documentation. Label shell-specific commands as PowerShell or POSIX, and use portable relative paths when either shell works.
-- Run the full commands from Development setup before opening the PR.
+- Create a feature branch from `main` and keep the change focused.
+- Link the relevant issue when one exists; for work without an issue, explain why the change is needed.
+- Describe concrete user-visible behavior, compatibility implications, and platform impact.
+- Include focused tests and the exact commands/results used as evidence. Run the full quality gate above before opening the PR.
+- Update user-facing documentation when behavior, commands, endpoints, deployment, or operational guidance changes. Label shell-specific commands as PowerShell or POSIX and use portable relative paths where either shell works.
+- Review changes involving paths, uploads, authentication, TLS, logging, network writes, or secrets for data-handling and security implications. Never include secrets in examples or logs.
+- Expect review for correctness, security, portability, maintainability, tests, documentation, and fit with the project's purpose. Required CI checks must pass before merge.
+
+Dependency-update pull requests are expected to pass the same CI, quality, coverage, and package gates as human-authored pull requests. Review dependency and lockfile changes as supply-chain changes; do not hand-edit `uv.lock`.
 
 ## Commit messages
 
 We follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
 - `feat:` New features or capabilities
 - `fix:` Bug fixes and corrections
 - `chore:` Dependencies, git hygiene, and tooling
@@ -75,7 +102,19 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 ## Code style
 
 The codebase adheres to:
+
 - Python ≥ 3.10
 - `ruff` for linting and code formatting (line length 100)
 - `mypy` checks annotated code and the bodies of unannotated functions; annotations are not globally required
 - Google-style docstrings on public APIs
+
+## Labels
+
+Use `area:*` labels to identify the affected subsystem and `platform:*` labels for OS-specific behavior. They may be combined with one workflow or status label, such as `bug`, `enhancement`, `documentation`, `question`, `needs-triage`, or `help wanted`. `priority: high` and `blocked` are maintainer-applied labels: the former marks urgent compatibility, security, or release impact, and the latter marks work waiting on an external decision or dependency.
+
+## Community and project policies
+
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Support](SUPPORT.md)
+- [Governance](GOVERNANCE.md)
+- [Security policy](SECURITY.md)

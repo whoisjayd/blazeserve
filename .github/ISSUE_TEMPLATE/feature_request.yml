@@ -1,25 +1,62 @@
 name: Feature request
-description: Suggest an idea or improvement
+description: Suggest an idea or improvement for BlazeServe
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. Please focus on the user problem and the outcome you want to achieve.
+
   - type: textarea
     id: problem
     attributes:
-      label: Problem statement
-      description: What problem would this feature solve?
+      label: User problem
+      description: What problem would this feature solve, and who is affected?
+    validations:
+      required: true
 
   - type: textarea
     id: solution
     attributes:
-      label: Proposed solution
-      description: Describe how you'd like it to work.
+      label: Proposed outcome
+      description: Describe the user-visible result or behavior you would like.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Which part of BlazeServe would this proposal primarily affect?
+      options:
+        - cli
+        - http
+        - security
+        - performance
+        - observability
+        - deployment
+        - docs
+    validations:
+      required: true
 
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
+      description: What alternatives, workarounds, or existing tools have you considered?
 
-  - type: input
+  - type: textarea
     id: context
     attributes:
       label: Additional context
+      description: Add relevant use cases, links, examples, or constraints. Remove private information before submitting.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Submission checks
+      options:
+        - label: I checked existing issues and discussions for duplicates or related proposals.
+          required: true
+        - label: This proposal fits BlazeServe's purpose as a Python HTTP file server and CLI.
+          required: true
