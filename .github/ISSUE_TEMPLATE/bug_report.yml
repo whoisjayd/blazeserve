@@ -1,36 +1,56 @@
 name: Bug report
-description: Report a problem to help us improve
+description: Report a reproducible problem to help us improve
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug! Please provide as much detail as you can.
+        Thanks for filing a bug. Please provide reproducible, sanitized details so we can investigate efficiently.
 
   - type: input
     id: version
     attributes:
       label: BlazeServe version
       placeholder: e.g. 0.3.1
+    validations:
+      required: true
 
   - type: input
     id: python
     attributes:
       label: Python version
       placeholder: e.g. 3.12.4
+    validations:
+      required: true
 
   - type: input
     id: os
     attributes:
-      label: OS
+      label: OS and version
       placeholder: e.g. Ubuntu 22.04 / Windows 11 / macOS 14
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment-mode
+    attributes:
+      label: Deployment mode
+      description: Choose the mode in which the problem occurs.
+      options:
+        - Local
+        - Docker
+        - Kubernetes
+        - Reverse proxy
+        - Other
+    validations:
+      required: true
 
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened?
-      description: Describe the observed behavior and what you expected instead.
-      placeholder: Tell us what you saw...
+      label: Observed and expected behavior
+      description: Describe what happened and what you expected instead.
+      placeholder: Tell us what you saw and what you expected...
     validations:
       required: true
 
@@ -38,13 +58,42 @@ body:
     id: reproduce
     attributes:
       label: Steps to reproduce
+      description: Give the smallest complete sequence that consistently reproduces the problem.
       placeholder: |
-        1. Command run...
-        2. Request made to...
-        3. Error/log output...
+        1. Start BlazeServe with...
+        2. Run the command or request below...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: command-request
+    attributes:
+      label: Exact command or HTTP request
+      description: Include the exact command or request that triggers the issue. Remove credentials and other secrets.
+      render: shell
+    validations:
+      required: true
 
   - type: textarea
     id: logs
     attributes:
-      label: Relevant logs / output
+      label: Sanitized logs / output
+      description: Include relevant logs or output after removing credentials, tokens, keys, and private data.
       render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or additional context
+      description: Optional screenshots, configuration excerpts, or links. Remove private information before submitting.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for duplicates.
+          required: true
+        - label: I removed credentials, tokens, keys, and other secrets from this report.
+          required: true

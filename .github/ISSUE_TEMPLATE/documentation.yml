@@ -1,0 +1,39 @@
+name: Documentation
+description: Report unclear, missing, or incorrect documentation
+labels: [documentation]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve BlazeServe's documentation. Please describe the exact page or section so the correction can be scoped.
+
+  - type: input
+    id: page-section
+    attributes:
+      label: Page or section
+      description: Which documentation page, heading, or example needs attention?
+      placeholder: e.g. DEPLOYMENT.md — Kubernetes uploads
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-problem
+    attributes:
+      label: Current problem
+      description: What is missing, incorrect, confusing, or out of date?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-correction
+    attributes:
+      label: Proposed correction
+      description: Describe the wording, example, or technical correction that would make this clearer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Screenshots or examples
+      description: Optional screenshots, links, or replacement examples. Remove private information before submitting.

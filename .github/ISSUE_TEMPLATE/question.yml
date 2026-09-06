@@ -1,0 +1,48 @@
+name: Question
+description: Ask for usage or deployment help; Discussions are preferred for ongoing support conversations.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For usage questions, design exploration, and deployment advice, please continue the conversation in [GitHub Discussions](https://github.com/whoisjayd/blazeserve/discussions) when possible. This form helps route actionable context.
+
+  - type: input
+    id: version
+    attributes:
+      label: BlazeServe version
+      placeholder: e.g. 0.3.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Python version, OS, and deployment mode (local, Docker, Kubernetes, or reverse proxy).
+      placeholder: e.g. Python 3.12 on Ubuntu 22.04, Docker
+    validations:
+      required: true
+
+  - type: textarea
+    id: command-request
+    attributes:
+      label: Command or HTTP request
+      description: Paste the exact command or request, omitting credentials and other secrets.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: Expected result
+      description: What result or behavior were you trying to achieve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include relevant configuration or sanitized logs, if useful. Do not include credentials, tokens, or private data.

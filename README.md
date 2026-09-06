@@ -22,10 +22,12 @@ _Engineered with Zero-Copy Kernel I/O, Prometheus Telemetry, RFC 7232 Caching, a
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-operational-endpoints">Endpoints</a> •
   <a href="#-deployment-workflows">Deployment</a> •
-  <a href="#-cli-reference">CLI Reference</a>
+  <a href="#-cli-reference">CLI Reference</a> •
+  <a href="#-license--contributing">Contributing</a>
 </p>
 
 </div>
+
 
 ## ⚡ Why BlazeServe?
 
@@ -271,6 +273,15 @@ uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-mis
 
 ## 📄 License & Contributing
 
-- **License**: MIT License - see [LICENSE](./LICENSE) for details.
-- **Contributing**: Contributions are welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for conventions.
-- **Security**: For security vulnerability disclosure, see [SECURITY.md](./SECURITY.md).
+- **License**: MIT License — see [LICENSE](./LICENSE) for details.
+- **Contributing**: Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, focused checks, issue labels, and pull-request expectations.
+- **Support**: See [SUPPORT.md](./SUPPORT.md) for issue versus discussion routing.
+- **Governance**: See [GOVERNANCE.md](./GOVERNANCE.md) for project decisions and maintainer responsibilities.
+- **Community**: Read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating.
+- **Security**: For vulnerability disclosure, use the private process in [SECURITY.md](./SECURITY.md), not a public issue.
+
+### Find work and ask questions
+
+- Browse [good first issues](https://github.com/whoisjayd/blazeserve/contribute) for bounded newcomer tasks.
+- Use [GitHub Discussions](https://github.com/whoisjayd/blazeserve/discussions) for questions, ideas, and deployment conversations.
+- Use the [issue chooser](https://github.com/whoisjayd/blazeserve/issues/new/choose) for reproducible bugs, feature requests, and documentation corrections.
