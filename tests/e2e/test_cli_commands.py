@@ -20,10 +20,49 @@ def test_cli_doctor_valid_path(tmp_path: Path):
 
 
 @pytest.mark.e2e
+def test_cli_doctor_valid_path_json(tmp_path: Path):
+    import json
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["doctor", str(tmp_path), "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["path"] == str(tmp_path.resolve())
+    assert data["port"] == 8000
+    assert data["success"] is True
+    assert isinstance(data["diagnostics"], list)
+    assert len(data["diagnostics"]) == 4
+    components = [d["component"] for d in data["diagnostics"]]
+    assert "Base Path" in components
+    assert "Port Binding" in components
+    assert "Zero-Copy I/O" in components
+    assert "Sequential Read Ahead" in components
+    # Ensure no Rich ANSI escape sequences or markup tags are mixed in
+    assert "\x1b[" not in result.output
+    assert "[green]" not in result.output
+
+
+@pytest.mark.e2e
 def test_cli_doctor_invalid_path():
     runner = CliRunner()
     result = runner.invoke(cli, ["doctor", "/nonexistent_folder_xyz_12345"])
     assert result.exit_code != 0
+
+
+@pytest.mark.e2e
+def test_cli_doctor_invalid_path_json():
+    import json
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["doctor", "/nonexistent_folder_xyz_12345", "--json"])
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["success"] is False
+    base_path_diag = next(d for d in data["diagnostics"] if d["component"] == "Base Path")
+    assert base_path_diag["ok"] is False
+    assert base_path_diag["status"] == "FAIL"
+    assert "\x1b[" not in result.output
+
 
 
 @pytest.mark.e2e

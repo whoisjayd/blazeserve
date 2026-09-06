@@ -204,7 +204,7 @@ Usage: blaze [OPTIONS] COMMAND [ARGS]...
 Commands:
   serve      Serve a directory or a single file.
   send       Quick share a single file with one command.
-  doctor     Validate system environment and server configuration.
+  doctor     Validate system environment and server configuration (--json for machine-readable).
   benchmark  Run a high-speed throughput benchmark.
   checksum   Compute SHA256 checksums for files.
   version    Show version and system info (--json for machine-readable).
@@ -222,6 +222,12 @@ blaze send archive.tar.gz --port 8443 --tls-cert cert.pem --tls-key key.pem
 # Check a relative directory and port
 blaze doctor data --port 8080
 
+# Machine-readable diagnostics in POSIX shells
+blaze doctor data --port 8080 --json | jq .success
+
+# Machine-readable diagnostics in PowerShell
+(blaze doctor data --port 8080 --json | ConvertFrom-Json).success
+
 # Run a self-contained benchmark with a temporary loopback-only server
 blaze benchmark
 
@@ -230,6 +236,7 @@ blaze benchmark --url http://127.0.0.1:8000 --size-mb 200
 
 # Print machine-readable version data
 blaze version --json
+
 ```
 
 

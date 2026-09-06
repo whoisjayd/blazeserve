@@ -467,9 +467,98 @@ def version_cmd(json_output: bool = False) -> None:
     default=8000,
     help="Port to check availability.",
 )
-def doctor_cmd(path: str, port: int) -> None:
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON diagnostics.",
+)
+def doctor_cmd(path: str, port: int, json_output: bool = False) -> None:
     """Run production readiness diagnostics on paths, ports, and OS capabilities."""
+    import json
     import socket
+
+    all_ok = True
+    abs_p = os.path.abspath(path)
+
+    # Check 1: Base directory
+    base_path_ok = os.path.isdir(abs_p) and os.access(abs_p, os.R_OK)
+    if base_path_ok:
+        base_path_status = "OK"
+        base_path_details = f"Readable directory: {abs_p}"
+    else:
+        base_path_status = "FAIL"
+        base_path_details = f"Cannot read: {abs_p}"
+        all_ok = False
+
+    # Check 2: Port availability
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            port_ok = True
+            port_status = "OK"
+            port_details = f"Port {port} is free to bind"
+        except OSError as e:
+            port_ok = False
+            port_status = "FAIL"
+            port_details = f"Port {port} could not be bound: {e}. {_port_diagnostic_hint(port)}"
+            all_ok = False
+
+    # Check 3: Zero-Copy Kernel Sendfile
+    has_sendfile = hasattr(os, "sendfile") or hasattr(socket.socket, "sendfile")
+    sendfile_status = "ENABLED" if has_sendfile else "FALLBACK"
+    sendfile_details = (
+        "Zero-copy kernel sendfile available"
+        if has_sendfile
+        else "Using mmap/buffered I/O fallback"
+    )
+
+    # Check 4: Sequential Read Ahead
+    has_fadvise = hasattr(os, "posix_fadvise")
+    fadvise_status = "YES" if has_fadvise else "FALLBACK"
+    fadvise_details = (
+        "POSIX_FADV_SEQUENTIAL optimization"
+        if has_fadvise
+        else "Not available on this platform; using regular sequential reads"
+    )
+
+    if json_output:
+        data = {
+            "path": abs_p,
+            "port": port,
+            "success": all_ok,
+            "diagnostics": [
+                {
+                    "component": "Base Path",
+                    "status": base_path_status,
+                    "ok": base_path_ok,
+                    "details": base_path_details,
+                },
+                {
+                    "component": "Port Binding",
+                    "status": port_status,
+                    "ok": port_ok,
+                    "details": port_details,
+                },
+                {
+                    "component": "Zero-Copy I/O",
+                    "status": sendfile_status,
+                    "available": has_sendfile,
+                    "details": sendfile_details,
+                },
+                {
+                    "component": "Sequential Read Ahead",
+                    "status": fadvise_status,
+                    "available": has_fadvise,
+                    "details": fadvise_details,
+                },
+            ],
+        }
+        click.echo(json.dumps(data, indent=2))
+        if not all_ok:
+            sys.exit(1)
+        return
+
 
     from rich.table import Table
 
@@ -478,51 +567,31 @@ def doctor_cmd(path: str, port: int) -> None:
     tbl.add_column("Status", style="bold")
     tbl.add_column("Details")
 
-    all_ok = True
-    abs_p = os.path.abspath(path)
-
-    # Check 1: Base directory
-    if os.path.isdir(abs_p) and os.access(abs_p, os.R_OK):
-        tbl.add_row("Base Path", "[green]OK[/]", f"Readable directory: {abs_p}")
-    else:
-        tbl.add_row("Base Path", "[red]FAIL[/]", f"Cannot read: {abs_p}")
-        all_ok = False
-    # Check 2: Port availability
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("127.0.0.1", port))
-            tbl.add_row("Port Binding", "[green]OK[/]", f"Port {port} is free to bind")
-        except OSError as e:
-            tbl.add_row(
-                "Port Binding",
-                "[red]FAIL[/]",
-                f"Port {port} could not be bound: {e}. {_port_diagnostic_hint(port)}",
-            )
-            all_ok = False
-
-    # Check 3: Zero-Copy Kernel Sendfile
-    has_sendfile = hasattr(os, "sendfile") or hasattr(socket.socket, "sendfile")
-    status_str = "[green]ENABLED[/]" if has_sendfile else "[yellow]FALLBACK[/]"
-    details_str = (
-        "Zero-copy kernel sendfile available"
-        if has_sendfile
-        else "Using mmap/buffered I/O fallback"
+    tbl.add_row(
+        "Base Path",
+        "[green]OK[/]" if base_path_ok else "[red]FAIL[/]",
+        base_path_details,
     )
-    tbl.add_row("Zero-Copy I/O", status_str, details_str)
-
-    # Check 4: Sequential Read Ahead
-    has_fadvise = hasattr(os, "posix_fadvise")
-    fadvise_status = "[green]YES[/]" if has_fadvise else "[yellow]FALLBACK[/]"
-    fadvise_details = (
-        "POSIX_FADV_SEQUENTIAL optimization"
-        if has_fadvise
-        else "Not available on this platform; using regular sequential reads"
+    tbl.add_row(
+        "Port Binding",
+        "[green]OK[/]" if port_ok else "[red]FAIL[/]",
+        port_details,
     )
-    tbl.add_row("Sequential Read Ahead", fadvise_status, fadvise_details)
+    tbl.add_row(
+        "Zero-Copy I/O",
+        "[green]ENABLED[/]" if has_sendfile else "[yellow]FALLBACK[/]",
+        sendfile_details,
+    )
+    tbl.add_row(
+        "Sequential Read Ahead",
+        "[green]YES[/]" if has_fadvise else "[yellow]FALLBACK[/]",
+        fadvise_details,
+    )
 
     console.print(tbl)
     if not all_ok:
         raise click.Abort()
+
 
 
 @cli.command("benchmark", short_help="Run performance benchmark.")
