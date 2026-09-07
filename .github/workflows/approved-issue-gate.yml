@@ -1,0 +1,137 @@
+name: Approved Issue Gate
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: approved-issue-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  approved-issue:
+    name: Approved issue gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an approved closing issue
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pullRequest = context.payload.pull_request;
+            const trustedAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+            const authorLogin = (pullRequest.user?.login || "").toLowerCase();
+            const isDependabot = authorLogin === "dependabot[bot]" || authorLogin === "dependabot";
+
+            if (isDependabot || trustedAssociations.has(pullRequest.author_association)) {
+              core.info(`Exempt author: ${pullRequest.user.login} (${pullRequest.author_association})`);
+              return;
+            }
+
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 100, after: $cursor) {
+                      nodes { number url }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }
+            `;
+
+            let cursor = null;
+            let approvedIssue = null;
+            const checkedIssues = new Set();
+
+            // 1. Check native GitHub closing issues references from GraphQL
+            do {
+              const result = await github.graphql(query, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: pullRequest.number,
+                cursor,
+              });
+              const references = result.repository.pullRequest.closingIssuesReferences;
+
+              for (const issue of references.nodes) {
+                checkedIssues.add(issue.number);
+                const labels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  per_page: 100,
+                });
+                if (labels.some((label) => label.name === "approved-for-work")) {
+                  approvedIssue = issue;
+                  break;
+                }
+              }
+
+              if (approvedIssue || !references.pageInfo.hasNextPage) break;
+              cursor = references.pageInfo.endCursor;
+            } while (cursor);
+
+            // 2. Fallback: Parse closing keywords and issue numbers from PR body
+            if (!approvedIssue && pullRequest.body) {
+              const bodyPatterns = [
+                /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:#|https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/)(\d+)/gi,
+              ];
+              for (const pattern of bodyPatterns) {
+                let match;
+                while ((match = pattern.exec(pullRequest.body)) !== null) {
+                  const issueNumber = parseInt(match[1], 10);
+                  if (checkedIssues.has(issueNumber)) continue;
+                  checkedIssues.add(issueNumber);
+                  try {
+                    const labels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: issueNumber,
+                      per_page: 100,
+                    });
+                    if (labels.some((label) => label.name === "approved-for-work")) {
+                      approvedIssue = { number: issueNumber, url: `https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}` };
+                      break;
+                    }
+                  } catch (err) {
+                    core.warning(`Could not fetch labels for issue #${issueNumber}: ${err.message}`);
+                  }
+                }
+                if (approvedIssue) break;
+              }
+            }
+
+            if (approvedIssue) {
+              core.info(`Approved closing issue verified: #${approvedIssue.number} (${approvedIssue.url})`);
+              return;
+            }
+
+            const marker = "<!-- approved-issue-gate -->";
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullRequest.number,
+              per_page: 100,
+            });
+
+            if (!comments.some((comment) => comment.body?.includes(marker))) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequest.number,
+                body: `${marker}\nThanks for your contribution. Pull requests from external contributors must close at least one issue labeled \`approved-for-work\`. Please open or identify an issue, wait for a maintainer to apply that label, then link it in the PR description with a closing keyword such as \`Fixes #123\`. After updating the link, reopen this pull request. See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CONTRIBUTING.md#approval-and-ai-assisted-contributions).`,
+              });
+            }
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullRequest.number,
+              state: "closed",
+            });
+            core.setFailed("No linked closing issue has the approved-for-work label.");
