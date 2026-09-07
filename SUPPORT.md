@@ -4,19 +4,19 @@ BlazeServe support is routed by request type so maintainers and community member
 
 ## Where to ask
 
-- **Usage questions, design exploration, and deployment advice:** use [GitHub Discussions](https://github.com/whoisjayd/blazeserve/discussions) after Discussions are enabled. Include the BlazeServe version, Python version, operating system, deployment mode, command or HTTP request, and relevant sanitized output.
+- **Usage questions, design exploration, and deployment advice:** open a [Question request](https://github.com/whoisjayd/blazeserve/issues/new?template=question.yml). Include the BlazeServe version, Python version, operating system, deployment mode, command or HTTP request, and relevant sanitized output.
 - **Reproducible bugs:** open a [Bug report](https://github.com/whoisjayd/blazeserve/issues/new?template=bug_report.yml). Include a minimal reproduction and the expected and observed behavior.
 - **Actionable feature requests:** open a [Feature request](https://github.com/whoisjayd/blazeserve/issues/new?template=feature_request.yml) with the user problem and proposed outcome.
 - **Documentation corrections:** use the [Documentation form](https://github.com/whoisjayd/blazeserve/issues/new?template=documentation.yml).
-- **Security vulnerabilities:** follow [SECURITY.md](SECURITY.md) and report privately. Do not put credentials, tokens, private keys, exploit details, or sensitive logs in public Issues, Discussions, or pull requests.
+- **Security vulnerabilities:** follow [SECURITY.md](SECURITY.md) and report privately. Do not put credentials, tokens, private keys, exploit details, or sensitive logs in public Issues or pull requests.
 
-Before opening a request, check the [README](README.md), [DEPLOYMENT.md](DEPLOYMENT.md), and the README's operational endpoint documentation. Existing issues and Discussions may already answer the question or track the work.
+Before opening a request, check the [README](README.md), [DEPLOYMENT.md](DEPLOYMENT.md), and the README's operational endpoint documentation. Existing issues may already answer the question or track the work.
 
 ## What to include
 
 Provide only information needed to reproduce or understand the request. State the version, supported Python version (3.10–3.13), operating system, deployment mode, exact command or HTTP request, expected result, observed result, and sanitized logs or output. Remove secrets and personal or production data before posting.
 
-Issues are for actionable project work. Discussions are for questions and exploration; do not use either channel for private vulnerability reports.
+Issues route all actionable project work and questions; do not use public issues for private vulnerability reports.
 
 ## Response expectations
 

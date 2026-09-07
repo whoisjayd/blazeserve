@@ -11,7 +11,7 @@
 
 Please report security issues privately to **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)**. We will acknowledge receipt within 72 hours and provide a timeline for the fix after initial triage.
 
-Do not report vulnerabilities in public GitHub Issues, Discussions, pull requests, or support requests. Do not include credentials, tokens, private keys, exploit details, or sensitive logs in public project spaces. For general support routing, see [SUPPORT.md](SUPPORT.md); for community conduct concerns, see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Do not report vulnerabilities in public GitHub Issues, pull requests, or support requests. Do not include credentials, tokens, private keys, exploit details, or sensitive logs in public project spaces. For general support routing, see [SUPPORT.md](SUPPORT.md); for community conduct concerns, see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Disclosure Policy
 

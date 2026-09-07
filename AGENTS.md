@@ -9,6 +9,13 @@
 - Preserve public CLI and Python APIs unless the task explicitly changes a contract. `blazeserve.server.__all__`, its legacy parser, and `_RateLimiter` are compatibility surfaces.
 - Reuse established modules, fixtures, and errors; do not create a parallel abstraction beside an existing one.
 
+### Contribution control for coding and review agents
+
+- Work only from an issue labeled `approved-for-work`, and link it from the pull request with a closing keyword such as `Fixes #123`.
+- Disclose any AI or automation assistance, including tools and their role, in both the originating issue and pull request. Apply or request `ai-assisted` so maintainers give the work careful human review.
+- Identify the accountable human who understands and tested the complete change and will respond to review. Represent authorship accurately; never claim a human wrote agent-generated work.
+- Treat disclosure as a review-risk signal, not AI detection. Reject unsolicited autonomous or agent-generated pull requests and flag undisclosed or weakly owned AI-assisted work for maintainer attention.
+
 ## 2. Product purpose and boundaries
 
 BlazeServe is a Python HTTP/1.1 file server and CLI optimized for large static transfers. It serves directories or one file with ranges, conditional caching, precompressed assets, Basic Auth, TLS, CORS, throttling, uploads, streaming ZIPs, health endpoints, Prometheus metrics, and structured logs.

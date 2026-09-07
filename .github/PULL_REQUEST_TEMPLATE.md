@@ -7,9 +7,18 @@
 
 ## Linked issue
 
-<!-- Link the issue this PR addresses when applicable. If no issue exists, explain why the change is appropriate. -->
+<!-- External contributors: use a closing keyword to link an issue labeled `approved-for-work` (for example, `Fixes #123`). -->
 
 Fixes #
+## AI assistance disclosure
+
+<!-- AI assistance is a review-risk signal, not a determination of authorship. Unsolicited autonomous or agent-generated PRs are not accepted. -->
+
+- [ ] No AI assistance was used.
+- [ ] AI assistance was used and disclosed in the linked issue; the `ai-assisted` label should be applied.
+- **Tools and use:** Name the tools and explain what they generated or changed, or write "None."
+- **Accountable human:** Name the contributor who understands the complete change, tested it, and will respond to review.
+
 
 ## Behavior, compatibility, and platform impact
 
@@ -53,6 +62,7 @@ Fixes #
 - [ ] Tests and evidence are sufficient, and required CI checks pass.
 - [ ] Required documentation and release impact were reviewed.
 - [ ] Security and data-handling implications were reviewed where applicable.
+- [ ] AI-assisted work is disclosed in both the linked issue and this PR, labeled `ai-assisted`, and has received careful human review; or no AI assistance was used.
 
 ## Reviewer notes
 
