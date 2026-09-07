@@ -37,3 +37,19 @@ body:
     attributes:
       label: Screenshots or examples
       description: Optional screenshots, links, or replacement examples. Remove private information before submitting.
+
+  - type: textarea
+    id: ai-assistance
+    attributes:
+      label: AI assistance disclosure
+      description: If AI or automation assisted this report or proposed correction, name the tools, explain their role, and identify the accountable human who understands and will verify the work. Otherwise write "None."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ai-accountability
+    attributes:
+      label: AI-assisted contribution policy
+      options:
+        - label: I disclosed AI or automation assistance above, or confirmed that none was used; I understand disclosure is for careful human review, not AI detection.
+          required: true

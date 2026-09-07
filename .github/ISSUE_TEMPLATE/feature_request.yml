@@ -51,12 +51,28 @@ body:
       label: Additional context
       description: Add relevant use cases, links, examples, or constraints. Remove private information before submitting.
 
+  - type: textarea
+    id: ai-assistance
+    attributes:
+      label: AI assistance disclosure
+      description: If AI or automation assisted this proposal or will assist implementation, name the tools, explain their role, and identify the accountable human who understands and will test the work. Otherwise write "None."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ai-accountability
+    attributes:
+      label: AI-assisted contribution policy
+      options:
+        - label: I disclosed AI or automation assistance above, or confirmed that none was used; I understand disclosure is for careful human review, not AI detection.
+          required: true
+
   - type: checkboxes
     id: confirmations
     attributes:
       label: Submission checks
       options:
-        - label: I checked existing issues and discussions for duplicates or related proposals.
+        - label: I checked existing issues for duplicates or related proposals.
           required: true
         - label: This proposal fits BlazeServe's purpose as a Python HTTP file server and CLI.
           required: true

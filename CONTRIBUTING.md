@@ -10,12 +10,24 @@ Thanks for your interest in BlazeServe. Contributions are welcome, whether you a
 
 ## Before you start
 
-1. Search existing [issues](https://github.com/whoisjayd/blazeserve/issues) and [Discussions](https://github.com/whoisjayd/blazeserve/discussions) before opening a request.
-2. Use the issue form that best matches the work. Usage questions and design exploration belong in Discussions; reproducible bugs and actionable feature requests belong in Issues.
-3. Open an issue before implementing a substantial change so the approach can be discussed. Large, unrequested changes may be redirected before implementation.
-4. Never include credentials, tokens, private keys, or exploit details in a public issue, discussion, pull request, or log. Use [SECURITY.md](SECURITY.md) for vulnerabilities.
+1. Search existing [issues](https://github.com/whoisjayd/blazeserve/issues) before opening a request.
+2. Use the issue form that best matches the work: bug reports, feature requests, documentation corrections, or questions.
+3. External contributors must obtain issue approval before implementation as described below. Open the issue first and wait for a maintainer to apply `approved-for-work`.
+4. Never include credentials, tokens, private keys, or exploit details in a public issue, pull request, or log. Use [SECURITY.md](SECURITY.md) for vulnerabilities.
 
 New contributors can browse the [`good first issue`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and [`help wanted`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) lists. Comment on an issue before starting, and release the issue if you are no longer working on it; claiming an issue does not reserve it indefinitely.
+## Approval and AI-assisted contributions
+
+Pull requests from contributors without repository write access must use a closing keyword (for example, `Fixes #123`) to link at least one issue labeled `approved-for-work`. Obtain that label before opening the pull request. The automated gate exempts Dependabot and authors whose association is `OWNER`, `MEMBER`, or `COLLABORATOR`.
+
+Unsolicited autonomous or agent-generated pull requests are not accepted. AI-assisted contributions are welcome only when a named human contributor:
+
+- discloses the assistance and tools used in both the originating issue and pull request;
+- understands the entire change, tests it, and remains accountable for its correctness; and
+- responds to review and revises the work personally.
+
+AI disclosure is a review-risk signal, not an attempt to detect AI use. Maintainers apply `ai-assisted` so the change receives careful human review.
+
 
 ## Repository map
 
@@ -80,7 +92,7 @@ Coverage is branch-aware and must remain at least 85%. Behavior changes should i
 ## Pull requests
 
 - Create a feature branch from `main` and keep the change focused.
-- Link the relevant issue when one exists; for work without an issue, explain why the change is needed.
+- Follow the approval and disclosure policy above. Use `Fixes #<issue>` so GitHub records the approved issue as a closing issue.
 - Describe concrete user-visible behavior, compatibility implications, and platform impact.
 - Include focused tests and the exact commands/results used as evidence. Run the full quality gate above before opening the PR.
 - Update user-facing documentation when behavior, commands, endpoints, deployment, or operational guidance changes. Label shell-specific commands as PowerShell or POSIX and use portable relative paths where either shell works.
@@ -110,7 +122,7 @@ The codebase adheres to:
 
 ## Labels
 
-Use `area:*` labels to identify the affected subsystem and `platform:*` labels for OS-specific behavior. They may be combined with one workflow or status label, such as `bug`, `enhancement`, `documentation`, `question`, `needs-triage`, or `help wanted`. `priority: high` and `blocked` are maintainer-applied labels: the former marks urgent compatibility, security, or release impact, and the latter marks work waiting on an external decision or dependency.
+Use `area:*` labels to identify the affected subsystem and `platform:*` labels for OS-specific behavior. They may be combined with a workflow or status label such as `bug`, `enhancement`, `documentation`, `question`, `needs-triage`, or `help wanted`. Maintainers use `approved-for-work` to authorize external implementation and `ai-assisted` to flag disclosed AI assistance for careful human review. `priority: high` and `blocked` are maintainer-applied labels: the former marks urgent compatibility, security, or release impact, and the latter marks work waiting on an external decision or dependency.
 
 ## Community and project policies
 

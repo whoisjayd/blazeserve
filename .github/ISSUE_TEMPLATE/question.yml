@@ -1,11 +1,11 @@
 name: Question
-description: Ask for usage or deployment help; Discussions are preferred for ongoing support conversations.
+description: Ask for usage or deployment help through GitHub Issues.
 labels: [question]
 body:
   - type: markdown
     attributes:
       value: |
-        For usage questions, design exploration, and deployment advice, please continue the conversation in [GitHub Discussions](https://github.com/whoisjayd/blazeserve/discussions) when possible. This form helps route actionable context.
+        Use this form for usage questions, design exploration, and deployment advice. This helps route actionable context.
 
   - type: input
     id: version
@@ -46,3 +46,19 @@ body:
     attributes:
       label: Additional context
       description: Include relevant configuration or sanitized logs, if useful. Do not include credentials, tokens, or private data.
+
+  - type: textarea
+    id: ai-assistance
+    attributes:
+      label: AI assistance disclosure
+      description: If AI or automation assisted this question or proposed work, name the tools, explain their role, and identify the accountable human who will verify any contribution. Otherwise write "None."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ai-accountability
+    attributes:
+      label: AI-assisted contribution policy
+      options:
+        - label: I disclosed AI or automation assistance above, or confirmed that none was used; I understand disclosure is for careful human review, not AI detection.
+          required: true

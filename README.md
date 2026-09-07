@@ -274,14 +274,23 @@ uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-mis
 ## 📄 License & Contributing
 
 - **License**: MIT License — see [LICENSE](./LICENSE) for details.
-- **Contributing**: Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, focused checks, issue labels, and pull-request expectations.
-- **Support**: See [SUPPORT.md](./SUPPORT.md) for issue versus discussion routing.
+- **Contributing**: Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, focused checks, issue approval requirements, and pull-request expectations.
+- **Support**: See [SUPPORT.md](./SUPPORT.md) for issue routing and support procedures.
 - **Governance**: See [GOVERNANCE.md](./GOVERNANCE.md) for project decisions and maintainer responsibilities.
 - **Community**: Read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating.
 - **Security**: For vulnerability disclosure, use the private process in [SECURITY.md](./SECURITY.md), not a public issue.
 
 ### Find work and ask questions
 
-- Browse [good first issues](https://github.com/whoisjayd/blazeserve/contribute) for bounded newcomer tasks.
-- Use [GitHub Discussions](https://github.com/whoisjayd/blazeserve/discussions) for questions, ideas, and deployment conversations.
-- Use the [issue chooser](https://github.com/whoisjayd/blazeserve/issues/new/choose) for reproducible bugs, feature requests, and documentation corrections.
+- Browse [good first issues](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) for bounded newcomer tasks.
+- Look for issues labeled [`approved-for-work`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22approved-for-work%22) or [`help wanted`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+- Use the [issue chooser](https://github.com/whoisjayd/blazeserve/issues/new/choose) for reproducible bugs, feature requests, usage questions, and documentation improvements.
+
+### Contribution workflow & review rules
+
+To maintain code quality, prevent drive-by automated spam, and ensure thorough human review:
+
+1. **Issue Approval Required**: External contributors must obtain an approved issue before opening a pull request. Open an issue first; once a maintainer reviews the proposal and applies the `approved-for-work` label, implementation can proceed.
+2. **Closing Keyword Link**: Pull requests must link the approved issue using a closing keyword (e.g., `Fixes #123`). An automated gate closes external PRs lacking an approved issue link.
+3. **Accountable AI-Assisted Contributions**: Unsolicited autonomous or agent-generated pull requests are not accepted. AI-assisted contributions are welcome only when a named human contributor discloses the tools used in both the issue and PR, understands and tests the entire change, takes responsibility for correctness, and personally responds to reviews. Maintainers apply `ai-assisted` so the PR receives careful human review.
+4. **Branch Protection & Workflow Security**: The `main` branch requires code-owner approval, resolved conversations, and passing CI status checks before merge. All GitHub Actions workflows run on modern Node 24 runtimes, and external fork workflow runs require maintainer approval.
