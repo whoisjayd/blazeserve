@@ -20,9 +20,12 @@ def is_safe_path(base_dir: str, target_path: str) -> bool:
     real_base = os.path.realpath(base_dir)
     real_target = os.path.realpath(target_path)
     try:
-        return os.path.commonpath((real_base, real_target)) == real_base
+        if os.path.commonpath((real_base, real_target)) != real_base:
+            return False
     except ValueError:
         return False
+    base_prefix = real_base if real_base.endswith(os.sep) else real_base + os.sep
+    return real_target == real_base or real_target.startswith(base_prefix)
 
 
 def create_upload_file(base_dir: str, target_path: str) -> BinaryIO:
@@ -33,12 +36,21 @@ def create_upload_file(base_dir: str, target_path: str) -> BinaryIO:
     ``O_NOFOLLOW`` protects the final component where the platform supports it.
     """
     real_base = os.path.realpath(base_dir)
-    absolute_target = os.path.abspath(target_path)
-    if not is_safe_path(real_base, absolute_target):
+    canonical_target = os.path.realpath(target_path)
+    if not canonical_target.startswith(real_base):
+        raise UnsafePathError("upload path escapes the configured root")
+    if not is_safe_path(real_base, canonical_target):
         raise UnsafePathError("upload path escapes the configured root")
 
-    parent = os.path.dirname(absolute_target)
+    parent = os.path.dirname(canonical_target)
+    if not parent.startswith(real_base):
+        raise UnsafePathError("upload parent escapes the configured root")
+    if not is_safe_path(real_base, parent):
+        raise UnsafePathError("upload parent escapes the configured root")
+
     os.makedirs(parent, exist_ok=True)
+    if not parent.startswith(real_base):
+        raise UnsafePathError("upload parent escapes the configured root")
     if not is_safe_path(real_base, parent):
         raise UnsafePathError("upload parent escapes the configured root")
 
@@ -46,7 +58,7 @@ def create_upload_file(base_dir: str, target_path: str) -> BinaryIO:
     flags |= getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(absolute_target, flags, 0o600)
+        fd = os.open(canonical_target, flags, 0o600)
     except OSError as exc:
         if not is_safe_path(real_base, parent):
             raise UnsafePathError("upload parent changed during creation") from exc

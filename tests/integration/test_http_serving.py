@@ -22,6 +22,21 @@ def test_serve_file(server: tuple[str, int]):
 
 
 @pytest.mark.integration
+def test_serve_file_over_ipv6_loopback(
+    server_factory: Callable[..., tuple[str, int]], test_dir: Path, ipv6_loopback: None
+):
+    host, port = server_factory(host="::1", port=0, base=str(test_dir))
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request("GET", "/test.txt")
+        resp = conn.getresponse()
+        assert resp.status == 200
+        assert resp.read() == b"Hello, BlazeServe!"
+    finally:
+        conn.close()
+
+
+@pytest.mark.integration
 def test_serve_large_binary(server: tuple[str, int]):
     host, port = server
     conn = HTTPConnection(host, port)

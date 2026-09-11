@@ -128,9 +128,12 @@ def create_server(
     precompress: bool = True,
     max_upload_mb: int = 0,
     verbose: bool = False,
-    log_json: bool = False,
+    log_json: bool | None = None,
 ) -> BlazeServer:
-    """Instantiate and configure a high-performance BlazeServer."""
+    """Instantiate and configure a high-performance BlazeServer.
+
+    ``log_json=None`` inherits ``BLAZE_LOG_JSON``; explicit booleans override it.
+    """
     if rate_mbps is not None and rate_mbps <= 0:
         raise ValueError("rate_mbps must be greater than zero when configured")
     if bool(tls_cert) != bool(tls_key):
@@ -150,7 +153,7 @@ def create_server(
     _Handler.INDEX = list(index or [])
     _Handler.PRECOMPRESS = bool(precompress)
     _Handler.MAX_UPLOAD = max(0, int(max_upload_mb)) * 1024 * 1024
-    _Handler.LOG_JSON = bool(log_json)
+    _Handler.LOG_JSON = log_json
 
     if auth:
         if ":" not in auth:
