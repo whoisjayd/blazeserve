@@ -148,7 +148,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
     INDEX: list[str] = []
     PRECOMPRESS: bool = True
     MAX_UPLOAD: int = 0
-    LOG_JSON: bool = False
+    LOG_JSON: bool | None = None
     ZIP_COMPRESSION: int = zipfile.ZIP_STORED
     _buf: bytearray | None = None
 
@@ -156,8 +156,10 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=self.BASE, **kwargs)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Override logging to support structured JSON output when configured."""
-        if self.LOG_JSON or os.environ.get("BLAZE_LOG_JSON") == "1":
+        """Emit structured request logs when enabled for this handler or environment."""
+        if self.LOG_JSON is True or (
+            self.LOG_JSON is None and os.environ.get("BLAZE_LOG_JSON") == "1"
+        ):
             req_line = args[0] if args else "-"
             code = args[1] if len(args) > 1 else "-"
             size = args[2] if len(args) > 2 else "-"
@@ -312,12 +314,16 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
 
-        dst = os.path.abspath(os.path.join(self.BASE, fn))
-        if not is_safe_path(self.BASE, dst):
+        real_base = os.path.realpath(self.BASE)
+        real_dst = os.path.realpath(os.path.join(self.BASE, fn))
+        if not real_dst.startswith(real_base):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        if not is_safe_path(self.BASE, real_dst):
             self.send_error(HTTPStatus.FORBIDDEN)
             return
 
-        if os.path.lexists(dst):
+        if os.path.lexists(real_dst):
             self.send_error(HTTPStatus.CONFLICT)
             return
 
@@ -340,7 +346,7 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            with create_upload_file(self.BASE, dst) as out:
+            with create_upload_file(self.BASE, real_dst) as out:
                 remain = length
                 buf = self._buf or bytearray(self.WINDOW)
                 mv = memoryview(buf)
@@ -362,15 +368,16 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             return
         except EOFError:
             with contextlib.suppress(OSError):
-                os.unlink(dst)
+                if real_dst.startswith(real_base) and is_safe_path(self.BASE, real_dst):
+                    os.unlink(real_dst)
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
         except OSError:
             with contextlib.suppress(OSError):
-                os.unlink(dst)
+                if real_dst.startswith(real_base) and is_safe_path(self.BASE, real_dst):
+                    os.unlink(real_dst)
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
             return
-
         self.send_response(HTTPStatus.CREATED)
         self._cors_headers()
         self._send_security_headers()
@@ -922,11 +929,15 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         if not raw:
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
-        path = os.path.abspath(os.path.join(self.BASE, raw))
-        if not is_safe_path(self.BASE, path):
+        real_base = os.path.realpath(self.BASE)
+        real_path = os.path.realpath(os.path.join(self.BASE, raw))
+        if not real_path.startswith(real_base):
             self.send_error(HTTPStatus.FORBIDDEN)
             return
-        if not os.path.exists(path):
+        if not is_safe_path(self.BASE, real_path):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        if not os.path.exists(real_path):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
@@ -934,8 +945,16 @@ class BlazeHandler(SimpleHTTPRequestHandler):
         self._cors_headers()
         self._send_security_headers()
         self.send_header("Content-Type", "application/zip")
-        name = os.path.basename(path.rstrip(os.sep)) or "archive"
-        self.send_header("Content-Disposition", f'attachment; filename="{name}.zip"')
+        name = os.path.basename(real_path.rstrip(os.sep)) or "archive"
+        safe_name = (
+            name.replace("\r", "")
+            .replace("\n", "")
+            .replace('"', "")
+            .replace(";", "")
+            .replace(":", "")
+            or "archive"
+        )
+        self.send_header("Content-Disposition", f'attachment; filename="{safe_name}.zip"')
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
         self.close_connection = True
@@ -949,17 +968,19 @@ class BlazeHandler(SimpleHTTPRequestHandler):
             cast(IO[bytes], stream), "w", compression=self.ZIP_COMPRESSION, allowZip64=True
         )
         try:
-            if os.path.isdir(path):
-                for root, _, files in os.walk(path):
+            if not real_path.startswith(real_base):
+                return
+            if os.path.isdir(real_path):
+                for root, _, files in os.walk(real_path):
                     for fn in files:
                         ap = os.path.join(root, fn)
                         if not is_safe_path(self.BASE, ap):
                             continue
-                        arc = os.path.relpath(ap, path)
+                        arc = os.path.relpath(ap, real_path)
                         with contextlib.suppress(OSError):
                             z.write(ap, arcname=arc)
             else:
-                z.write(path, arcname=os.path.basename(path))
+                z.write(real_path, arcname=os.path.basename(real_path))
         except _ClientDisconnectedError:
             pass
         finally:
