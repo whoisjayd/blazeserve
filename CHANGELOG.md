@@ -5,6 +5,20 @@ All notable changes to BlazeServe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-11
+
+### Added
+- **Machine-Readable CLI Outputs**: Added opt-in `--json` mode to `blaze doctor` (reporting structured path, port, and optimization checks) and single-run `blaze benchmark` (reporting normalized base URL, byte counts, elapsed seconds, and throughput in MiB/s) while preserving default Rich terminal formatting.
+- **Local Contributor Smoke Flow**: Added `scripts/contributor_smoke.py` as an activation-free local smoke command verifying authenticated static GET, byte-range slicing, file upload and readback, and liveness/readiness probes with clean lifecycle teardown.
+- **Live IPv6 Loopback Coverage**: Added capability-aware live IPv6 integration testing on `[::1]:0` and socket-family preservation across dual-stack resolution.
+- **Offline Deployment Configuration Validation**: Added a dedicated, read-only CI job and contributor reproduction workflow verifying Docker Compose, Kubernetes manifests, reverse-proxy configs, Linux kernel tuning syntax, Prometheus alerting rules, and systemd service unit integrity.
+- **Compatibility and Deprecation Policy**: Published a normative compatibility policy (`COMPATIBILITY.md`) defining public surfaces, support evidence matrix, deprecation stages, and exception standards.
+- **Extended Protocol Integration Tests**: Added deterministic tests covering Cross-Origin Resource Sharing (CORS) header sets and representation-aware `Vary` dimensions across uncompressed, gzip precompressed, and range requests.
+
+### Security
+- **Path Traversal Barrier Enforcement**: Strengthened path canonicalization and barrier guards across upload and ZIP endpoints, ensuring resolved targets strictly remain within the configured root.
+- **HTTP Response Splitting Sanitization**: Sanitized dynamic attachment filenames in the `Content-Disposition` header to prevent CRLF injection and response splitting.
+
 ## [0.3.1] - 2026-09-05
 
 ### Added
