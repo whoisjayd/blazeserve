@@ -5,6 +5,16 @@ from http.client import HTTPConnection
 import pytest
 
 
+def _header_token_set(headers, name: str) -> set[str]:
+    """Return case-insensitive comma-separated header tokens."""
+    return {
+        token.strip().casefold()
+        for value in headers.get_all(name, [])
+        for token in value.split(",")
+        if token.strip()
+    }
+
+
 @pytest.mark.integration
 def test_single_byte_range(server: tuple[str, int]):
     host, port = server
@@ -15,6 +25,25 @@ def test_single_byte_range(server: tuple[str, int]):
         assert resp.status == 206
         assert resp.read() == b"Hello"
         assert "bytes 0-4/" in resp.headers.get("Content-Range", "")
+    finally:
+        conn.close()
+
+
+@pytest.mark.integration
+def test_range_request_with_gzip_acceptance_stays_uncompressed(server: tuple[str, int]):
+    host, port = server
+    conn = HTTPConnection(host, port)
+    try:
+        conn.request(
+            "GET",
+            "/test.txt",
+            headers={"Range": "bytes=0-4", "Accept-Encoding": "gzip"},
+        )
+        resp = conn.getresponse()
+        assert resp.status == 206
+        assert resp.read() == b"Hello"
+        assert resp.headers.get("Content-Encoding") is None
+        assert _header_token_set(resp.headers, "Vary") == {"origin"}
     finally:
         conn.close()
 

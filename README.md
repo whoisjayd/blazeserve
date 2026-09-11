@@ -124,6 +124,14 @@ blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
 
 Explicit `--url` mode never starts a replacement server. A connection-refused error means the target server or port is unavailable; confirm that the server is running and that its port matches `--url`.
 
+For CI, request one machine-readable result with no progress or result-table text on standard output:
+
+```console
+blaze benchmark --size-mb 100 --json
+```
+
+The JSON object has `base_url` (the normalized URL prefix), integer `requested_bytes` and `downloaded_bytes`, and numeric `elapsed_seconds` and `throughput_mib_per_second`. Byte counts are bytes; throughput is MiB/s.
+
 Throughput, latency, and memory usage depend on the host kernel, storage, network, TLS, and reverse-proxy configuration. Publish benchmark figures only with the command, workload, machine specifications, and comparison methodology used to obtain them.
 
 
@@ -222,15 +230,26 @@ blaze send archive.tar.gz --port 8443 --tls-cert cert.pem --tls-key key.pem
 # Check a relative directory and port
 blaze doctor data --port 8080
 
+# Emit deployment diagnostics as JSON (POSIX shell)
+blaze doctor data --port 8080 --json
+
+# Emit deployment diagnostics as JSON (PowerShell)
+blaze doctor .\data --port 8080 --json
+
 # Run a self-contained benchmark with a temporary loopback-only server
 blaze benchmark
 
 # Benchmark the existing server at this URL
 blaze benchmark --url http://127.0.0.1:8000 --size-mb 200
 
+# Emit one CI-friendly benchmark JSON object
+blaze benchmark --size-mb 200 --json
+
 # Print machine-readable version data
 blaze version --json
 ```
+
+`blaze doctor --json` writes one object containing an absolute `path`, integer `port`, boolean `success`, and `checks`. Each check has an `id`, `outcome`, and `details`; IDs are `base_path`, `port_binding`, `zero_copy_io`, and `sequential_read_ahead`. Outcomes are `pass`, `fail`, or `fallback`. Optional unavailable OS optimizations use `fallback` and do not make the diagnostic fail.
 
 
 ## 📦 Production Deployment Workflows

@@ -15,16 +15,32 @@ import pytest
 from blazeserve.server import create_server
 
 
-def wait_for_port(host: str, port: int, timeout: float = 3.0) -> bool:
+def wait_for_port(
+    host: str,
+    port: int,
+    timeout: float = 3.0,
+    family: socket.AddressFamily | None = None,
+) -> bool:
     """Poll socket until server accepts connections."""
+    resolved_family = family or (socket.AF_INET6 if ":" in host else socket.AF_INET)
     start = time.perf_counter()
     while time.perf_counter() - start < timeout:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        with socket.socket(resolved_family, socket.SOCK_STREAM) as s:
             s.settimeout(0.1)
             if s.connect_ex((host, port)) == 0:
                 return True
         time.sleep(0.01)
     return False
+
+
+@pytest.fixture
+def ipv6_loopback() -> None:
+    """Skip live IPv6 tests when the local loopback address cannot bind."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.bind(("::1", 0))
+    except OSError as exc:
+        pytest.skip(f"IPv6 loopback unavailable: {exc}")
 
 
 @pytest.fixture
@@ -57,7 +73,7 @@ def server_factory() -> Generator[Callable[..., tuple[str, int]], None, None]:
 
         t = threading.Thread(target=httpd.serve_forever, daemon=True)
         t.start()
-        if not wait_for_port(host, actual_port, timeout=3.0):
+        if not wait_for_port(host, actual_port, timeout=3.0, family=httpd.socket.family):
             httpd.shutdown()
             httpd.server_close()
             raise RuntimeError(f"Server failed to bind on port {actual_port}")
