@@ -186,9 +186,10 @@ jobs:
       - name: Publish through PyPI API token
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          username: __token__
+          user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist/
+          skip-existing: true
 
   publish-container:
     name: Publish container to GHCR
