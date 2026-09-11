@@ -78,6 +78,14 @@ uv run pytest -m unit -q
 uv run pytest -m "integration and not slow" -q
 ```
 
+For one portable end-to-end check of local request handling, run:
+
+```console
+uv run python scripts/contributor_smoke.py
+```
+
+It creates deterministic fixture data in a temporary directory, starts an authenticated BlazeServe listener on `127.0.0.1` with an OS-selected port, verifies a static response, byte range, upload/readback, and live/readiness probes, then removes all temporary state. Its one-line JSON output contains only logical fixture metadata and response summaries; it does not expose credentials or temporary paths.
+
 Run the full quality gate before handoff:
 
 ```console
@@ -88,6 +96,31 @@ uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-mis
 ```
 
 Coverage is branch-aware and must remain at least 85%. Behavior changes should include tests where practical. Use `uv run pre-commit run --all-files` when pre-commit is available. To install the optional hooks, run `uv run pre-commit install`. GNU Make is optional; the existing `make install`, `make test`, `make lint`, `make typecheck`, `make check`, `make build`, `make pre-commit`, and `make clean` shortcuts are available where supported. The uv commands above work without Make, including on Windows.
+
+## Offline deployment configuration validation
+
+The CI `Offline Deployment Configuration Validation` job only parses, renders, and validates checked-in deployment files. It never starts BlazeServe or a proxy, applies to a cluster, writes tuning values, or needs credentials. Reproduce its checks on a POSIX host with Docker Engine, Docker Compose **v2.30.3**, `systemd-analyze` from the target Linux distribution, and these exact validator images: `registry.k8s.io/kubectl:v1.32.2`, `mikefarah/yq:4.45.4`, `bash:5.2.37`, `python:3.13.2-alpine3.21`, `prom/prometheus:v3.4.0`, `nginx:1.27.4-alpine`, `caddy:2.9.1-alpine`, and `traefik:v3.3.4`.
+
+From the repository root, use read-only mounts for every containerized check:
+
+```bash
+docker compose -f docker-compose.yml config --quiet
+docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work registry.k8s.io/kubectl:v1.32.2 kustomize deploy/k8s
+docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval-all -e '.' deploy/k8s/*.yaml >/dev/null
+docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly bash:5.2.37 -n /work/deploy/linux-tuning/tuning.sh
+docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check config /etc/prometheus/prometheus.yml
+docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check rules /etc/prometheus/alerts.yml
+docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json >/dev/null
+docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/nginx.conf",dst=/etc/nginx/nginx.conf,readonly nginx:1.27.4-alpine nginx -t -c /etc/nginx/nginx.conf
+docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/Caddyfile",dst=/etc/caddy/Caddyfile,readonly caddy:2.9.1-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+timeout 5s docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy",dst=/etc/traefik,readonly --entrypoint traefik traefik:v3.3.4 --configFile=/etc/traefik/traefik.yml
+docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval -e '.' deploy/reverse-proxy/traefik-dynamic.yml >/dev/null
+systemd-analyze verify deploy/systemd/blazeserve.service
+```
+
+CI additionally asserts that the default `kubectl kustomize deploy/k8s` render contains only `Deployment` and `Service`, and uses an inline Python format validator for non-comment tuning lines: `limits.conf` must contain `blazeserve soft|hard nofile|nproc positive-integer`; `sysctl-blazeserve.conf` must contain `lowercase/digit/dot/hyphen key = non-empty whitespace-separated value`. `systemd-analyze` is intentionally runner-/host-provided rather than container-pinned, so its diagnostics can vary with the Ubuntu runner or local target distribution; it validates unit syntax and verifies that `ExecStart` is executable (locally stub with `sudo ln -sf /bin/true /usr/local/bin/blaze` if not yet installed). Nginx, Caddy, and Prometheus receive their validation subcommands; Traefik verifies static configuration on startup.
+
+To confirm that a validator catches a defect, make a temporary malformed local copy or change of the relevant configuration, run its corresponding command and confirm it fails, then revert the temporary change before committing. Do not add malformed fixtures to the repository.
 
 ## Pull requests
 
@@ -130,3 +163,4 @@ Use `area:*` labels to identify the affected subsystem and `platform:*` labels f
 - [Support](SUPPORT.md)
 - [Governance](GOVERNANCE.md)
 - [Security policy](SECURITY.md)
+- [Compatibility and deprecation policy](COMPATIBILITY.md)

@@ -12,7 +12,6 @@ concurrency:
 permissions:
   contents: read
 
-
 jobs:
   lint-and-typecheck:
     name: Code Quality (Ruff & Mypy)
@@ -104,3 +103,83 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  deployment-config-validation:
+    name: Offline Deployment Configuration Validation
+    runs-on: ubuntu-latest
+    # Pinned validators: Compose v2.30.3; kubectl v1.32.2; yq v4.45.4;
+    # Python v3.13.2; Prometheus v3.4.0; Nginx v1.27.4; Caddy v2.9.1;
+    # Traefik v3.3.4. systemd-analyze is the runner-provided Ubuntu version.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Docker Compose v2.30.3
+        uses: docker/setup-compose-action@v1
+        with:
+          version: v2.30.3
+      - name: Validate Docker Compose configuration
+        run: docker compose -f docker-compose.yml config --quiet
+      - name: Render Kubernetes base and validate Kubernetes YAML
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work registry.k8s.io/kubectl:v1.32.2 kustomize deploy/k8s > /tmp/blazeserve-k8s.yaml
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval-all -e '.' deploy/k8s/*.yaml > /dev/null
+          kinds="$(docker run --rm -i mikefarah/yq:4.45.4 eval -N -r '.kind' - < /tmp/blazeserve-k8s.yaml | sort)"
+          test "$kinds" = $'Deployment\nService' || {
+            printf 'default deploy/k8s base must render only Deployment and Service; got:\n%s\n' "$kinds" >&2
+            exit 1
+          }
+      - name: Validate Linux tuning syntax and documented format subset
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly bash:5.2.37 -n /work/deploy/linux-tuning/tuning.sh
+          docker run --rm -i --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("/work/deploy/linux-tuning")
+          limits = [line.split() for line in root.joinpath("limits.conf").read_text().splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")]
+          if not limits or any(
+              len(fields) != 4
+              or fields[0] != "blazeserve"
+              or fields[1] not in {"soft", "hard"}
+              or fields[2] not in {"nofile", "nproc"}
+              or not fields[3].isdigit()
+              or int(fields[3]) <= 0
+              for fields in limits
+          ):
+              raise SystemExit("deploy/linux-tuning/limits.conf must use: blazeserve soft|hard nofile|nproc positive-integer")
+
+          assignment = re.compile(r"[a-z0-9_.-]+\s*=\s*\S+(?:\s+\S+)*$")
+          sysctl_lines = [line for line in root.joinpath("sysctl-blazeserve.conf").read_text().splitlines()
+                          if line.strip() and not line.lstrip().startswith("#")]
+          if not sysctl_lines or any(not assignment.fullmatch(line) for line in sysctl_lines):
+              raise SystemExit("deploy/linux-tuning/sysctl-blazeserve.conf must use: lowercase.key = non-empty whitespace-separated value")
+          PY
+      - name: Validate monitoring configuration
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check rules /etc/prometheus/alerts.yml
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json > /dev/null
+      - name: Validate reverse-proxy configuration
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/nginx.conf",dst=/etc/nginx/nginx.conf,readonly nginx:1.27.4-alpine nginx -t -c /etc/nginx/nginx.conf
+          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/Caddyfile",dst=/etc/caddy/Caddyfile,readonly caddy:2.9.1-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          set +e
+          timeout 5s docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy",dst=/etc/traefik,readonly --entrypoint traefik traefik:v3.3.4 --configFile=/etc/traefik/traefik.yml
+          status=$?
+          set -e
+          test "$status" -eq 124 || {
+            printf 'Traefik configuration validation exited unexpectedly with status %s\n' "$status" >&2
+            exit 1
+          }
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval -e '.' deploy/reverse-proxy/traefik-dynamic.yml > /dev/null
+      - name: Validate systemd unit without starting it
+        # ubuntu-latest supplies systemd-analyze; its version tracks the runner image.
+        # systemd-analyze verify checks unit syntax and validates that ExecStart is executable.
+        run: |
+          sudo ln -sf /bin/true /usr/local/bin/blaze
+          trap 'sudo rm -f /usr/local/bin/blaze' EXIT
+          systemd-analyze verify deploy/systemd/blazeserve.service

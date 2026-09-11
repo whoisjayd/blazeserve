@@ -463,62 +463,123 @@ def version_cmd(json_output: bool = False) -> None:
 @click.option(
     "-p",
     "--port",
-    type=click.IntRange(1, 65535),
+    type=click.IntRange(0, 65535),
     default=8000,
     help="Port to check availability.",
 )
-def doctor_cmd(path: str, port: int) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Display machine-readable JSON.")
+def doctor_cmd(path: str, port: int, json_output: bool) -> None:
     """Run production readiness diagnostics on paths, ports, and OS capabilities."""
+    import json
     import socket
 
     from rich.table import Table
 
-    tbl = Table(title="⚡ BlazeServe Production Diagnostics", border_style="cyan")
-    tbl.add_column("Component", style="bold")
-    tbl.add_column("Status", style="bold")
-    tbl.add_column("Details")
-
     all_ok = True
     abs_p = os.path.abspath(path)
+    checks: list[dict[str, str]] = []
 
     # Check 1: Base directory
     if os.path.isdir(abs_p) and os.access(abs_p, os.R_OK):
-        tbl.add_row("Base Path", "[green]OK[/]", f"Readable directory: {abs_p}")
+        checks.append(
+            {
+                "id": "base_path",
+                "outcome": "pass",
+                "details": f"Readable directory: {abs_p}",
+            }
+        )
     else:
-        tbl.add_row("Base Path", "[red]FAIL[/]", f"Cannot read: {abs_p}")
+        checks.append(
+            {
+                "id": "base_path",
+                "outcome": "fail",
+                "details": f"Cannot read: {abs_p}",
+            }
+        )
         all_ok = False
+
     # Check 2: Port availability
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind(("127.0.0.1", port))
-            tbl.add_row("Port Binding", "[green]OK[/]", f"Port {port} is free to bind")
+            checks.append(
+                {
+                    "id": "port_binding",
+                    "outcome": "pass",
+                    "details": f"Port {port} is free to bind",
+                }
+            )
         except OSError as e:
-            tbl.add_row(
-                "Port Binding",
-                "[red]FAIL[/]",
-                f"Port {port} could not be bound: {e}. {_port_diagnostic_hint(port)}",
+            checks.append(
+                {
+                    "id": "port_binding",
+                    "outcome": "fail",
+                    "details": f"Port {port} could not be bound: {e}. {_port_diagnostic_hint(port)}",
+                }
             )
             all_ok = False
 
     # Check 3: Zero-Copy Kernel Sendfile
     has_sendfile = hasattr(os, "sendfile") or hasattr(socket.socket, "sendfile")
-    status_str = "[green]ENABLED[/]" if has_sendfile else "[yellow]FALLBACK[/]"
-    details_str = (
-        "Zero-copy kernel sendfile available"
-        if has_sendfile
-        else "Using mmap/buffered I/O fallback"
+    checks.append(
+        {
+            "id": "zero_copy_io",
+            "outcome": "pass" if has_sendfile else "fallback",
+            "details": (
+                "Zero-copy kernel sendfile available"
+                if has_sendfile
+                else "Using mmap/buffered I/O fallback"
+            ),
+        }
     )
-    tbl.add_row("Zero-Copy I/O", status_str, details_str)
 
     # Check 4: Sequential Read Ahead
     has_fadvise = hasattr(os, "posix_fadvise")
-    fadvise_status = "[green]YES[/]" if has_fadvise else "[yellow]FALLBACK[/]"
-    fadvise_details = (
-        "POSIX_FADV_SEQUENTIAL optimization"
-        if has_fadvise
-        else "Not available on this platform; using regular sequential reads"
+    checks.append(
+        {
+            "id": "sequential_read_ahead",
+            "outcome": "pass" if has_fadvise else "fallback",
+            "details": (
+                "POSIX_FADV_SEQUENTIAL optimization"
+                if has_fadvise
+                else "Not available on this platform; using regular sequential reads"
+            ),
+        }
     )
-    tbl.add_row("Sequential Read Ahead", fadvise_status, fadvise_details)
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                {
+                    "path": abs_p,
+                    "port": port,
+                    "success": all_ok,
+                    "checks": checks,
+                }
+            )
+        )
+        if not all_ok:
+            raise SystemExit(1)
+        return
+
+    tbl = Table(title="⚡ BlazeServe Production Diagnostics", border_style="cyan")
+    tbl.add_column("Component", style="bold")
+    tbl.add_column("Status", style="bold")
+    tbl.add_column("Details")
+    component_rows = (
+        ("Base Path", "OK", "FAIL"),
+        ("Port Binding", "OK", "FAIL"),
+        ("Zero-Copy I/O", "ENABLED", "FALLBACK"),
+        ("Sequential Read Ahead", "YES", "FALLBACK"),
+    )
+    for check, (component, passed_status, other_status) in zip(checks, component_rows, strict=True):
+        if check["outcome"] == "pass":
+            status = f"[green]{passed_status}[/]"
+        elif check["outcome"] == "fail":
+            status = f"[red]{other_status}[/]"
+        else:
+            status = f"[yellow]{other_status}[/]"
+        tbl.add_row(component, status, check["details"])
 
     console.print(tbl)
     if not all_ok:
@@ -538,7 +599,8 @@ def doctor_cmd(path: str, port: int) -> None:
     show_default=True,
     help="Size of test download in MB.",
 )
-def benchmark_cmd(url: str | None, size_mb: int) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Display machine-readable JSON.")
+def benchmark_cmd(url: str | None, size_mb: int, json_output: bool) -> None:
     """Run a speed benchmark against a BlazeServe server."""
     import tempfile
     import threading
@@ -574,6 +636,7 @@ def benchmark_cmd(url: str | None, size_mb: int) -> None:
         benchmark_origin = ""
 
     expected_bytes = size_mb * 1024 * 1024
+    benchmark_log_json: bool | None = False if json_output else None
     benchmark_directory = None
     benchmark_server = None
     benchmark_thread = None
@@ -586,6 +649,7 @@ def benchmark_cmd(url: str | None, size_mb: int) -> None:
                 host="127.0.0.1",
                 port=0,
                 base=benchmark_directory.name,
+                log_json=benchmark_log_json,
             )
             benchmark_thread = threading.Thread(
                 target=benchmark_server.serve_forever,
@@ -597,47 +661,67 @@ def benchmark_cmd(url: str | None, size_mb: int) -> None:
 
         test_url = f"{benchmark_origin}/__speed__?bytes={expected_bytes}"
 
-        console.print(f"[cyan]Benchmarking:[/] {benchmark_origin}")
-        console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
-
-        # Warn for very large benchmarks
-        if size_mb > 500:
-            console.print(
-                f"[yellow]⚠ Warning:[/] Large benchmark size ({size_mb} MB) "
-                f"may impact server performance\n"
-            )
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Downloading...", total=expected_bytes)
-
+        if json_output:
             start_time = time.perf_counter()
             downloaded = 0
 
             with urllib.request.urlopen(test_url) as response:
                 chunk_size = 1024 * 1024  # 1MB chunks
-                while True:
-                    chunk = response.read(chunk_size)
-                    if not chunk:
-                        break
+                while chunk := response.read(chunk_size):
                     downloaded += len(chunk)
-                    progress.update(task, advance=len(chunk))
+        else:
+            console.print(f"[cyan]Benchmarking:[/] {benchmark_origin}")
+            console.print(f"[cyan]Download size:[/] {size_mb} MB\n")
 
-            elapsed = time.perf_counter() - start_time
-            if downloaded != expected_bytes:
-                raise click.ClickException(
-                    f"Benchmark download was incomplete: expected {expected_bytes} bytes, "
-                    f"received {downloaded}."
+            # Warn for very large benchmarks
+            if size_mb > 500:
+                console.print(
+                    f"[yellow]⚠ Warning:[/] Large benchmark size ({size_mb} MB) "
+                    f"may impact server performance\n"
                 )
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("[cyan]Downloading...", total=expected_bytes)
+                start_time = time.perf_counter()
+                downloaded = 0
+
+                with urllib.request.urlopen(test_url) as response:
+                    chunk_size = 1024 * 1024  # 1MB chunks
+                    while chunk := response.read(chunk_size):
+                        downloaded += len(chunk)
+                        progress.update(task, advance=len(chunk))
+
+        elapsed = time.perf_counter() - start_time
+        if downloaded != expected_bytes:
+            raise click.ClickException(
+                f"Benchmark download was incomplete: expected {expected_bytes} bytes, "
+                f"received {downloaded}."
+            )
 
         # Display results
         speed_mbps = (downloaded / (1024 * 1024)) / elapsed
+        if json_output:
+            import json
+
+            click.echo(
+                json.dumps(
+                    {
+                        "base_url": benchmark_origin,
+                        "requested_bytes": expected_bytes,
+                        "downloaded_bytes": downloaded,
+                        "elapsed_seconds": elapsed,
+                        "throughput_mib_per_second": speed_mbps,
+                    }
+                )
+            )
+            return
 
         result_table = Table(show_header=False, box=box.SIMPLE)
         result_table.add_column(style="bold cyan")
