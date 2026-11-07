@@ -6,12 +6,13 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && touch src/lib.rs && echo 'fn main() {}' > src/main.rs \
     && cargo build --release --locked \
-    && rm -rf src target/release/deps/blazeserve* target/release/blaze*
+    && rm -rf src target/release/deps/blazeserve* target/release/blaze* target/release/.fingerprint/blazeserve-*
 
 COPY src ./src
 ARG BLAZE_TELEMETRY_URL=""
 ENV BLAZE_TELEMETRY_URL=${BLAZE_TELEMETRY_URL}
-RUN cargo build --release --locked && mkdir -p /rootfs/data /rootfs/tmp
+RUN find src -type f -exec touch {} + \
+    && cargo build --release --locked && mkdir -p /rootfs/data /rootfs/tmp
 
 FROM scratch AS runtime
 LABEL org.opencontainers.image.title="BlazeServe" \
