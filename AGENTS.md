@@ -28,7 +28,7 @@ Handbook for contributors and coding agents working on BlazeServe, a Rust HTTP/1
 | `src/config.rs` | Typed configuration and validation, the single source of truth for every entry point |
 | `src/cli/`, `src/main.rs` | Commands, help, progress output and input validation; `cli::main_from` runs the CLI for embedders |
 | `src/server.rs` | Bind, socket options, TLS, admission control, proxy identity, shutdown |
-| `src/handler.rs`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes, CORS, auth, headers |
+| `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes, CORS, auth, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
 | `src/upload.rs`, `src/zip_stream.rs` | Uploads and streaming ZIPs |
 | `src/security.rs` | Canonical containment, race-resistant file creation, request IDs |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/ui.rs` | Throttling, counters, logs, directory listing |
