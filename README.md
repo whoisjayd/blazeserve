@@ -233,7 +233,10 @@ Everything is in [deploy/README.md](deploy/README.md). The image has no shell an
 | `blaze doctor [PATH]` | Check the path, the port and capabilities; `--json`, exit code 1 on failure |
 | `blaze benchmark` | Time a download from a temporary loopback server, or from `--url`; `--size-mb`, `--json`, `--runs`, `--warmup`, `--workload`, `--output`, `--seed`; `benchmark compare A B` |
 | `blaze telemetry` | `status`, `enable`, `disable`, `reset`, `preview` |
+| `blaze completions SHELL` | Print a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 | `blaze version` | Version and platform; `--json` |
+
+`blaze help [COMMAND]` and `blaze COMMAND --help` show options with examples.
 
 Exit codes are 0 for success, 1 for a runtime failure and 2 for a usage error.
 

@@ -262,6 +262,14 @@ fn banner(cfg: &Config, verbose: bool) -> String {
     if let Some(url) = &network {
         rows.push(("Network", url.clone()));
     }
+    if let Some(file) = cfg.single.as_deref().and_then(|f| f.file_name()) {
+        let host = network
+            .as_deref()
+            .map_or_else(|| format!("{scheme}://localhost:{port}/"), str::to_owned);
+        let raw = file.to_string_lossy();
+        let name = percent_encoding::utf8_percent_encode(&raw, percent_encoding::NON_ALPHANUMERIC);
+        rows.push(("Download", format!("blaze get {host}{name}")));
+    }
     if verbose {
         rows.push((
             "Chunk size",

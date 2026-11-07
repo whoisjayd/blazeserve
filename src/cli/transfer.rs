@@ -1,3 +1,4 @@
+use super::ansi::Style;
 use super::serve::resolve_auth;
 use super::util::{Progress, backoff, existing_file, human_size, sha256_file};
 use base64::Engine as _;
@@ -111,8 +112,80 @@ fn transient_error(e: &ureq::Error) -> bool {
     !matches!(e, ureq::Error::BadUri(_) | ureq::Error::Http(_))
 }
 
+/// Network failures phrased for a person, keeping the OS detail only when nothing better is known.
+fn explain_network_error(text: &str) -> String {
+    let text = text.strip_prefix("io: ").unwrap_or(text);
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("actively refused") || lower.contains("connection refused") {
+        "connection refused: nothing is listening at that address; check the host and port"
+            .to_owned()
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "the connection timed out; check the network or try again".to_owned()
+    } else if lower.contains("lookup")
+        || lower.contains("no such host")
+        || lower.contains("dns")
+        || lower.contains("name or service")
+        || lower.contains("no such host is known")
+    {
+        "cannot resolve the host name; check the URL and your network".to_owned()
+    } else if lower.contains("certificate") || lower.contains("invalid peer") {
+        format!("TLS verification failed: {text}")
+    } else {
+        text.to_owned()
+    }
+}
+
+fn describe_error(e: &ureq::Error) -> String {
+    use std::io::ErrorKind;
+    match e {
+        ureq::Error::HostNotFound => {
+            "cannot resolve the host name; check the URL and your network".to_owned()
+        }
+        ureq::Error::Timeout(_) => {
+            "the connection timed out; check the network or try again".to_owned()
+        }
+        ureq::Error::ConnectionFailed => {
+            "could not connect; check the host, the port and your network".to_owned()
+        }
+        ureq::Error::TooManyRedirects => "the server redirected too many times".to_owned(),
+        ureq::Error::Tls(reason) => format!("TLS failure: {reason}"),
+        ureq::Error::Io(io) if io.kind() == ErrorKind::ConnectionRefused => {
+            "connection refused: nothing is listening at that address; check the host and port"
+                .to_owned()
+        }
+        ureq::Error::Io(io) if io.kind() == ErrorKind::TimedOut => {
+            "the connection timed out; check the network or try again".to_owned()
+        }
+        _ => explain_network_error(&e.to_string()),
+    }
+}
+
 fn transient_status(code: u16) -> bool {
     matches!(code, 408 | 425 | 429) || (500..=599).contains(&code)
+}
+
+/// A refusal the user can act on, never just a bare status code.
+fn http_failure(code: u16, upload: bool) -> String {
+    let hint = match code {
+        400 => "the server rejected the request as malformed",
+        401 => "authentication is required; pass --auth USER:PASS or --auth-env VAR",
+        403 if upload => {
+            "the server refused the upload; check the credentials, and that it was started with --max-upload-mb above 0"
+        }
+        403 => {
+            "the server refused access; check the credentials with --auth or --auth-env, or the host may block non-browser clients or require a signed link"
+        }
+        404 => "nothing exists at that URL; check the path",
+        405 | 501 if upload => {
+            "the server does not accept uploads at that URL; BlazeServe takes them under /__upload__/ when started with --max-upload-mb"
+        }
+        405 | 501 => "the server does not support this request",
+        409 => "the destination already exists or changed; remove it or choose another name",
+        410 => "the resource is gone",
+        413 => "the server says the upload is too large",
+        _ => "the server refused the request",
+    };
+    format!("server returned HTTP {code}: {hint}")
 }
 
 fn header(resp: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
@@ -248,11 +321,11 @@ impl Download<'_> {
             Ok(r) => r,
             Err(e) if transient_error(&e) => {
                 return Ok(Step::Transient {
-                    msg: e.to_string(),
+                    msg: describe_error(&e),
                     progressed: false,
                 });
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(describe_error(&e)),
         };
         let status = resp.status().as_u16();
 
@@ -274,7 +347,7 @@ impl Download<'_> {
                     progressed: false,
                 });
             }
-            code => return Err(format!("server returned HTTP {code}")),
+            code => return Err(http_failure(code, false)),
         }
 
         // A 200 means the server ignored the range or the validator changed: start over.
@@ -372,7 +445,12 @@ fn finish_download(
     rename_with_retry(&d.part, dest)
         .map_err(|e| format!("cannot move download to {}: {e}", dest.display()))?;
     let _ = std::fs::remove_file(&d.meta_path);
-    println!("Saved {} ({})", dest.display(), human_size(size));
+    println!(
+        "{} {} ({})",
+        Style::stdout().green("Saved"),
+        dest.display(),
+        human_size(size)
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -505,8 +583,8 @@ impl Upload<'_> {
     fn remote_offset(&self) -> Result<Result<u64, String>, String> {
         let resp = match self.authorize(self.agent.head(self.url)).call() {
             Ok(r) => r,
-            Err(e) if transient_error(&e) => return Ok(Err(e.to_string())),
-            Err(e) => return Err(e.to_string()),
+            Err(e) if transient_error(&e) => return Ok(Err(describe_error(&e))),
+            Err(e) => return Err(describe_error(&e)),
         };
         match resp.status().as_u16() {
             404 => Ok(Ok(0)),
@@ -515,7 +593,7 @@ impl Upload<'_> {
                 None => Err("destination already exists on the server".to_owned()),
             },
             code if transient_status(code) => Ok(Err(format!("server returned HTTP {code}"))),
-            code => Err(format!("server returned HTTP {code}")),
+            code => Err(http_failure(code, true)),
         }
     }
 
@@ -541,11 +619,11 @@ impl Upload<'_> {
             Ok(r) => r,
             Err(e) if transient_error(&e) => {
                 return Ok(Sent::Retry {
-                    msg: e.to_string(),
+                    msg: describe_error(&e),
                     resync: true,
                 });
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(describe_error(&e)),
         };
         match resp.status().as_u16() {
             200 | 201 | 204 if last => Ok(Sent::Done),
@@ -563,7 +641,7 @@ impl Upload<'_> {
                 msg: format!("server returned HTTP {code}"),
                 resync: true,
             }),
-            code => Err(format!("server returned HTTP {code}")),
+            code => Err(http_failure(code, true)),
         }
     }
 }
@@ -619,7 +697,12 @@ pub fn put(args: PutArgs) -> Result<ExitCode, String> {
         match up.send(offset, &buf[..want])? {
             Sent::Done => {
                 progress.finish(total);
-                println!("Uploaded {} ({})", args.file.display(), human_size(total));
+                println!(
+                    "{} {} ({})",
+                    Style::stdout().green("Uploaded"),
+                    args.file.display(),
+                    human_size(total)
+                );
                 return Ok(ExitCode::SUCCESS);
             }
             Sent::Advanced(next) => {
@@ -649,6 +732,32 @@ pub fn put(args: PutArgs) -> Result<ExitCode, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn network_errors_are_explained() {
+        let refused = super::explain_network_error(
+            "io: No connection could be made because the target machine actively refused it. (os error 10061)",
+        );
+        assert!(refused.starts_with("connection refused"), "{refused}");
+        assert!(super::explain_network_error("io: operation timed out").contains("timed out"));
+        assert!(
+            super::explain_network_error("failed to lookup address information")
+                .contains("resolve")
+        );
+        assert_eq!(
+            super::explain_network_error("io: broken pipe"),
+            "broken pipe"
+        );
+    }
+
+    #[test]
+    fn http_failures_explain_the_next_step() {
+        assert!(super::http_failure(403, false).contains("--auth"));
+        assert!(super::http_failure(403, true).contains("--max-upload-mb"));
+        assert!(super::http_failure(401, false).contains("--auth-env"));
+        assert!(super::http_failure(404, false).starts_with("server returned HTTP 404"));
+        assert!(super::http_failure(418, false).contains("HTTP 418"));
+    }
+
     use super::*;
 
     #[test]

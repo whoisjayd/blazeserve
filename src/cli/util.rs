@@ -123,17 +123,54 @@ pub struct Progress {
     start: Instant,
     last_draw: Instant,
     base: u64,
+    fancy: bool,
+}
+
+const BAR_WIDTH: usize = 24;
+
+fn format_eta(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m{:02}s", secs / 60, secs % 60),
+        _ => format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60),
+    }
+}
+
+/// One progress line without cursor control. Block characters only where the terminal
+/// is known to render them; plain ASCII otherwise.
+fn render_progress(done: u64, total: Option<u64>, rate: u64, fancy: bool) -> String {
+    let speed = format!("{}/s", human_size(rate));
+    let Some(total) = total.filter(|t| *t > 0) else {
+        return format!("  {}  {speed}", human_size(done));
+    };
+    let ratio = (done as f64 / total as f64).clamp(0.0, 1.0);
+    let filled = (ratio * BAR_WIDTH as f64) as usize;
+    let (on, off) = if fancy { ("█", "░") } else { ("#", ".") };
+    let bar = format!("{}{}", on.repeat(filled), off.repeat(BAR_WIDTH - filled));
+    let eta = if rate > 0 && done < total {
+        format!("  ETA {}", format_eta((total - done) / rate))
+    } else {
+        String::new()
+    };
+    format!(
+        "  {bar} {:>3}%  {} / {}  {speed}{eta}",
+        (ratio * 100.0) as u32,
+        human_size(done),
+        human_size(total)
+    )
 }
 
 impl Progress {
     pub fn new(total: Option<u64>, base: u64) -> Self {
         let now = Instant::now();
         Self {
-            enabled: std::io::stderr().is_terminal(),
+            enabled: std::io::stderr().is_terminal()
+                && std::env::var("TERM").map_or(true, |t| t != "dumb"),
             total,
             start: now,
             last_draw: now.checked_sub(Duration::from_secs(1)).unwrap_or(now),
             base,
+            fancy: super::ansi::Style::stderr().enabled(),
         }
     }
 
@@ -155,17 +192,9 @@ impl Progress {
     fn draw(&self, done: u64) {
         let secs = self.start.elapsed().as_secs_f64().max(0.001);
         let rate = (done.saturating_sub(self.base) as f64 / secs) as u64;
-        let total = self
-            .total
-            .map(|t| format!(" / {}", human_size(t)))
-            .unwrap_or_default();
+        let line = render_progress(done, self.total, rate, self.fancy);
         let mut err = std::io::stderr().lock();
-        let _ = write!(
-            err,
-            "\r  {}{total}  {}/s    ",
-            human_size(done),
-            human_size(rate)
-        );
+        let _ = write!(err, "\r{line}    ");
         let _ = err.flush();
     }
 }
@@ -182,6 +211,29 @@ mod tests {
         assert_eq!(human_size(1024 * 1024), "1.00MB");
         assert_eq!(human_size(1024 * 1024 * 1024), "1.00GB");
         assert_eq!(human_size(0), "0.00B");
+    }
+
+    #[test]
+    fn progress_line_shows_bar_percent_and_eta() {
+        let half = render_progress(512, Some(1024), 256, false);
+        assert!(
+            half.contains(&format!("{}{}", "#".repeat(12), ".".repeat(12))),
+            "{half}"
+        );
+        assert!(half.contains(" 50%") && half.contains("ETA 2s"), "{half}");
+        let fancy = render_progress(1024, Some(1024), 1, true);
+        assert!(
+            fancy.contains(&"█".repeat(24)) && fancy.contains("100%"),
+            "{fancy}"
+        );
+        assert!(!fancy.contains("ETA"), "{fancy}");
+        let unknown = render_progress(2048, None, 1024, false);
+        assert!(
+            !unknown.contains('%') && unknown.contains("2.00KB"),
+            "{unknown}"
+        );
+        assert_eq!(format_eta(75), "1m15s");
+        assert_eq!(format_eta(7260), "2h01m");
     }
 
     #[test]

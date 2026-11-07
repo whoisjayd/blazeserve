@@ -39,6 +39,10 @@ impl Style {
         }
     }
 
+    pub fn enabled(self) -> bool {
+        self.color
+    }
+
     fn paint(self, code: &str, s: &str) -> String {
         if self.color {
             format!("\x1b[{code}m{s}\x1b[0m")

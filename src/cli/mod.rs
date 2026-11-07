@@ -12,19 +12,41 @@ mod transfer;
 mod util;
 
 use ansi::Style;
-use clap::{Args, Parser, Subcommand};
+use clap::builder::styling::{AnsiColor, Styles};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 pub use util::{human_size, sha256_file};
+
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Yellow.on_default().bold())
+    .usage(AnsiColor::Yellow.on_default().bold())
+    .literal(AnsiColor::Green.on_default().bold())
+    .placeholder(AnsiColor::Cyan.on_default())
+    .error(AnsiColor::Red.on_default().bold())
+    .valid(AnsiColor::Green.on_default())
+    .invalid(AnsiColor::Yellow.on_default());
+
+const TOP_EXAMPLES: &str = "Examples:
+  blaze serve .                     Serve the current directory on port 8000
+  blaze send report.pdf             Share one file
+  blaze get http://host:8000/big.iso   Resumable download
+  blaze put backup.tar http://host:8000   Resumable upload (server needs --max-upload-mb)
+  blaze doctor ./site --port 9000   Check a directory and port before serving
+  blaze completions powershell      Print a shell completion script
+
+Run 'blaze help <command>' for the options of one command.";
 
 #[derive(Parser, Debug)]
 #[command(
     name = "blaze",
     version = crate::VERSION,
     about = "Fast HTTP file server for large static transfers",
-    arg_required_else_help = true,
-    disable_help_subcommand = true
+    after_help = TOP_EXAMPLES,
+    styles = STYLES,
+    arg_required_else_help = true
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -34,6 +56,10 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Serve a directory or a single file
+    #[command(after_help = "Examples:
+  blaze serve .
+  blaze serve ./site --port 9000 --no-listing
+  blaze serve ./data --auth-env BLAZE_AUTH --max-upload-mb 512")]
     Serve(serve::ServeArgs),
     /// Quick share a single file
     Send(serve::SendArgs),
@@ -42,15 +68,28 @@ enum Command {
     /// Show version and system info
     Version(VersionArgs),
     /// Validate system environment and server configuration
+    #[command(after_help = "Examples:
+  blaze doctor
+  blaze doctor ./site --port 9000 --json
+
+The path is the directory you intend to serve; there is no 'serve' keyword.")]
     Doctor(doctor::DoctorArgs),
     /// Run performance benchmark
     Benchmark(bench::BenchArgs),
     /// Download a file, resuming a partial transfer
+    #[command(after_help = "Examples:
+  blaze get http://host:8000/big.iso
+  blaze get http://host:8000/big.iso -o disk.iso --sha256 <digest>")]
     Get(transfer::GetArgs),
     /// Upload a file, resuming a partial transfer
     Put(transfer::PutArgs),
     /// Manage anonymous usage statistics
     Telemetry(telemetry::TelemetryArgs),
+    /// Print a shell completion script
+    #[command(after_help = "Examples:
+  blaze completions bash > ~/.local/share/bash-completion/completions/blaze
+  blaze completions powershell | Out-String | Invoke-Expression")]
+    Completions(CompletionsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -58,6 +97,22 @@ struct ChecksumArgs {
     /// Files to hash
     #[arg(required = true, value_parser = util::existing_file)]
     files: Vec<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct CompletionsArgs {
+    /// Shell to generate the script for
+    shell: Shell,
+}
+
+fn completions(args: CompletionsArgs) -> Result<ExitCode, String> {
+    clap_complete::generate(
+        args.shell,
+        &mut Cli::command(),
+        "blaze",
+        &mut std::io::stdout(),
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 #[derive(Args, Debug)]
@@ -133,6 +188,7 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
         Command::Get(a) => transfer::get(a),
         Command::Put(a) => transfer::put(a),
         Command::Telemetry(a) => telemetry::run(a),
+        Command::Completions(a) => completions(a),
     }
 }
 
@@ -186,6 +242,22 @@ mod tests {
                 "{bad:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn help_subcommand_and_completions_parse() {
+        let err = Cli::try_parse_from(["blaze", "help", "doctor"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        let text = err.to_string();
+        assert!(
+            text.contains("Examples:") && text.contains("blaze doctor"),
+            "{text}"
+        );
+        for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+            let cli = Cli::try_parse_from(["blaze", "completions", shell]).unwrap();
+            assert!(matches!(cli.command, Command::Completions(_)));
+        }
+        assert!(Cli::try_parse_from(["blaze", "completions", "tcsh"]).is_err());
     }
 
     #[test]
