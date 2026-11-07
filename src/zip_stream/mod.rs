@@ -90,7 +90,7 @@ fn content_disposition(name: &str) -> String {
     format!("attachment; filename=\"{ascii}.zip\"; filename*=UTF-8''{encoded}")
 }
 
-/// `/__zip__?path=...`. `head` suppresses the body. Responses close the connection.
+/// Responses close the connection because the archive length is unknown.
 pub async fn handle_zip(state: &Arc<AppState>, query: Option<&str>, head: bool) -> Response<Body> {
     let Some(raw) = query_path(query).filter(|p| !p.is_empty()) else {
         return plain(StatusCode::BAD_REQUEST, "Missing path");

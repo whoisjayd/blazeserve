@@ -12,7 +12,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Copy)]
 pub struct RequestLog<'a> {
     pub request_id: &'a str,
-    /// Identity used for rate limiting (resolved through trusted proxies).
     pub client_ip: IpAddr,
     pub peer_ip: IpAddr,
     pub method: &'a str,

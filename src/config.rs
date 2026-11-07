@@ -97,7 +97,6 @@ impl TrustedProxy {
     }
 }
 
-/// Map IPv4-mapped IPv6 (`::ffff:a.b.c.d`) to plain IPv4.
 pub fn normalize(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => v6
