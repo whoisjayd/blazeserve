@@ -139,12 +139,19 @@ pub(super) fn resolve(
     components: &[String],
     encodings: Option<Encodings>,
 ) -> Resolved {
+    if cfg.hide.matches(components) {
+        return Resolved::NotFound;
+    }
     let mut path = match &cfg.single {
         Some(single) => single.clone(),
         None => components.iter().fold(cfg.base.clone(), |p, c| p.join(c)),
     };
     if !security::is_safe_path(&cfg.base, &path) {
         return Resolved::Forbidden;
+    }
+    // After containment, so a hidden entry is indistinguishable from a missing one.
+    if cfg.hide.hides_path(&cfg.base, &path) {
+        return Resolved::NotFound;
     }
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
@@ -160,7 +167,9 @@ pub(super) fn resolve(
             .into_iter()
             .chain(cfg.index.iter().map(String::as_str))
             .map(|name| path.join(name))
-            .find(|candidate| is_safe_file(cfg, candidate));
+            .find(|candidate| {
+                is_safe_file(cfg, candidate) && !cfg.hide.hides_path(&cfg.base, candidate)
+            });
         match index {
             Some(found) => path = found,
             None => return list_dir(cfg, &path, components.join("/")),
@@ -217,6 +226,9 @@ pub(super) fn list_dir(cfg: &Config, dir: &Path, rel: String) -> Resolved {
     for entry in read.flatten() {
         let path = entry.path();
         if upload::is_reserved_name(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        if cfg.hide.hides_path(&cfg.base, &path) {
             continue;
         }
         let is_link = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);

@@ -13,6 +13,7 @@ class Server:
         port: int = 0,
         *,
         listing: bool = True,
+        hide: list[str] = ...,
         auth: str | None = None,
         cors: bool = False,
         no_cache: bool = False,

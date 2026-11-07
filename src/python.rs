@@ -1,6 +1,6 @@
 //! Python bindings, built only with the `python` feature and exposed as `blazeserve._native`.
 
-use crate::config::{Config, Credentials};
+use crate::config::{Config, Credentials, Hide};
 use crate::server::{self, ServerHandle};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
@@ -46,6 +46,7 @@ impl Server {
         port = 0,
         *,
         listing = true,
+        hide = Vec::new(),
         auth = None,
         cors = false,
         no_cache = false,
@@ -61,6 +62,7 @@ impl Server {
         host: &str,
         port: u16,
         listing: bool,
+        hide: Vec<String>,
         auth: Option<&str>,
         cors: bool,
         no_cache: bool,
@@ -84,6 +86,7 @@ impl Server {
             base,
             single,
             listing,
+            hide: Hide::new(&hide).map_err(fail)?,
             cors,
             no_cache,
             rate_mbps,

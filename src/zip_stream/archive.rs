@@ -8,6 +8,7 @@ use hyper::body::Frame;
 use tokio::sync::mpsc;
 
 use super::writer::StreamZip;
+use crate::config::Hide;
 use crate::security;
 
 const FRAME_BYTES: usize = 64 * 1024;
@@ -57,7 +58,7 @@ fn entry_name(root: &Path, file: &Path) -> Option<String> {
 
 /// Regular files only. A symlink is included when it points at a file that still
 /// resolves inside the root; symlinked directories are never descended.
-fn collect_files(base: &Path, root: &Path) -> Vec<PathBuf> {
+fn collect_files(base: &Path, root: &Path, hide: &Hide) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -68,6 +69,9 @@ fn collect_files(base: &Path, root: &Path) -> Vec<PathBuf> {
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries.into_iter().rev() {
             let path = entry.path();
+            if hide.hides_path(base, &path) {
+                continue;
+            }
             let Ok(ft) = entry.file_type() else { continue };
             let is_file = ft.is_file()
                 || (ft.is_symlink() && std::fs::metadata(&path).is_ok_and(|m| m.is_file()));
@@ -81,13 +85,18 @@ fn collect_files(base: &Path, root: &Path) -> Vec<PathBuf> {
     files
 }
 
-pub(super) fn write_archive(base: &Path, target: &Path, tx: mpsc::Sender<Item>) -> io::Result<()> {
+pub(super) fn write_archive(
+    base: &Path,
+    target: &Path,
+    hide: &Hide,
+    tx: mpsc::Sender<Item>,
+) -> io::Result<()> {
     let mut zip = StreamZip::new(ChannelWriter {
         tx,
         buf: Vec::with_capacity(FRAME_BYTES),
     });
     let files: Vec<(PathBuf, String)> = if std::fs::metadata(target)?.is_dir() {
-        collect_files(base, target)
+        collect_files(base, target, hide)
             .into_iter()
             .filter_map(|p| entry_name(target, &p).map(|n| (p, n)))
             .collect()

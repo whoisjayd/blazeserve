@@ -103,6 +103,9 @@ pub async fn handle_zip(state: &Arc<AppState>, query: Option<&str>, head: bool) 
         Err(ResolveError::Invalid) => return plain(StatusCode::BAD_REQUEST, "Invalid path"),
         Err(ResolveError::Escape) => return plain(StatusCode::FORBIDDEN, "Forbidden"),
     };
+    if state.config.hide.hides_path(&base, &target) {
+        return plain(StatusCode::NOT_FOUND, "Not found");
+    }
     if !target.exists() {
         return plain(StatusCode::NOT_FOUND, "Not found");
     }
@@ -137,11 +140,12 @@ pub async fn handle_zip(state: &Arc<AppState>, query: Option<&str>, head: bool) 
         return resp;
     };
 
+    let hide = state.config.hide.clone();
     let (tx, mut rx) = mpsc::channel::<Item>(CHANNEL_FRAMES);
     let err_tx = tx.clone();
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        if let Err(e) = write_archive(&base, &target, tx) {
+        if let Err(e) = write_archive(&base, &target, &hide, tx) {
             let _ = err_tx.try_send(Err(e));
         }
     });

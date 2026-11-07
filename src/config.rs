@@ -4,7 +4,9 @@
 
 use std::fmt;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 pub const DEFAULT_CHUNK_MB: u32 = 1;
 pub const DEFAULT_SNDBUF_MB: u32 = 4;
@@ -116,6 +118,117 @@ fn mask_eq(a: &[u8], b: &[u8], prefix: u8) -> bool {
     rem == 0 || (a[full] ^ b[full]) >> (8 - rem) == 0
 }
 
+/// Entries that must look nonexistent: omitted from listings and archives, 404 when
+/// requested. A pattern without `/` matches any path component (`*.env`, `.git`); one with
+/// `/` is anchored at the served root (`secrets/**`, `docs/*.draft`) and `*` does not cross
+/// `/`. Matching is case-insensitive where the filesystem is, so `.ENV` cannot dodge `.env`.
+#[derive(Debug, Clone, Default)]
+pub struct Hide {
+    patterns: Vec<String>,
+    names: GlobSet,
+    paths: GlobSet,
+}
+
+impl Hide {
+    pub fn new<S: AsRef<str>>(patterns: &[S]) -> Result<Self, ConfigError> {
+        let fold = cfg!(any(windows, target_os = "macos"));
+        let (mut names, mut paths) = (GlobSetBuilder::new(), GlobSetBuilder::new());
+        let mut kept = Vec::new();
+        for raw in patterns {
+            let raw = raw.as_ref();
+            let pat = raw.trim().trim_start_matches("./").trim_matches('/');
+            if pat.is_empty() {
+                return err(format!("--hide pattern must not be empty: {raw:?}"));
+            }
+            let compile = |p: &str| {
+                GlobBuilder::new(p)
+                    .literal_separator(true)
+                    .case_insensitive(fold)
+                    .build()
+                    .map_err(|e| {
+                        ConfigError(format!("invalid --hide pattern {raw:?}: {}", e.kind()))
+                    })
+            };
+            if pat.contains('/') {
+                paths.add(compile(pat)?);
+                // `dir/**` must also hide `dir` itself, which globset only matches below it.
+                if let Some(dir) = pat.strip_suffix("/**") {
+                    paths.add(compile(dir)?);
+                }
+            } else {
+                names.add(compile(pat)?);
+            }
+            kept.push(pat.to_owned());
+        }
+        let build = |b: GlobSetBuilder| {
+            b.build()
+                .map_err(|e| ConfigError(format!("invalid --hide pattern: {e}")))
+        };
+        Ok(Self {
+            patterns: kept,
+            names: build(names)?,
+            paths: build(paths)?,
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    pub fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+
+    /// `rel` is the path below the served root, one string per component. A hidden
+    /// directory hides everything under it, so every prefix is tested.
+    pub fn matches<S: AsRef<str>>(&self, rel: &[S]) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        let mut joined = String::new();
+        for part in rel {
+            // Windows opens `name.` and `name ` as `name`.
+            let part = if cfg!(windows) {
+                part.as_ref().trim_end_matches(['.', ' '])
+            } else {
+                part.as_ref()
+            };
+            if !joined.is_empty() {
+                joined.push('/');
+            }
+            joined.push_str(part);
+            if self.names.is_match(part) || self.paths.is_match(&joined) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Tests the lexical path and the canonical one, so a visible symlink or a Windows
+    /// short name cannot reach a hidden entry.
+    pub fn hides_path(&self, base: &Path, path: &Path) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        let rel_of = |b: &Path, p: &Path| -> Option<Vec<String>> {
+            Some(
+                p.strip_prefix(b)
+                    .ok()?
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect(),
+            )
+        };
+        if rel_of(base, path).is_some_and(|r| self.matches(&r)) {
+            return true;
+        }
+        match (base.canonicalize(), path.canonicalize()) {
+            (Ok(b), Ok(p)) => rel_of(&b, &p).is_some_and(|r| self.matches(&r)),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub host: String,
@@ -137,6 +250,7 @@ pub struct Config {
     pub cors_origin: String,
     pub no_cache: bool,
     pub index: Vec<String>,
+    pub hide: Hide,
     pub backlog: u32,
     pub precompress: bool,
     /// 0 disables uploads. The legacy server accepted unlimited uploads by default.
@@ -173,6 +287,7 @@ impl Default for Config {
             cors_origin: "*".into(),
             no_cache: false,
             index: Vec::new(),
+            hide: Hide::default(),
             backlog: 4096,
             precompress: true,
             max_upload_bytes: 0,
@@ -273,6 +388,27 @@ mod tests {
         assert!(!n.contains("11.0.0.1".parse().unwrap()));
         assert!(n.contains("::ffff:10.9.9.9".parse().unwrap()));
         assert!(TrustedProxy::parse("10.0.0.0/33").is_err());
+    }
+
+    #[test]
+    fn hide_patterns_match_names_and_anchored_paths() {
+        let h = Hide::new(&["*.env", ".git", "secrets/**", "docs/*.draft"]).unwrap();
+        assert!(h.matches(&["a", "prod.env"]));
+        assert!(h.matches(&[".git", "config"]));
+        assert!(h.matches(&["secrets"]) && h.matches(&["secrets", "k", "v"]));
+        assert!(h.matches(&["docs", "a.draft"]));
+        assert!(!h.matches(&["docs", "x", "a.draft"]));
+        assert!(!h.matches(&["a", "secrets"]) && !h.matches(&["ok.txt"]));
+        assert_eq!(
+            h.matches(&["PROD.ENV"]),
+            cfg!(any(windows, target_os = "macos"))
+        );
+    }
+
+    #[test]
+    fn bad_hide_pattern_is_rejected() {
+        assert!(Hide::new(&["[unclosed"]).is_err());
+        assert!(Hide::new(&["  "]).is_err());
     }
 
     #[test]

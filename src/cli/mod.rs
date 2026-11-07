@@ -81,6 +81,7 @@ enum Command {
   blaze serve .
   blaze serve ./site --port 9000 --no-listing
   blaze serve ./data --auth-env BLAZE_AUTH --max-upload-mb 512
+  blaze serve ./site --hide '*.env' --hide .git
   blaze serve ./site --qr")]
     Serve(serve::ServeArgs),
     /// Quick share a single file

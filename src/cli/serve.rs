@@ -2,7 +2,7 @@ use super::ansi::{self, Style};
 use super::util::{
     canonical, display_path, env_truthy, existing_file, existing_path, lan_ip, open_browser,
 };
-use crate::config::{Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_SNDBUF_MB, TrustedProxy};
+use crate::config::{Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_SNDBUF_MB, Hide, TrustedProxy};
 use crate::usage;
 use clap::Args;
 use std::path::PathBuf;
@@ -106,6 +106,9 @@ pub struct ServeArgs {
     /// Additional index filenames to try (repeatable)
     #[arg(long)]
     pub index: Vec<String>,
+    /// Hide entries matching this glob from listings, ZIPs and direct requests (repeatable)
+    #[arg(long, value_name = "GLOB")]
+    pub hide: Vec<String>,
     /// Open the URL in a browser on start
     #[arg(long = "open")]
     pub open_browser: bool,
@@ -219,6 +222,7 @@ pub fn serve_config(args: &ServeArgs) -> Result<Config, String> {
         sndbuf_bytes: args.sock_sndbuf_mb as usize * 1024 * 1024,
         timeout_secs: args.timeout,
         index: args.index.clone(),
+        hide: Hide::new(&args.hide).map_err(|e| e.to_string())?,
         verbose: args.verbose,
         ..Config::default()
     };

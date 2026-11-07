@@ -136,7 +136,7 @@ print(blazeserve.sha256("big.iso"))
 blazeserve.main(["get", "http://host:8000/big.iso"])   # any CLI command, returns the exit status
 ```
 
-`Server(path=None, host="127.0.0.1", port=0, *, listing, auth, cors, no_cache, max_upload_mb, rate_mbps, tls_cert, tls_key)` binds before the constructor returns. `close()` and leaving the `with` block stop it, and `serve_forever()` blocks until `KeyboardInterrupt`. Configuration errors raise `blazeserve.BlazeError`. The Python server binds loopback by default, unlike `blaze serve`. Resumable download and upload are available through `blazeserve.main` and print their progress like the command does.
+`Server(path=None, host="127.0.0.1", port=0, *, listing, hide, auth, cors, no_cache, max_upload_mb, rate_mbps, tls_cert, tls_key)` binds before the constructor returns. `close()` and leaving the `with` block stop it, and `serve_forever()` blocks until `KeyboardInterrupt`. Configuration errors raise `blazeserve.BlazeError`. The Python server binds loopback by default, unlike `blaze serve`. Resumable download and upload are available through `blazeserve.main` and print their progress like the command does.
 
 In Rust, `blazeserve::config::Config` and `blazeserve::server::start` start a server inside your own tokio runtime, and `blazeserve::cli::main_from` runs the command line from an argument list.
 
@@ -230,6 +230,7 @@ Everything is in [deploy/README.md](deploy/README.md). The image has no shell an
 | `--single FILE` | none | Serve exactly this file |
 | `--no-listing` | listing on | Disable directory listing |
 | `--index NAME` | `index.html`, `index.htm` | Extra index filenames, repeatable |
+| `--hide GLOB` | none | Hide matching entries from listings and ZIPs and answer `404` for them; repeatable. A pattern without `/` matches any path component (`*.env`, `.git`), one with `/` is anchored at the served root (`secrets/**`); matching is case-insensitive on Windows and macOS |
 | `--precompress` / `--no-precompress` | on | Serve `.br` and `.gz` siblings when safe; never for range requests |
 | `--no-cache` | off | Send no-store cache headers |
 | `--cors` / `--no-cors`, `--cors-origin` | off, `*` | CORS and the allowed origin |
