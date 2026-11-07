@@ -50,7 +50,7 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 opentelemetry-http = { version = "0.33", default-features = false, optional = true }
 async-trait = { version = "0.1", optional = true }
 clap_complete = "4"
-pyo3 = { version = "0.30", default-features = false, features = ["abi3-py39", "macros"], optional = true }
+pyo3 = { version = "0.30", default-features = false, features = ["abi3-py311", "macros"], optional = true }
 
 [features]
 default = ["otel"]

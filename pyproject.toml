@@ -7,7 +7,7 @@ name = "blazeserve"
 version = "1.0.0"
 description = "HTTP file server for large static transfers: ranges, resumable get/put, TLS, auth, throttling, uploads, streaming ZIP, Prometheus metrics."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Jaydeep Solanki" }]

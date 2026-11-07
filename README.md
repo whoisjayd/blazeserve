@@ -119,7 +119,7 @@ Pass `--trust-proxy <ip-or-cidr>` (repeatable) so rate limits and logs see the r
 
 ## Use from Python and Rust
 
-`pip install blazeserve` installs the `blaze` command and a Python module from one abi3 wheel for Python 3.9 and newer.
+`pip install blazeserve` installs the `blaze` command and a Python module from one abi3 wheel for Python 3.11 and newer.
 
 ```python
 import urllib.request
