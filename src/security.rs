@@ -25,7 +25,6 @@ pub fn unsafe_io(msg: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, UnsafePath(msg))
 }
 
-/// True when `e` was produced by a containment failure rather than an OS error.
 pub fn is_unsafe_path_error(e: &io::Error) -> bool {
     e.get_ref().is_some_and(|inner| inner.is::<UnsafePath>())
 }

@@ -43,7 +43,6 @@ const CORS_METHODS: &str = "GET, HEAD, OPTIONS, PUT, POST";
 const CORS_ALLOW_HEADERS: &str = "Range, Content-Type, Authorization, X-Request-ID";
 const CORS_EXPOSE_HEADERS: &str = "Accept-Ranges, Content-Length, Content-Range, ETag, Last-Modified, X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining";
 
-/// Entry point for every parsed request on a connection.
 pub async fn handle(
     state: Arc<AppState>,
     peer: PeerInfo,

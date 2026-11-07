@@ -439,7 +439,6 @@ pub fn reset_settings(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Effective state with the persisted file resolved, for `status` and the start hook.
 pub fn effective(env: &Env, build_time: Option<&str>) -> (Decision, Option<Settings>) {
     let persisted = match settings_path(env) {
         Some(p) => load_settings(&p).map(|s| s.unwrap_or_default()).ok(),

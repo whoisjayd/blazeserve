@@ -254,7 +254,6 @@ pub fn parse_meminfo(text: &str) -> Option<u64> {
     kib.checked_mul(1024)
 }
 
-/// File system type of the longest mount point that contains `path`.
 pub fn parse_mounts(text: &str, path: &str) -> Option<String> {
     let mut best: Option<(usize, &str)> = None;
     for line in text.lines() {
