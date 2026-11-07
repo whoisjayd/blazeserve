@@ -6,6 +6,7 @@ use super::http::{
     transient_status,
 };
 use super::segmented::{self, SegMeta};
+use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::util::{Progress, backoff, human_size, sha256_file};
 use clap::Args;
@@ -15,6 +16,7 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) const MAX_RESTARTS: u32 = 3;
@@ -50,6 +52,9 @@ pub struct GetArgs {
     /// Parallel connections for large files (1 downloads in a single stream)
     #[arg(short = 'c', long, value_name = "N", default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=16))]
     pub connections: u8,
+    /// Cap total download speed in bytes per second, e.g. 500K, 2M or 1.5M (minimum 1K)
+    #[arg(long, value_name = "RATE", value_parser = parse_rate)]
+    pub limit_rate: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -135,9 +140,23 @@ pub(super) struct Download<'a> {
     pub(super) meta_path: PathBuf,
     pub(super) auth: Option<String>,
     pub(super) resume: bool,
+    pub(super) throttle: Option<Arc<Throttle>>,
 }
 
 impl Download<'_> {
+    /// Read size for the next read, shrunk under a low rate cap.
+    pub(super) fn read_len(&self) -> usize {
+        self.throttle
+            .as_ref()
+            .map_or(READ_BUF, |t| t.chunk(READ_BUF))
+    }
+
+    pub(super) fn pace(&self, bytes: usize) {
+        if let Some(t) = &self.throttle {
+            t.throttle(bytes);
+        }
+    }
+
     pub(super) fn reset(&self) {
         let _ = std::fs::remove_file(&self.part);
         let _ = std::fs::remove_file(&self.meta_path);
@@ -261,9 +280,10 @@ impl Download<'_> {
         let mut have = resume_from;
         let mut got = 0u64;
         loop {
-            match reader.read(&mut buf) {
+            match reader.read(&mut buf[..self.read_len()]) {
                 Ok(0) => break,
                 Ok(n) => {
+                    self.pace(n);
                     file.write_all(&buf[..n])
                         .map_err(|e| format!("write failed: {e}"))?;
                     have += n as u64;
@@ -349,6 +369,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         meta_path: sibling(&dest, ".part.meta"),
         auth,
         resume: !args.no_resume,
+        throttle: args.limit_rate.map(|r| Arc::new(Throttle::new(r))),
     };
     if !d.resume {
         d.reset();

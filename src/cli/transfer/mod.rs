@@ -3,6 +3,7 @@
 mod download;
 mod http;
 mod segmented;
+mod throttle;
 mod upload;
 
 pub use download::{GetArgs, get};

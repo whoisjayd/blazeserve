@@ -257,9 +257,10 @@ impl Shared<'_> {
         let mut pos = start;
         let mut counted = 0u64;
         while !self.stopped() {
-            match reader.read(&mut buf) {
+            match reader.read(&mut buf[..self.d.read_len()]) {
                 Ok(0) => break,
                 Ok(n) => {
+                    self.d.pace(n);
                     if let Err(e) = write_at(&self.file, &buf[..n], pos) {
                         self.progress.dec(counted);
                         return Err(SegError::Fatal(format!("write failed: {e}")));

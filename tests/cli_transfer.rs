@@ -469,3 +469,49 @@ fn get_rejects_connection_counts_outside_1_to_16() {
         assert_eq!(code(&out), 2, "{n}: {}", stderr(&out));
     }
 }
+
+async fn limited_get(size: usize, extra: &[&str], limit: &str, min_secs: f64) {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(size);
+    std::fs::write(served.path().join("big.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("big.bin");
+    let mut args = vec!["get".into(), url, "-o".into(), s(&dest)];
+    args.extend(extra.iter().map(|a| (*a).to_owned()));
+    args.extend(["--limit-rate".into(), limit.into()]);
+
+    let started = std::time::Instant::now();
+    let out = blaze_async(args).await;
+    let elapsed = started.elapsed().as_secs_f64();
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(elapsed >= min_secs, "finished in {elapsed:.2}s");
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_limit_rate_slows_a_single_stream() {
+    // 1 MiB at 512 KiB/s needs two seconds.
+    limited_get(MIB, &["-c", "1"], "512K", 1.8).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_limit_rate_caps_the_total_across_segments() {
+    // 10 MiB over four connections at 5 MiB/s needs two seconds in total.
+    limited_get(10 * MIB, &["-c", "4"], "5M", 1.8).await;
+}
+
+#[test]
+fn get_rejects_invalid_limit_rates() {
+    for rate in ["abc", "0", "100", "-5M"] {
+        let out = blaze()
+            .args(["get", "http://127.0.0.1:1/x", "--limit-rate", rate])
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 2, "{rate}: {}", stderr(&out));
+    }
+}
