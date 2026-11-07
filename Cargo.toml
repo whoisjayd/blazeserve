@@ -1,0 +1,66 @@
+[package]
+name = "blazeserve"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "High-performance HTTP file server and CLI with range requests, resumable transfers, caching, TLS, uploads, ZIP streaming, rate limiting, and Prometheus metrics."
+license = "MIT"
+repository = "https://github.com/whoisjayd/blazeserve"
+readme = "README.md"
+keywords = ["http", "file-server", "static", "range", "cli"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+include = ["/src/**", "/tests/**", "/Cargo.toml", "/Cargo.lock", "/pyproject.toml", "/README.md", "/LICENSE"]
+
+[lib]
+name = "blazeserve"
+path = "src/lib.rs"
+
+[[bin]]
+name = "blaze"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "io-std", "sync", "time", "signal"] }
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pemfile = "2"
+socket2 = { version = "0.6", features = ["all"] }
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+base64 = "0.22"
+percent-encoding = "2"
+httpdate = "1"
+mime_guess = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+lru = "0.12"
+getrandom = "0.3"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics"], optional = true }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "trace", "metrics"], optional = true }
+opentelemetry-http = { version = "0.33", default-features = false, optional = true }
+async-trait = { version = "0.1", optional = true }
+
+[features]
+default = ["otel"]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:async-trait"]
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3

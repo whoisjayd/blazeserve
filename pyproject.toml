@@ -1,104 +1,37 @@
 [build-system]
-requires = ["setuptools>=77.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
 
 [project]
 name = "blazeserve"
-version = "0.4.0"
-description = "⚡ Ultra-fast HTTP file server with advanced performance optimizations, real-time metrics, and production-ready architecture — supports byte-range/multi-range downloads, TLS, Basic Auth, throttling, uploads, streaming ZIP, CORS, and a polished CLI."
-readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.10"
+version = "1.0.0"
+description = "HTTP file server for large static transfers: ranges, resumable get/put, TLS, auth, throttling, uploads, streaming ZIP, Prometheus metrics."
+readme = "README.md"
+requires-python = ">=3.8"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Jaydeep Solanki" }]
-keywords = ["http", "file-server", "range", "resume", "download", "cli", "rich", "click", "cors", "zip", "throttle", "prometheus", "metrics", "sre", "devops"]
+keywords = ["http", "file-server", "range", "resume", "download", "upload", "cli", "tls", "zip", "prometheus"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Rust",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: System :: Networking",
-    "Topic :: System :: Monitoring",
 ]
-
-dependencies = [
-    "click>=8.3.0,<8.5",
-    "rich>=14.0.0",
-    "rich-click>=1.8.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov>=6.0",
-    "pytest-xdist>=3.8.0",
-    "coverage[toml]>=7.5",
-    "mypy>=1.11",
-    "ruff>=0.9.0",
-    "types-click>=7.1.8",
-    "build>=1.2",
-    "twine>=6.0",
-    "pre-commit>=4.0",
-]
-
-[project.scripts]
-blaze = "blazeserve.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/whoisjayd/blazeserve"
 Repository = "https://github.com/whoisjayd/blazeserve.git"
 Issues = "https://github.com/whoisjayd/blazeserve/issues"
+Releases = "https://github.com/whoisjayd/blazeserve/releases"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["blazeserve*"]
-
-[tool.pytest.ini_options]
-minversion = "8.0"
-addopts = "-ra -q --strict-markers"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-markers = [
-    "unit: Fast isolated unit tests with no I/O",
-    "integration: Subsystem and live HTTP server integration tests",
-    "e2e: End-to-end CLI workflow tests",
-    "slow: Tests that take longer to run",
-]
-
-[tool.coverage.run]
-source = ["blazeserve"]
-branch = true
-
-[tool.coverage.report]
-fail_under = 85
-show_missing = true
-exclude_lines = [
-    "pragma: no cover",
-    "if __name__ == .__main__.:",
-    "raise NotImplementedError",
-]
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "T20", "SIM"]
-ignore = ["E501"]
-
-[tool.ruff.lint.per-file-ignores]
-"blazeserve/handlers.py" = ["N802"]
-"blazeserve/logging.py" = ["A005"]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-check_untyped_defs = true
+[tool.maturin]
+bindings = "bin"
+strip = true
+include = [{ path = "LICENSE", format = "sdist" }]
