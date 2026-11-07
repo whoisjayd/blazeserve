@@ -104,7 +104,8 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
     /// Download a file, resuming a partial transfer
     #[command(after_help = "Examples:
   blaze get http://host:8000/big.iso
-  blaze get http://host:8000/big.iso -o disk.iso --sha256 <digest>")]
+  blaze get http://host:8000/big.iso -o disk.iso --sha256 <digest>
+  blaze get http://host:8000/big.iso -c 8   # up to 8 parallel connections")]
     Get(transfer::GetArgs),
     /// Upload a file, resuming a partial transfer
     Put(transfer::PutArgs),

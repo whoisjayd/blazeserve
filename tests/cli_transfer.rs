@@ -270,3 +270,153 @@ async fn put_uploads_a_file_in_chunks() {
     );
     server.shutdown().await;
 }
+
+const SEGMENT: usize = 8 * MIB;
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_downloads_in_parallel_segments() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(40 * MIB + 123);
+    std::fs::write(served.path().join("big.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("big.bin");
+    let out = blaze_async(vec![
+        "get".into(),
+        url,
+        "-o".into(),
+        s(&dest),
+        "--connections".into(),
+        "4".into(),
+        "--sha256".into(),
+        sha256_hex(&data),
+    ])
+    .await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stderr(&out).contains("in 4 parts"), "{}", stderr(&out));
+    assert_eq!(
+        sha256_hex(&std::fs::read(&dest).unwrap()),
+        sha256_hex(&data)
+    );
+    assert!(!out_dir.path().join("big.bin.part").exists());
+    assert!(!out_dir.path().join("big.bin.part.meta").exists());
+    assert!(!out_dir.path().join("big.bin.part.meta.tmp").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn segmented_get_fetches_only_missing_segments_on_resume() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(5 * SEGMENT);
+    std::fs::write(served.path().join("big.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let head_url = url.clone();
+    let (etag, last_modified) = tokio::task::spawn_blocking(move || {
+        let resp = ureq::head(&head_url).call().unwrap();
+        let get = |n: &str| {
+            resp.headers()
+                .get(n)
+                .map(|v| v.to_str().unwrap().to_owned())
+        };
+        (get("etag"), get("last-modified"))
+    })
+    .await
+    .unwrap();
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("big.bin");
+    let mut part = vec![0u8; data.len()];
+    part[..3 * SEGMENT].copy_from_slice(&data[..3 * SEGMENT]);
+    std::fs::write(out_dir.path().join("big.bin.part"), &part).unwrap();
+    let meta = serde_json::json!({
+        "url": url, "etag": etag, "last_modified": last_modified, "total": data.len(),
+        "seg": { "version": 1, "size": SEGMENT, "done": [[0, 3]] },
+    });
+    std::fs::write(out_dir.path().join("big.bin.part.meta"), meta.to_string()).unwrap();
+
+    let before = server.state().metrics.bytes_sent();
+    let out = blaze_async(vec!["get".into(), url, "-o".into(), s(&dest)]).await;
+    let sent = server.state().metrics.bytes_sent() - before;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stderr(&out).contains("Resuming"), "{}", stderr(&out));
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert_eq!(
+        sent,
+        2 * SEGMENT as u64,
+        "only missing segments are fetched"
+    );
+    assert!(!out_dir.path().join("big.bin.part.meta").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_falls_back_when_the_origin_does_not_advertise_ranges() {
+    use std::io::{BufRead, BufReader, Write};
+    let data = pattern(9 * MIB);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = data.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+            }
+            let mut stream = reader.into_inner();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            if request_line.starts_with("GET") {
+                let _ = stream.write_all(&body);
+            }
+        }
+    });
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("plain.bin");
+    let out = blaze_async(vec![
+        "get".into(),
+        format!("http://{addr}/plain.bin"),
+        "-o".into(),
+        s(&dest),
+    ])
+    .await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!stderr(&out).contains("parts"), "{}", stderr(&out));
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+}
+
+#[test]
+fn get_rejects_connection_counts_outside_1_to_16() {
+    for n in ["0", "17"] {
+        let out = blaze()
+            .args(["get", "http://127.0.0.1:1/x", "--connections", n])
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 2, "{n}: {}", stderr(&out));
+    }
+}

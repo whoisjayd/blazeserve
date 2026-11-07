@@ -139,6 +139,15 @@ impl Progress {
         self.bar.set_position(done);
     }
 
+    /// Safe to call from several threads at once.
+    pub fn inc(&self, delta: u64) {
+        self.bar.inc(delta);
+    }
+
+    pub fn dec(&self, delta: u64) {
+        self.bar.dec(delta);
+    }
+
     pub fn finish(&mut self, done: u64) {
         self.bar.set_position(done);
         self.bar.finish_and_clear();

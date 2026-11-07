@@ -99,10 +99,11 @@ A named but empty or unset variable is an error; the server never falls back to 
 ```bash
 blaze get http://host:8000/big.iso                       # resumes from big.iso.part
 blaze get http://host:8000/big.iso --sha256 <hex>        # also verify the content
+blaze get http://host:8000/big.iso -c 8                # eight parallel connections
 blaze put ./big.iso http://host:8000/__upload__/big.iso  # resumes from the server's offset
 ```
 
-`get` continues with a `Range` request, validates it with `If-Range`, retries with backoff, and checks the final size before renaming the file into place. `put` reads the server's `Upload-Offset` and sends the rest in chunks.
+`get` continues with a `Range` request, validates it with `If-Range`, retries with backoff, and checks the final size before renaming the file into place. With `--connections N` (1 to 16, default 4) a file of at least 8 MiB is fetched in 8 MiB segments over N connections and written in place, and an interrupted run skips the segments already finished. This needs a known length, `Accept-Ranges: bytes` and a strong `ETag` or a `Last-Modified`; otherwise, or with `--connections 1`, `get` silently uses a single stream. `put` reads the server's `Upload-Offset` and sends the rest in chunks.
 
 ### Uploads
 

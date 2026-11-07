@@ -2,6 +2,7 @@
 
 mod download;
 mod http;
+mod segmented;
 mod upload;
 
 pub use download::{GetArgs, get};

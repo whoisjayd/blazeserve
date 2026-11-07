@@ -5,6 +5,7 @@ use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, transient_error,
     transient_status,
 };
+use super::segmented::{self, SegMeta};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::util::{Progress, backoff, human_size, sha256_file};
 use clap::Args;
@@ -16,7 +17,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const MAX_RESTARTS: u32 = 3;
+pub(super) const MAX_RESTARTS: u32 = 3;
 
 #[derive(Args, Debug)]
 pub struct GetArgs {
@@ -46,17 +47,22 @@ pub struct GetArgs {
     /// Replace an existing destination file
     #[arg(long)]
     pub force: bool,
+    /// Parallel connections for large files (1 downloads in a single stream)
+    #[arg(short = 'c', long, value_name = "N", default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=16))]
+    pub connections: u8,
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct Meta {
-    url: String,
-    etag: Option<String>,
-    last_modified: Option<String>,
-    total: Option<u64>,
+pub(super) struct Meta {
+    pub(super) url: String,
+    pub(super) etag: Option<String>,
+    pub(super) last_modified: Option<String>,
+    pub(super) total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) seg: Option<SegMeta>,
 }
 
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
+pub(super) fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut s: OsString = path.as_os_str().to_owned();
     s.push(suffix);
     PathBuf::from(s)
@@ -64,7 +70,7 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 
 /// Security software and indexers briefly hold new files open on Windows, which makes
 /// an immediate rename fail with a sharing violation.
-fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(super) fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut last = None;
     for attempt in 0..8u64 {
         match std::fs::rename(from, to) {
@@ -100,7 +106,7 @@ fn default_destination(url: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(name))
 }
 
-fn parse_content_range(v: &str) -> Option<(u64, u64, Option<u64>)> {
+pub(super) fn parse_content_range(v: &str) -> Option<(u64, u64, Option<u64>)> {
     let rest = v.trim().strip_prefix("bytes ")?;
     let (range, total) = rest.split_once('/')?;
     let total = if total == "*" {
@@ -122,26 +128,26 @@ enum Step {
     Transient { msg: String, progressed: bool },
 }
 
-struct Download<'a> {
-    agent: ureq::Agent,
-    url: &'a str,
-    part: PathBuf,
-    meta_path: PathBuf,
-    auth: Option<String>,
-    resume: bool,
+pub(super) struct Download<'a> {
+    pub(super) agent: ureq::Agent,
+    pub(super) url: &'a str,
+    pub(super) part: PathBuf,
+    pub(super) meta_path: PathBuf,
+    pub(super) auth: Option<String>,
+    pub(super) resume: bool,
 }
 
 impl Download<'_> {
-    fn reset(&self) {
+    pub(super) fn reset(&self) {
         let _ = std::fs::remove_file(&self.part);
         let _ = std::fs::remove_file(&self.meta_path);
     }
 
-    fn part_len(&self) -> u64 {
+    pub(super) fn part_len(&self) -> u64 {
         std::fs::metadata(&self.part).map_or(0, |m| m.len())
     }
 
-    fn load_meta(&self) -> Option<Meta> {
+    pub(super) fn load_meta(&self) -> Option<Meta> {
         let raw = std::fs::read(&self.meta_path).ok()?;
         serde_json::from_slice(&raw).ok()
     }
@@ -153,7 +159,9 @@ impl Download<'_> {
     }
 
     fn step(&self) -> Result<Step, String> {
-        let known = self.load_meta().filter(|m| m.url == self.url);
+        let known = self
+            .load_meta()
+            .filter(|m| m.url == self.url && m.seg.is_none());
         let mut offset = if self.resume && known.is_some() {
             self.part_len()
         } else {
@@ -230,6 +238,7 @@ impl Download<'_> {
             etag: header(&resp, "etag"),
             last_modified: header(&resp, "last-modified"),
             total,
+            seg: None,
         });
 
         let mut file = if resume_from > 0 {
@@ -343,6 +352,10 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
     };
     if !d.resume {
         d.reset();
+    }
+
+    if args.connections > 1 && segmented::run(&d, usize::from(args.connections), args.retries)? {
+        return finish_download(&d, &dest, args.sha256.as_deref());
     }
 
     let mut fails = 0u32;
