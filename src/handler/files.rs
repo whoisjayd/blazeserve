@@ -7,6 +7,7 @@ use hyper::{Request, Response, StatusCode};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::json;
 
+use super::hash::hash_response;
 use super::ops::{limiter_for, query_param};
 use super::pump::{Pump, Segment};
 use super::resolve::{PathError, Resolved, Served, accepted_encodings, decode_components, resolve};
@@ -39,11 +40,17 @@ pub(super) async fn static_response(
     let headers = req.headers();
     let encodings = (!headers.contains_key(header::RANGE)).then(|| accepted_encodings(headers));
 
+    let wants_hash = query_param(req.uri().query(), "hash").is_some();
+    let display_path = format!("/{}", components.join("/"));
     let task_state = Arc::clone(state);
     let resolved =
         tokio::task::spawn_blocking(move || resolve(&task_state.config, &components, encodings))
             .await;
     match resolved {
+        Ok(Resolved::File(served)) if wants_hash => {
+            hash_response(state, *served, display_path).await
+        }
+        Ok(Resolved::Listing { .. }) if wants_hash => error(StatusCode::BAD_REQUEST),
         Ok(Resolved::File(served)) => {
             file_response(state, peer, headers, req.uri().query(), head, *served)
         }

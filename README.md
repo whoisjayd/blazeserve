@@ -145,6 +145,7 @@ In Rust, `blazeserve::config::Config` and `blazeserve::server::start` start a se
 | Path | Methods | Notes |
 | :--- | :--- | :--- |
 | `/<path>` | GET, HEAD | Files and listings. `Accept: application/json` returns a JSON listing; `?download=1` sets `Content-Disposition: attachment` |
+| `/<path>?hash` | GET, HEAD | SHA-256 of a file as JSON (`path`, `size`, `sha256`) plus a `Repr-Digest` header; `no-store`. Directories get `400`. Digests are cached per path, size and modified time, and at most four files hash at once |
 | `/__upload__/<path>` | PUT, POST, GET, HEAD, DELETE | Only when uploads are enabled. GET and HEAD report `Upload-Offset` for a partial; DELETE discards a partial and never a published file |
 | `/__zip__?path=<path>` | GET, HEAD | Streamed ZIP; the connection closes afterwards |
 | `/__health__` | GET, HEAD | Status, version, uptime |

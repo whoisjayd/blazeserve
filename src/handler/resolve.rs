@@ -65,6 +65,7 @@ pub(super) fn windows_component_ok(part: &str) -> Result<(), PathError> {
 
 pub(super) struct Served {
     pub(super) file: Arc<std::fs::File>,
+    pub(super) path: PathBuf,
     pub(super) meta: Metadata,
     pub(super) name: String,
     pub(super) content_type: &'static str,
@@ -195,6 +196,7 @@ pub(super) fn resolve(
     };
     Resolved::File(Box::new(Served {
         file: Arc::new(file),
+        path: served_path,
         meta,
         name: path
             .file_name()

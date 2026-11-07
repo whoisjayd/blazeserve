@@ -14,11 +14,14 @@ use crate::{AppState, Body, PeerInfo, VERSION, security, upload, zip_stream};
 
 mod auth;
 mod files;
+mod hash;
 mod ops;
 mod pump;
 mod resolve;
 mod response;
 mod scope;
+
+pub use hash::HashCache;
 
 const UPLOAD_PREFIX: &str = "/__upload__/";
 

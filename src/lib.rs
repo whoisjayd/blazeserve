@@ -40,6 +40,7 @@ pub struct AppState {
     pub metrics: Arc<metrics::Metrics>,
     pub limiters: limiter::IpLimiterPool,
     pub telemetry: telemetry::Telemetry,
+    pub hashes: handler::HashCache,
 }
 
 impl AppState {
@@ -53,6 +54,7 @@ impl AppState {
             metrics: Arc::new(metrics::Metrics::new()),
             limiters: limiter::IpLimiterPool::new(4096),
             telemetry,
+            hashes: handler::HashCache::new(),
         })
     }
 }
