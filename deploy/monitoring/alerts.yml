@@ -8,7 +8,7 @@ groups:
           severity: critical
         annotations:
           summary: "BlazeServe instance {{ $labels.instance }} is down"
-          description: "BlazeServe has failed health checks for more than 30 seconds."
+          description: "Scrapes have failed for more than 30 seconds."
 
       - alert: BlazeServeHighErrorRate
         expr: rate(blazeserve_errors_total[2m]) > 5
@@ -16,14 +16,23 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Elevated error rate detected on {{ $labels.instance }}"
-          description: "BlazeServe is experiencing > 5 HTTP errors/sec over 1 minute."
+          summary: "Elevated error rate on {{ $labels.instance }}"
+          description: "More than 5 server errors per second over the last 2 minutes."
 
-      - alert: BlazeServeHighActiveConnections
+      - alert: BlazeServeHighActiveRequests
         expr: blazeserve_requests_active > 1000
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "High concurrent connections on {{ $labels.instance }}"
-          description: "Active requests exceeded 1000 for more than 2 minutes."
+          summary: "High in-flight requests on {{ $labels.instance }}"
+          description: "In-flight requests exceeded 1000 for 2 minutes."
+
+      - alert: BlazeServeConnectionsRejected
+        expr: rate(blazeserve_connections_rejected_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connections refused on {{ $labels.instance }}"
+          description: "The admission limit (--max-connections) is rejecting connections. Raise it or add capacity."

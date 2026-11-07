@@ -1,45 +1,29 @@
-# Multi-stage production build for BlazeServe
-FROM python:3.13-slim AS builder
+FROM rust:1-alpine AS builder
+RUN apk add --no-cache musl-dev
+WORKDIR /src
 
-# Copy uv from the official, version-pinned image rather than installing it via Python.
-COPY --from=ghcr.io/astral-sh/uv:0.12.9 /uv /uvx /bin/
+# Dependencies build in their own layer so source edits do not invalidate it.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && touch src/lib.rs && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked \
+    && rm -rf src target/release/deps/blazeserve* target/release/blaze*
 
-WORKDIR /app
-COPY pyproject.toml README.md LICENSE uv.lock /app/
+COPY src ./src
+ARG BLAZE_TELEMETRY_URL=""
+ENV BLAZE_TELEMETRY_URL=${BLAZE_TELEMETRY_URL}
+RUN cargo build --release --locked && mkdir -p /rootfs/data /rootfs/tmp
 
-# Keep dependency installation in a cacheable layer before copying application sources.
-ENV UV_LINK_MODE=copy \
-    UV_NO_DEV=1
-RUN uv sync --locked --no-install-project --no-editable
+FROM scratch AS runtime
+LABEL org.opencontainers.image.title="BlazeServe" \
+      org.opencontainers.image.source="https://github.com/whoisjayd/blazeserve" \
+      org.opencontainers.image.licenses="MIT"
 
-COPY blazeserve/ /app/blazeserve/
-RUN uv sync --locked --no-editable
+COPY --from=builder /src/target/release/blaze /usr/local/bin/blaze
+COPY --from=builder --chown=10001:10001 /rootfs/data /data
+COPY --from=builder --chmod=1777 /rootfs/tmp /tmp
 
-# Runtime container
-FROM python:3.13-slim AS runtime
-
-LABEL maintainer="Jaydeep Solanki <whoisjayd@github>" \
-      description="BlazeServe HTTP file server with metrics, TLS, and range downloads"
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    VIRTUAL_ENV=/app/.venv \
-    PATH="/app/.venv/bin:$PATH"
-
-# Keep the runtime identity deterministic across Docker and Kubernetes.
-RUN groupadd --system --gid 10001 blazeserve && \
-    useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin blazeserve && \
-    mkdir -p /data && \
-    chown 10001:10001 /data
-
-COPY --from=builder /app/.venv /app/.venv
-
-USER blazeserve
+USER 10001:10001
 WORKDIR /data
 EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/__live__', timeout=2).close()"]
-
-ENTRYPOINT ["blaze"]
+ENTRYPOINT ["/usr/local/bin/blaze"]
 CMD ["serve", "/data", "--host", "0.0.0.0", "--port", "8000"]

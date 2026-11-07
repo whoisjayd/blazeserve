@@ -1,4 +1,3 @@
-# Traefik v3 Static Configuration for BlazeServe
 entryPoints:
   web:
     address: ":80"

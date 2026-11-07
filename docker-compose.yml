@@ -17,17 +17,27 @@ services:
       - ./data:/data:ro
     tmpfs:
       - /tmp:size=64m,mode=1777
+    # Names without a value pass through from the host and stay unset otherwise,
+    # so exporting is opt-in and no secret is stored in this file.
     environment:
-      BLAZE_LOG_JSON: "1"
+      - BLAZE_LOG_JSON=1
+      - BLAZE_TELEMETRY
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
+      - OTEL_EXPORTER_OTLP_HEADERS
+      - OTEL_SERVICE_NAME
     command: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000"]
     deploy:
       resources:
         limits:
           cpus: "2.00"
-          memory: 512M
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/__live__', timeout=2).close()"]
-      interval: 15s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
+          memory: 256M
+
+  lgtm:
+    profiles: ["observability"]
+    image: grafana/otel-lgtm:0.40.0
+    container_name: blazeserve-lgtm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4318:4318"

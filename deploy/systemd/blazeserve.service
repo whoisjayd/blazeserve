@@ -1,5 +1,5 @@
 [Unit]
-Description=BlazeServe High-Performance HTTP File Server
+Description=BlazeServe HTTP file server
 Documentation=https://github.com/whoisjayd/blazeserve
 After=network-online.target
 Wants=network-online.target
@@ -12,15 +12,11 @@ WorkingDirectory=/srv/blazeserve
 ExecStart=/usr/local/bin/blaze serve /srv/blazeserve \
     --host 127.0.0.1 \
     --port 8000 \
-    --chunk-mb 256 \
-    --sock-sndbuf-mb 128 \
-    --cors \
+    --trust-proxy 127.0.0.1/32 \
     --log-json
-
 Restart=on-failure
 RestartSec=5s
 
-# Security Hardening Directives
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -32,7 +28,6 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 MemoryDenyWriteExecute=true
 ReadWritePaths=/srv/blazeserve
 
-# Resource Limits
 LimitNOFILE=1048576
 LimitNPROC=512
 

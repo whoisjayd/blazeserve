@@ -1,4 +1,3 @@
-# Traefik v3 Dynamic Configuration for BlazeServe
 http:
   routers:
     blazeserve-router:
