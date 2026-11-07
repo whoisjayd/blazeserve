@@ -410,6 +410,55 @@ async fn get_falls_back_when_the_origin_does_not_advertise_ranges() {
     assert_eq!(std::fs::read(&dest).unwrap(), data);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_falls_back_when_the_origin_advertises_ranges_but_ignores_them() {
+    use std::io::{BufRead, BufReader, Write};
+    let data = pattern(9 * MIB);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = data.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let body = body.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    return;
+                }
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
+                let mut stream = reader.into_inner();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                if request_line.starts_with("GET") {
+                    let _ = stream.write_all(&body);
+                }
+            });
+        }
+    });
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("ignored.bin");
+    let out = blaze_async(vec![
+        "get".into(),
+        format!("http://{addr}/ignored.bin"),
+        "-o".into(),
+        s(&dest),
+    ])
+    .await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+}
+
 #[test]
 fn get_rejects_connection_counts_outside_1_to_16() {
     for n in ["0", "17"] {

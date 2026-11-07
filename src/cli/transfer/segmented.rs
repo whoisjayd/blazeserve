@@ -364,7 +364,13 @@ fn trusted_progress(d: &Download<'_>, probe: &Probe, count: u64) -> Option<BTree
     }
 }
 
-fn attempt(d: &Download<'_>, probe: &Probe, conns: usize, retries: u32) -> Result<Outcome, String> {
+fn attempt(
+    d: &Download<'_>,
+    probe: &Probe,
+    conns: usize,
+    retries: u32,
+    first: bool,
+) -> Result<Outcome, String> {
     let count = segment_count(probe.total);
     let done = trusted_progress(d, probe, count).unwrap_or_else(|| {
         d.reset();
@@ -382,7 +388,7 @@ fn attempt(d: &Download<'_>, probe: &Probe, conns: usize, retries: u32) -> Resul
 
     let base = segments_len(&done, probe.total);
     let pending: Vec<u64> = (0..count).filter(|i| !done.contains(i)).collect();
-    if base > 0 {
+    if first && base > 0 {
         announce("Resuming", &format!("at {}", human_size(base)));
     }
     let workers = conns.min(pending.len()).max(1);
@@ -390,10 +396,12 @@ fn attempt(d: &Download<'_>, probe: &Probe, conns: usize, retries: u32) -> Resul
         let n = n.to_string_lossy();
         n.strip_suffix(".part").unwrap_or(&n).to_owned()
     });
-    announce(
-        "Downloading",
-        &format!("{name} in {workers} parts ({})", human_size(probe.total)),
-    );
+    if first {
+        announce(
+            "Downloading",
+            &format!("{name} in {workers} parts ({})", human_size(probe.total)),
+        );
+    }
 
     let shared = Shared {
         d,
@@ -462,12 +470,15 @@ pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, 
         let Some(probe) = probe(d) else {
             return Ok(false);
         };
-        match attempt(d, &probe, conns, retries)? {
+        match attempt(d, &probe, conns, retries, restarts == 0)? {
             Outcome::Done => return Ok(true),
             Outcome::Changed => {
                 restarts += 1;
                 if restarts > MAX_RESTARTS {
-                    return Err("server keeps changing the file; giving up".to_owned());
+                    // A server that advertises ranges yet answers 200 looks the same as a file that
+                    // keeps changing; the single-stream path copes with both.
+                    d.reset();
+                    return Ok(false);
                 }
             }
         }
