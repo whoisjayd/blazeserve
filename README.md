@@ -231,7 +231,7 @@ Everything is in [deploy/README.md](deploy/README.md). The image has no shell an
 | `blaze put FILE URL` | Resumable upload; a bare origin uploads under `/__upload__/`. `--chunk-mb` (8), `--retries`, `--auth`, `--auth-env` |
 | `blaze checksum FILES...` | Streamed SHA-256 |
 | `blaze doctor [PATH]` | Check the path, the port and capabilities; `--json`, exit code 1 on failure |
-| `blaze benchmark` | Time a download from a temporary loopback server, or from `--url`; `--size-mb`, `--json` |
+| `blaze benchmark` | Time a download from a temporary loopback server, or from `--url`; `--size-mb`, `--json`, `--runs`, `--warmup`, `--workload`, `--output`, `--seed`; `benchmark compare A B` |
 | `blaze telemetry` | `status`, `enable`, `disable`, `reset`, `preview` |
 | `blaze version` | Version and platform; `--json` |
 
@@ -249,13 +249,46 @@ BlazeServe assumes an attacker who controls request paths, query strings, header
 
 ## Performance
 
-No throughput figures are published. Speed depends on the operating system, filesystem, storage, network, TLS and any proxy, so measure your own setup:
+Speed depends on the operating system, filesystem, storage, network, TLS and any proxy, so measure your own setup. A single timed download:
 
 ```bash
 blaze benchmark --json --size-mb 100
 ```
 
-Without `--url` it starts a temporary loopback server on a free port and stops it afterwards; with `--url` it measures an existing server. The record has `base_url`, `requested_bytes`, `downloaded_bytes`, `elapsed_seconds` and `throughput_mib_per_second`. A run that receives fewer bytes than requested is a failure, not a sample. Repeat the run, discard one warm-up, report the median and range, and when you publish a number include the command, version, OS, CPU, storage and network path.
+Without `--url` it starts a temporary loopback server on a free port and stops it afterwards; with `--url` it measures an existing server. A run that receives fewer bytes than requested is a failure, not a sample.
+
+For repeatable numbers, any of `--runs`, `--warmup`, `--workload` or `--output` selects the harness:
+
+```bash
+blaze benchmark --runs 7 --warmup 2 --workload both --size-mb 512 --output run1.json
+blaze benchmark compare run1.json run2.json
+```
+
+| Option | Meaning |
+| :--- | :--- |
+| `--runs N` | Recorded samples per workload |
+| `--warmup N` | Discarded samples before the recorded ones (default 1) |
+| `--workload` | `full` (whole file), `range` (partial requests) or `both` |
+| `--output FILE` | Versioned JSON artifact with the command, server settings, fixture seed and every sample |
+| `--seed N` | Seed for the deterministic fixture content |
+
+`blaze benchmark compare A B` prints the median of each workload in both artifacts and the change. It applies no threshold or significance test, so judge the spread yourself.
+
+### Reference measurements
+
+One machine, loopback only, no TLS or proxy: AMD Ryzen 5 5625U, 15 GB RAM, Windows 11, release build of 1.0.0, 512 MiB fixture, 7 samples after 2 warm-ups, three runs.
+
+| Run | `full` median | `range` median |
+| :--- | ---: | ---: |
+| 1 | 1033 MiB/s | 1334 MiB/s |
+| 2 | 1333 MiB/s | 1309 MiB/s |
+| 3 | 1317 MiB/s | 1360 MiB/s |
+
+Within a run, the standard deviation is 8 to 15 percent of the median (90 to 200 MiB/s), and run 1 `full` sits about 22 percent below the other two. Treat differences of that size as within the noise of this machine.
+
+The 0.x Python server, measured on the same machine with `blaze benchmark --json --size-mb 512`, five single runs without warm-up: 616, 633, 677, 749 and 759 MiB/s, median 677. The harnesses differ, so read the roughly twofold gap as indicative, not exact. Loopback says little about a real network, where the link usually limits throughput.
+
+When you publish a number include the command, version, OS, CPU, storage and network path.
 
 ## Telemetry
 
