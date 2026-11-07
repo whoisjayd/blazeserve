@@ -69,6 +69,7 @@ Archives and wheels cover Linux (x86_64 and aarch64, glibc and musl), Windows x8
 blaze serve ./site --host 127.0.0.1 -p 9000      # bind loopback on another port
 blaze serve . --rate-mbps 25                     # throttle each client to 25 MB/s
 blaze serve . --max-upload-mb 500 --auth-env BLAZE_AUTH   # accept uploads, with auth
+blaze serve . --qr                               # print a QR code of the network URL
 blaze checksum ./big.iso                         # SHA-256, streamed
 blaze doctor ./site                              # check path, port and capabilities
 blaze benchmark                                  # loopback self-test

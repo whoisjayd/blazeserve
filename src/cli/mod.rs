@@ -80,9 +80,13 @@ enum Command {
     #[command(after_help = "Examples:
   blaze serve .
   blaze serve ./site --port 9000 --no-listing
-  blaze serve ./data --auth-env BLAZE_AUTH --max-upload-mb 512")]
+  blaze serve ./data --auth-env BLAZE_AUTH --max-upload-mb 512
+  blaze serve ./site --qr")]
     Serve(serve::ServeArgs),
     /// Quick share a single file
+    #[command(after_help = "Examples:
+  blaze send ./big.iso
+  blaze send ./big.iso --qr")]
     Send(serve::SendArgs),
     /// SHA256 for files
     Checksum(ChecksumArgs),

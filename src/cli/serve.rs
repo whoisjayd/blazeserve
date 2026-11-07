@@ -9,6 +9,9 @@ use std::path::PathBuf;
 
 #[derive(Args, Debug)]
 pub struct Common {
+    /// Print a QR code of the network URL
+    #[arg(long)]
+    pub qr: bool,
     /// Bind address (IPv4/IPv6 literal ok)
     #[arg(long, default_value = "0.0.0.0")]
     pub host: String,
@@ -248,7 +251,18 @@ fn loopback_host(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
-fn banner(cfg: &Config, verbose: bool) -> String {
+fn qr_block(url: &str) -> Option<String> {
+    use qrcode::render::unicode::Dense1x2;
+    let code = qrcode::QrCode::new(url.as_bytes()).ok()?;
+    Some(
+        code.render::<Dense1x2>()
+            .dark_color(Dense1x2::Dark)
+            .light_color(Dense1x2::Light)
+            .build(),
+    )
+}
+
+fn banner(cfg: &Config, verbose: bool, qr: bool) -> String {
     let style = Style::stdout();
     let scheme = if cfg.tls.is_some() { "https" } else { "http" };
     let port = cfg.port;
@@ -261,13 +275,14 @@ fn banner(cfg: &Config, verbose: bool) -> String {
     if let Some(url) = &network {
         rows.push(("Network", url.clone()));
     }
+    let mut share = network
+        .clone()
+        .unwrap_or_else(|| format!("{scheme}://localhost:{port}/"));
     if let Some(file) = cfg.single.as_deref().and_then(|f| f.file_name()) {
-        let host = network
-            .as_deref()
-            .map_or_else(|| format!("{scheme}://localhost:{port}/"), str::to_owned);
         let raw = file.to_string_lossy();
         let name = percent_encoding::utf8_percent_encode(&raw, percent_encoding::NON_ALPHANUMERIC);
-        rows.push(("Download", format!("blaze get {host}{name}")));
+        share.push_str(&name.to_string());
+        rows.push(("Download", format!("blaze get {share}")));
     }
     if verbose {
         rows.push((
@@ -288,10 +303,16 @@ fn banner(cfg: &Config, verbose: bool) -> String {
             .map_or_else(|| format!("{scheme}://localhost:{port}/"), str::to_owned);
         rows.push(("Metrics", format!("{host}__metrics__")));
     }
+    let qr_text = if qr {
+        qr_block(&share).map_or_else(String::new, |q| format!("\n{}\n", q.trim_end()))
+    } else {
+        String::new()
+    };
     format!(
-        "{}\n\n{}\n\n{}\n",
+        "{}\n\n{}\n{}\n{}\n",
         style.bold(&format!("BlazeServe {}", crate::VERSION)),
         ansi::rows(style, &rows).trim_end(),
+        qr_text,
         style.dim("Press Ctrl+C to stop"),
     )
 }
@@ -312,9 +333,10 @@ fn run_config(
     command: usage::Command,
     verbose: bool,
     open: bool,
+    qr: bool,
 ) -> Result<u8, String> {
     let json_logs = cfg.log_json;
-    let text = banner(&cfg, verbose);
+    let text = banner(&cfg, verbose, qr);
     let url = format!(
         "{}://localhost:{}/",
         if cfg.tls.is_some() { "https" } else { "http" },
@@ -354,12 +376,18 @@ fn run_config(
 
 pub fn serve(args: ServeArgs) -> Result<u8, String> {
     let cfg = serve_config(&args)?;
-    run_config(cfg, usage::Command::Serve, args.verbose, args.open_browser)
+    run_config(
+        cfg,
+        usage::Command::Serve,
+        args.verbose,
+        args.open_browser,
+        args.common.qr,
+    )
 }
 
 pub fn send(args: SendArgs) -> Result<u8, String> {
     let cfg = send_config(&args)?;
-    run_config(cfg, usage::Command::Send, false, false)
+    run_config(cfg, usage::Command::Send, false, false, args.common.qr)
 }
 
 #[cfg(test)]
@@ -394,5 +422,42 @@ mod tests {
         assert!(loopback_host("[::1]"));
         assert!(loopback_host("localhost"));
         assert!(!loopback_host("0.0.0.0"));
+    }
+
+    #[test]
+    fn qr_block_is_a_rectangle_of_block_glyphs_with_a_quiet_zone() {
+        let qr = qr_block("http://localhost:8000/").unwrap();
+        let lines: Vec<&str> = qr.lines().collect();
+        let width = lines[0].chars().count();
+        assert!(width >= 21 + 8);
+        assert!(lines.iter().all(|l| l.chars().count() == width));
+        assert!(
+            qr.chars()
+                .all(|c| matches!(c, ' ' | '▀' | '▄' | '█' | '\n'))
+        );
+        assert!(qr.contains('█') || qr.contains('▀') || qr.contains('▄'));
+        assert!(lines[0].chars().all(|c| c == ' '));
+        assert!(lines.iter().all(|l| l.starts_with("    ")));
+    }
+
+    #[test]
+    fn qr_block_rejects_urls_beyond_capacity() {
+        assert!(qr_block(&format!("http://h/{}", "a".repeat(4000))).is_none());
+    }
+
+    #[test]
+    fn banner_adds_the_qr_only_when_asked() {
+        let cfg = Config {
+            host: "127.0.0.1".into(),
+            ..Config::default()
+        };
+        let plain = banner(&cfg, false, false);
+        let with_qr = banner(&cfg, false, true);
+        let qr = qr_block("http://localhost:8000/").unwrap();
+        assert!(!plain.contains(qr.lines().nth(2).unwrap()));
+        assert!(with_qr.contains(qr.lines().nth(2).unwrap()));
+        assert!(with_qr.contains("http://localhost:8000/"));
+        assert!(with_qr.contains("Press Ctrl+C to stop"));
+        assert!(with_qr.len() > plain.len());
     }
 }
