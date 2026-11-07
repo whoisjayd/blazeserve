@@ -1,14 +1,8 @@
 ## Summary
 
-What changed and why.
+What changed and why. Note any compatibility impact.
 
 Fixes #
-
-## AI assistance
-
-- [ ] No AI assistance was used.
-- [ ] AI assistance was used and disclosed in the linked issue. Tools and role:
-- **Accountable human:** the contributor who understands and tested the whole change and will answer review.
 
 ## Evidence
 

@@ -174,11 +174,11 @@ The release workflow requires its manual version or `v*` tag to equal `Cargo.tom
 - Respect `.gitignore`: `.env`, `data/`, `certificates/`, `*.pem`, `*.key`, `*.crt`, `*.log`, `*.pid` and agent or session files stay local.
 - `Cargo.lock` is tracked. `target/`, `dist/`, wheels, archives and coverage output are never source.
 
-## AI-assisted work
+## Ownership
 
-- Disclose AI or automation assistance, including the tools and their role, in the issue and the pull request, and ask for the `ai-assisted` label so maintainers give the change careful human review.
-- Name the accountable human who understands and tested the whole change and will answer review. Represent authorship accurately and never present agent-generated work as human-written.
-- Disclosure is a review signal, not AI detection. Unsolicited autonomous or agent-generated pull requests are not accepted. Flag undisclosed or weakly owned AI-assisted work for a maintainer.
+- The maintainer who submits a change owns it: they understand it, tested it, and answer review.
+- Commits and pull requests carry no tool attribution, disclosure statement or `Co-Authored-By` line. Describe the change, the compatibility impact and the linked issues.
+- Unsolicited autonomous or agent-generated pull requests from outside the maintainer team are not accepted.
 
 ## Handoff
 

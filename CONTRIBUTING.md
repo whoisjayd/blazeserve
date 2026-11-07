@@ -67,15 +67,11 @@ Live HTTP tests bind port `0` on loopback through the shared helper. Do not use 
 - Do not hand-edit `Cargo.lock`.
 - Write each commit as a single [Conventional Commits](https://www.conventionalcommits.org/) line, `type(scope): summary`, with no body or trailers. Types are `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `build`, `ci` and `chore`. Keep commits atomic: one coherent change with its tests and docs, and no unrelated cleanup mixed in. Put context and issue links in the pull request.
 
-## AI-assisted contributions
+## Ownership and review
 
-Unsolicited autonomous or agent-generated pull requests are not accepted. AI-assisted work is welcome when a named human:
+Whoever opens a pull request owns it. You should understand the whole change, have tested it, and be ready to answer review and revise the work yourself. Unsolicited autonomous or agent-generated pull requests are not accepted.
 
-- discloses the assistance and the tools in the issue and the pull request
-- understands the whole change, tests it and stays accountable for it
-- answers review and revises the work personally
-
-Disclosure is a review signal, not a penalty. Maintainers add the `ai-assisted` label so the change gets careful human review.
+Commits and pull request descriptions need no tool attribution or disclosure statement. Say what changed, why, and what it means for compatibility.
 
 ## Conduct
 
