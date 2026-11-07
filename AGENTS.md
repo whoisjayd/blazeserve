@@ -26,8 +26,8 @@ Handbook for contributors and coding agents working on BlazeServe, a Rust HTTP/1
 | :--- | :--- |
 | `src/lib.rs` | Module list, `VERSION`, `AppState`, `PeerInfo`, `Body` |
 | `src/config.rs` | Typed configuration and validation, the single source of truth for every entry point |
-| `src/cli/`, `src/main.rs` | Commands, help, progress output and input validation; `cli::main_from` runs the CLI for embedders. `cli/transfer/` holds resumable `get` and `put`, `cli/bench/` the benchmark harness |
-| `src/server/` | `bind` and `tls` set up the listener, `accept` applies admission control, `connection` and `idle` serve one connection, `proxy` resolves trusted client identity, `mod.rs` owns start and shutdown |
+| `src/cli/`, `src/main.rs` | Commands, help, progress output and input validation; `cli::main_from` runs the CLI for embedders. `cli/transfer/` holds resumable `get` (single stream in `download`, parallel segments in `segmented`) and `put`, `cli/bench/` the benchmark harness |
+| `src/server/` | `bind` and `tls` set up the listener, `accept` applies admission control, `connection` and `idle` serve one connection, `prefixed` sniffs the HTTP/2 preface, `proxy` resolves trusted client identity, `mod.rs` owns start and shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes, CORS, auth, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
 | `src/upload/`, `src/zip_stream/` | Uploads (`request`, `target`, `stream`, `publish`, `plain`, `resumable`) and streaming ZIPs (`writer`, `crc32`, `archive`) |
 | `src/security.rs` | Canonical containment, race-resistant file creation, request IDs |

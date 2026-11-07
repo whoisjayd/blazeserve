@@ -12,6 +12,9 @@ pub struct Common {
     /// Print a QR code of the network URL
     #[arg(long)]
     pub qr: bool,
+    /// Serve HTTP/1.1 only, without HTTP/2
+    #[arg(long)]
+    pub no_http2: bool,
     /// Bind address (IPv4/IPv6 literal ok)
     #[arg(long, default_value = "0.0.0.0")]
     pub host: String,
@@ -184,6 +187,7 @@ impl Common {
         cfg.max_upload_bytes = self.max_upload_mb * 1024 * 1024;
         cfg.log_json = self.log_json || (!self.no_log_json && env_truthy("BLAZE_LOG_JSON"));
         cfg.max_connections = usize::try_from(self.max_connections).unwrap_or(usize::MAX);
+        cfg.http2 = !self.no_http2;
         cfg.header_timeout_secs = self.header_timeout;
         cfg.trusted_proxies = self.trust_proxy.clone();
         cfg.max_proxy_hops = self.max_proxy_hops as usize;

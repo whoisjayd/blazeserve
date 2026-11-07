@@ -57,7 +57,7 @@ Archives and wheels cover Linux (x86_64 and aarch64, glibc and musl), Windows x8
 | Resumable | `blaze get` continues from a `.part` file; `blaze put` continues an interrupted upload |
 | Uploads | Off by default. Create-only, length and digest verified, published atomically, replace only with a matching `If-Match` |
 | Access | Basic Auth, TLS 1.2+, CORS, per-client throttling |
-| Reliability | HTTP/1.1 and HTTP/2 (TLS ALPN `h2`, cleartext prior-knowledge h2c), Connection limit, header timeout, idle timeout, graceful shutdown, bounded transfer buffers |
+| Reliability | HTTP/1.1 and HTTP/2 (TLS ALPN `h2`, cleartext prior-knowledge h2c; `--no-http2` turns it off), connection limit, header timeout, idle timeout, graceful shutdown, bounded transfer buffers |
 | Proxies | Trusted-proxy client identity from `Forwarded` and `X-Forwarded-For` |
 | Operations | Liveness and readiness probes, Prometheus metrics, OpenTelemetry traces and metrics, structured JSON logs, `blaze doctor` |
 | Browsing | A responsive directory listing with filter and sort, and a JSON listing for scripts |

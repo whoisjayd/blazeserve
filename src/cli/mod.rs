@@ -307,6 +307,20 @@ mod tests {
     }
 
     #[test]
+    fn http2_is_on_unless_disabled() {
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["blaze", "serve"];
+            argv.extend_from_slice(extra);
+            let Command::Serve(a) = Cli::try_parse_from(argv).unwrap().command else {
+                panic!("expected serve")
+            };
+            serve::serve_config(&a).unwrap().http2
+        };
+        assert!(parse(&[]));
+        assert!(!parse(&["--no-http2"]));
+    }
+
+    #[test]
     fn last_toggle_wins() {
         let cli = Cli::try_parse_from(["blaze", "serve", "--cors", "--no-cors"]).unwrap();
         let Command::Serve(a) = cli.command else {
