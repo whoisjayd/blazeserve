@@ -16,7 +16,7 @@ fn read_zip(bytes: Vec<u8>) -> Vec<(String, Vec<u8>)> {
         let mut entry = archive.by_index(i).expect("entry");
         let mut data = Vec::new();
         entry.read_to_end(&mut data).expect("crc-checked read");
-        out.push((entry.name().to_owned(), data));
+        out.push((entry.name().expect("utf-8 entry name").into_owned(), data));
     }
     out.sort();
     out
