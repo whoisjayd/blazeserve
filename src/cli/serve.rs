@@ -251,13 +251,29 @@ fn loopback_host(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
+const PATH_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'\\')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}');
+
+/// Terminals are usually dark, so the code is drawn inverted: the filled blocks are the light
+/// modules and the quiet zone, which is what a scanner needs to see around the code.
 fn qr_block(url: &str) -> Option<String> {
     use qrcode::render::unicode::Dense1x2;
     let code = qrcode::QrCode::new(url.as_bytes()).ok()?;
     Some(
         code.render::<Dense1x2>()
-            .dark_color(Dense1x2::Dark)
-            .light_color(Dense1x2::Light)
+            .dark_color(Dense1x2::Light)
+            .light_color(Dense1x2::Dark)
             .build(),
     )
 }
@@ -280,7 +296,7 @@ fn banner(cfg: &Config, verbose: bool, qr: bool) -> String {
         .unwrap_or_else(|| format!("{scheme}://localhost:{port}/"));
     if let Some(file) = cfg.single.as_deref().and_then(|f| f.file_name()) {
         let raw = file.to_string_lossy();
-        let name = percent_encoding::utf8_percent_encode(&raw, percent_encoding::NON_ALPHANUMERIC);
+        let name = percent_encoding::utf8_percent_encode(&raw, PATH_SEGMENT);
         share.push_str(&name.to_string());
         rows.push(("Download", format!("blaze get {share}")));
     }
@@ -436,8 +452,21 @@ mod tests {
                 .all(|c| matches!(c, ' ' | '▀' | '▄' | '█' | '\n'))
         );
         assert!(qr.contains('█') || qr.contains('▀') || qr.contains('▄'));
-        assert!(lines[0].chars().all(|c| c == ' '));
-        assert!(lines.iter().all(|l| l.starts_with("    ")));
+        assert!(lines[0].chars().all(|c| c == '█'));
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.chars().take(4).all(|c| matches!(c, '█' | '▀')))
+        );
+    }
+
+    #[test]
+    fn share_url_keeps_dots_and_escapes_only_unsafe_characters() {
+        let encode =
+            |name: &str| percent_encoding::utf8_percent_encode(name, PATH_SEGMENT).to_string();
+        assert_eq!(encode("README.md"), "README.md");
+        assert_eq!(encode("my file#1.tar.gz"), "my%20file%231.tar.gz");
+        assert_eq!(encode("a?b%c"), "a%3Fb%25c");
     }
 
     #[test]
