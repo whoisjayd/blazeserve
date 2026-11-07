@@ -2,6 +2,7 @@
 
 mod accept;
 mod bind;
+mod budget;
 mod connection;
 mod idle;
 mod prefixed;

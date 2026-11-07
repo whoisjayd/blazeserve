@@ -1,5 +1,6 @@
 //! Serves one accepted connection over plaintext or TLS through hyper, as HTTP/1.1 or HTTP/2.
 
+use super::budget::StreamBudget;
 use super::idle::IdleIo;
 use super::prefixed::sniff;
 use super::proxy::client_ip_for;
@@ -69,9 +70,14 @@ where
 {
     let state = ctx.state.clone();
     let peer = ctx.peer;
+    let budget = h2.then(|| Arc::new(StreamBudget::new()));
     let service = service_fn(move |req: Request<Incoming>| {
         let state = state.clone();
+        let over_budget = budget.as_ref().is_some_and(|b| !b.try_take());
         async move {
+            if over_budget {
+                return Ok(handler::rate_limited());
+            }
             let client_ip = client_ip_for(&state.config, peer.ip(), req.headers());
             handler::handle(
                 state,

@@ -41,6 +41,16 @@ pub async fn handle(
     Ok(finalize(&state, &peer, &request_id, head, scope, response))
 }
 
+/// Answer for a request the connection's stream budget refused; does no filesystem work.
+pub fn rate_limited() -> Response<Body> {
+    let mut resp = response::error(StatusCode::TOO_MANY_REQUESTS);
+    resp.headers_mut().insert(
+        hyper::header::RETRY_AFTER,
+        hyper::header::HeaderValue::from_static("1"),
+    );
+    resp
+}
+
 async fn route(state: &Arc<AppState>, peer: &PeerInfo, req: Request<Incoming>) -> Response<Body> {
     let cfg = &state.config;
     let method = req.method().clone();
