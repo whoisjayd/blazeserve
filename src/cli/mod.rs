@@ -3,8 +3,6 @@
 
 mod ansi;
 mod bench;
-mod bench_artifact;
-mod bench_run;
 mod doctor;
 mod serve;
 mod telemetry;
