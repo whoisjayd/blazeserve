@@ -1,56 +1,61 @@
 name: Bug report
-description: Report a reproducible problem to help us improve
-labels: [bug]
+description: Report a reproducible problem
+labels: [bug, needs-triage]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug. Please provide reproducible, sanitized details so we can investigate efficiently.
+        Remove credentials, tokens, keys and private data from everything you paste.
+        Report security issues privately through the link on the issue chooser, not here.
+        For a usage question, use this form and put "Question" at the start of the title.
 
   - type: input
     id: version
     attributes:
       label: BlazeServe version
-      placeholder: e.g. 0.3.1
+      description: Output of `blaze version`.
+      placeholder: 1.0.0
     validations:
       required: true
 
   - type: input
-    id: python
+    id: platform
     attributes:
-      label: Python version
-      placeholder: e.g. 3.12.4
-    validations:
-      required: true
-
-  - type: input
-    id: os
-    attributes:
-      label: OS and version
-      placeholder: e.g. Ubuntu 22.04 / Windows 11 / macOS 14
+      label: OS, version and architecture
+      placeholder: Ubuntu 24.04 x86_64, Windows 11 x86_64, macOS 15 arm64
     validations:
       required: true
 
   - type: dropdown
-    id: deployment-mode
+    id: install
     attributes:
-      label: Deployment mode
-      description: Choose the mode in which the problem occurs.
+      label: How it was installed
+      options:
+        - pip or uv
+        - cargo
+        - Release archive
+        - Container
+        - Built from source
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
       options:
         - Local
-        - Docker
+        - Docker or Compose
         - Kubernetes
-        - Reverse proxy
+        - Behind a reverse proxy
         - Other
     validations:
       required: true
 
   - type: textarea
-    id: what-happened
+    id: behavior
     attributes:
       label: Observed and expected behavior
-      description: Describe what happened and what you expected instead.
-      placeholder: Tell us what you saw and what you expected...
     validations:
       required: true
 
@@ -58,19 +63,7 @@ body:
     id: reproduce
     attributes:
       label: Steps to reproduce
-      description: Give the smallest complete sequence that consistently reproduces the problem.
-      placeholder: |
-        1. Start BlazeServe with...
-        2. Run the command or request below...
-        3. Observe...
-    validations:
-      required: true
-
-  - type: textarea
-    id: command-request
-    attributes:
-      label: Exact command or HTTP request
-      description: Include the exact command or request that triggers the issue. Remove credentials and other secrets.
+      description: The smallest sequence that reproduces it, including the exact command or HTTP request.
       render: shell
     validations:
       required: true
@@ -78,38 +71,13 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Sanitized logs / output
-      description: Include relevant logs or output after removing credentials, tokens, keys, and private data.
+      label: Output or logs
       render: shell
 
   - type: textarea
-    id: screenshots
+    id: ai
     attributes:
-      label: Screenshots or additional context
-      description: Optional screenshots, configuration excerpts, or links. Remove private information before submitting.
-
-  - type: textarea
-    id: ai-assistance
-    attributes:
-      label: AI assistance disclosure
-      description: If AI or automation assisted this report or proposed work, name the tools, explain their role, and identify the accountable human who understands and will test the work. Otherwise write "None."
+      label: AI assistance
+      description: Name any AI tools that helped with this report or will help with a fix, and the accountable human. Write "None" otherwise.
     validations:
       required: true
-
-  - type: checkboxes
-    id: ai-accountability
-    attributes:
-      label: AI-assisted contribution policy
-      options:
-        - label: I disclosed AI or automation assistance above, or confirmed that none was used; I understand disclosure is for careful human review, not AI detection.
-          required: true
-
-  - type: checkboxes
-    id: confirmations
-    attributes:
-      label: Submission checks
-      options:
-        - label: I searched existing issues for duplicates.
-          required: true
-        - label: I removed credentials, tokens, keys, and other secrets from this report.
-          required: true
