@@ -10,7 +10,6 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 use std::time::Duration;
 
 const READ_BUF: usize = 256 * 1024;
@@ -427,11 +426,7 @@ impl Download<'_> {
     }
 }
 
-fn finish_download(
-    d: &Download<'_>,
-    dest: &Path,
-    sha256: Option<&str>,
-) -> Result<ExitCode, String> {
+fn finish_download(d: &Download<'_>, dest: &Path, sha256: Option<&str>) -> Result<u8, String> {
     if let Some(expected) = sha256 {
         let actual = sha256_file(&d.part).map_err(|e| format!("cannot hash download: {e}"))?;
         if !actual.eq_ignore_ascii_case(expected) {
@@ -451,10 +446,10 @@ fn finish_download(
         dest.display(),
         human_size(size)
     );
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
-pub fn get(args: GetArgs) -> Result<ExitCode, String> {
+pub fn get(args: GetArgs) -> Result<u8, String> {
     http_url(&args.url)?;
     if let Some(h) = &args.sha256
         && (h.len() != 64 || !h.chars().all(|c| c.is_ascii_hexdigit()))
@@ -646,7 +641,7 @@ impl Upload<'_> {
     }
 }
 
-pub fn put(args: PutArgs) -> Result<ExitCode, String> {
+pub fn put(args: PutArgs) -> Result<u8, String> {
     let url = upload_target(&args.url, &args.file)?;
     let auth = basic_header(args.auth.as_deref(), args.auth_env.as_deref())?;
     let total = std::fs::metadata(&args.file)
@@ -703,7 +698,7 @@ pub fn put(args: PutArgs) -> Result<ExitCode, String> {
                     args.file.display(),
                     human_size(total)
                 );
-                return Ok(ExitCode::SUCCESS);
+                return Ok(0);
             }
             Sent::Advanced(next) => {
                 fails = 0;

@@ -26,7 +26,7 @@ Handbook for contributors and coding agents working on BlazeServe, a Rust HTTP/1
 | :--- | :--- |
 | `src/lib.rs` | Module list, `VERSION`, `AppState`, `PeerInfo`, `Body` |
 | `src/config.rs` | Typed configuration and validation, the single source of truth for every entry point |
-| `src/cli/`, `src/main.rs` | Commands and input validation |
+| `src/cli/`, `src/main.rs` | Commands, help, progress output and input validation; `cli::main_from` runs the CLI for embedders |
 | `src/server.rs` | Bind, socket options, TLS, admission control, proxy identity, shutdown |
 | `src/handler.rs`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes, CORS, auth, headers |
 | `src/upload.rs`, `src/zip_stream.rs` | Uploads and streaming ZIPs |
@@ -37,7 +37,8 @@ Handbook for contributors and coding agents working on BlazeServe, a Rust HTTP/1
 | `.github/workflows/` | `ci.yml` and `release.yml`, the authoritative gates |
 | `Dockerfile`, `docker-compose.yml` | `scratch` image running as uid and gid 10001 |
 | `deploy/` | Kubernetes, systemd, proxy, monitoring, Linux tuning, the telemetry relay; start at `deploy/README.md` |
-| `pyproject.toml` | maturin metadata for the wheels; it holds no Python code |
+| `src/python.rs`, `python/blazeserve/`, `tests_py/` | PyO3 bindings (feature `python`), the thin Python package with stubs, and the pytest suite run against the built wheel |
+| `pyproject.toml` | maturin metadata for the abi3 wheels and the `blaze` console script |
 
 Dependencies point downward and never form cycles:
 

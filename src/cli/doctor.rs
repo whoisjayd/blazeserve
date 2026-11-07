@@ -4,7 +4,6 @@ use clap::Args;
 use serde::Serialize;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 
 #[derive(Args, Debug)]
 pub struct DoctorArgs {
@@ -158,7 +157,7 @@ struct Report<'a> {
     checks: &'a [Check],
 }
 
-pub fn run(args: DoctorArgs) -> Result<ExitCode, String> {
+pub fn run(args: DoctorArgs) -> Result<u8, String> {
     let abs = std::path::absolute(&args.path).unwrap_or_else(|_| args.path.clone());
     let checks = vec![
         base_path(&abs),
@@ -184,11 +183,7 @@ pub fn run(args: DoctorArgs) -> Result<ExitCode, String> {
     } else {
         print_table(&checks);
     }
-    Ok(if success {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    })
+    Ok(if success { 0 } else { 1 })
 }
 
 fn label(id: &str) -> &str {

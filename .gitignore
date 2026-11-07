@@ -55,3 +55,7 @@ Thumbs.db
 local_*.md
 /local/
 release_notes.txt
+
+__pycache__/
+*.pyc
+.pytest_cache/

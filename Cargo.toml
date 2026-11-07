@@ -9,7 +9,7 @@ repository = "https://github.com/whoisjayd/blazeserve"
 readme = "README.md"
 keywords = ["http", "file-server", "static", "range", "cli"]
 categories = ["command-line-utilities", "web-programming::http-server"]
-include = ["/src/**", "/tests/**", "/Cargo.toml", "/Cargo.lock", "/pyproject.toml", "/README.md", "/LICENSE"]
+include = ["/src/**", "/python/**", "/tests/**", "/tests_py/**", "/Cargo.toml", "/Cargo.lock", "/pyproject.toml", "/README.md", "/LICENSE"]
 
 [lib]
 name = "blazeserve"
@@ -50,10 +50,12 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 opentelemetry-http = { version = "0.33", default-features = false, optional = true }
 async-trait = { version = "0.1", optional = true }
 clap_complete = "4"
+pyo3 = { version = "0.30", default-features = false, features = ["abi3-py39", "macros"], optional = true }
 
 [features]
 default = ["otel"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:async-trait"]
+python = ["dep:pyo3"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -7,7 +7,6 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::ExitCode;
 use std::time::Instant;
 
 #[derive(Args, Debug)]
@@ -187,7 +186,7 @@ fn local_run(size_bytes: u64, json: bool) -> Result<(String, u64, f64), String> 
     })
 }
 
-fn harness(args: &BenchArgs) -> Result<ExitCode, String> {
+fn harness(args: &BenchArgs) -> Result<u8, String> {
     let url = args.url.as_deref().map(validate_url).transpose()?;
     let mut argv = vec!["blaze".to_owned()];
     argv.extend(std::env::args().skip(1));
@@ -223,7 +222,7 @@ fn harness(args: &BenchArgs) -> Result<ExitCode, String> {
     }
     if artifact.interrupted {
         eprintln!("Interrupted; the artifact holds the samples recorded so far");
-        return Ok(ExitCode::from(130));
+        return Ok(130);
     }
     if bench_run::counts_failed(&artifact.totals) {
         eprintln!(
@@ -232,9 +231,9 @@ fn harness(args: &BenchArgs) -> Result<ExitCode, String> {
             artifact.totals.failed,
             artifact.totals.incomplete
         );
-        return Ok(ExitCode::from(1));
+        return Ok(1);
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
 fn read_artifact(path: &std::path::Path) -> Result<bench_artifact::Artifact, String> {
@@ -269,7 +268,7 @@ fn print_comparison(c: &Comparison) {
     }
 }
 
-fn compare(args: &CompareArgs) -> Result<ExitCode, String> {
+fn compare(args: &CompareArgs) -> Result<u8, String> {
     let a = read_artifact(&args.a)?;
     let b = read_artifact(&args.b)?;
     let comparison = bench_artifact::compare(&a, &b);
@@ -281,10 +280,10 @@ fn compare(args: &CompareArgs) -> Result<ExitCode, String> {
     } else {
         print_comparison(&comparison);
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
-pub fn run(args: BenchArgs) -> Result<ExitCode, String> {
+pub fn run(args: BenchArgs) -> Result<u8, String> {
     if let Some(BenchCommand::Compare(compare_args)) = &args.command {
         return compare(compare_args);
     }
@@ -334,7 +333,7 @@ pub fn run(args: BenchArgs) -> Result<ExitCode, String> {
             "{}",
             serde_json::to_string(&report).map_err(|e| e.to_string())?
         );
-        return Ok(ExitCode::SUCCESS);
+        return Ok(0);
     }
 
     println!("{}\n", style.bold("Benchmark complete"));
@@ -352,7 +351,7 @@ pub fn run(args: BenchArgs) -> Result<ExitCode, String> {
             ],
         )
     );
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
 #[cfg(test)]

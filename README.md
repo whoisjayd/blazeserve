@@ -117,6 +117,26 @@ Pass `--trust-proxy <ip-or-cidr>` (repeatable) so rate limits and logs see the r
 
 `--max-connections` (default 1024) bounds admitted connections. Beyond it a client receives `503` with `Retry-After: 1`, and the refusal is counted. A client that does not finish its request headers within `--header-timeout` (default 10 seconds) is dropped, and idle connections close after `--timeout`.
 
+## Use from Python and Rust
+
+`pip install blazeserve` installs the `blaze` command and a Python module from one abi3 wheel for Python 3.9 and newer.
+
+```python
+import urllib.request
+import blazeserve
+
+with blazeserve.Server("./site", port=0, auth="ada:secret") as server:
+    print(server.url)            # http://127.0.0.1:<port>/
+    ...                          # use any HTTP client against it
+
+print(blazeserve.sha256("big.iso"))
+blazeserve.main(["get", "http://host:8000/big.iso"])   # any CLI command, returns the exit status
+```
+
+`Server(path=None, host="127.0.0.1", port=0, *, listing, auth, cors, no_cache, max_upload_mb, rate_mbps, tls_cert, tls_key)` binds before the constructor returns. `close()` and leaving the `with` block stop it, and `serve_forever()` blocks until `KeyboardInterrupt`. Configuration errors raise `blazeserve.BlazeError`. The Python server binds loopback by default, unlike `blaze serve`. Resumable download and upload are available through `blazeserve.main` and print their progress like the command does.
+
+In Rust, `blazeserve::config::Config` and `blazeserve::server::start` start a server inside your own tokio runtime, and `blazeserve::cli::main_from` runs the command line from an argument list.
+
 ## Endpoints
 
 | Path | Methods | Notes |

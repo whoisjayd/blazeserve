@@ -1,7 +1,6 @@
 use super::ansi::{self, Style};
 use crate::usage::{self, Command, Decision, Features, Settings, StopStats};
 use clap::{Args, Subcommand};
-use std::process::ExitCode;
 use std::time::Duration;
 
 #[derive(Args, Debug)]
@@ -97,7 +96,7 @@ fn preview() -> Result<String, String> {
     ))
 }
 
-pub fn run(args: TelemetryArgs) -> Result<ExitCode, String> {
+pub fn run(args: TelemetryArgs) -> Result<u8, String> {
     match args.action {
         Action::Status => print!("{}", status()),
         Action::Enable => {
@@ -116,5 +115,5 @@ pub fn run(args: TelemetryArgs) -> Result<ExitCode, String> {
         }
         Action::Preview => print!("{}", preview()?),
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }

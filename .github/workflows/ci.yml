@@ -132,6 +132,8 @@ jobs:
           pipx run twine check dist/*
           python -m pip install --force-reinstall --no-index --find-links dist blazeserve
           blaze version
+          python -m pip install pytest
+          python -m pytest -q tests_py
 
   container:
     name: Container probes

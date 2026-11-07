@@ -6,7 +6,6 @@ use crate::config::{Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_SNDBUF_MB, Tr
 use crate::usage;
 use clap::Args;
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 #[derive(Args, Debug)]
 pub struct Common {
@@ -313,7 +312,7 @@ fn run_config(
     command: usage::Command,
     verbose: bool,
     open: bool,
-) -> Result<ExitCode, String> {
+) -> Result<u8, String> {
     let json_logs = cfg.log_json;
     let text = banner(&cfg, verbose);
     let url = format!(
@@ -350,15 +349,15 @@ fn run_config(
         );
     }
     eprintln!("{}", Style::stderr().dim("Stopped"));
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
-pub fn serve(args: ServeArgs) -> Result<ExitCode, String> {
+pub fn serve(args: ServeArgs) -> Result<u8, String> {
     let cfg = serve_config(&args)?;
     run_config(cfg, usage::Command::Serve, args.verbose, args.open_browser)
 }
 
-pub fn send(args: SendArgs) -> Result<ExitCode, String> {
+pub fn send(args: SendArgs) -> Result<u8, String> {
     let cfg = send_config(&args)?;
     run_config(cfg, usage::Command::Send, false, false)
 }

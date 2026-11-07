@@ -105,14 +105,14 @@ struct CompletionsArgs {
     shell: Shell,
 }
 
-fn completions(args: CompletionsArgs) -> Result<ExitCode, String> {
+fn completions(args: CompletionsArgs) -> Result<u8, String> {
     clap_complete::generate(
         args.shell,
         &mut Cli::command(),
         "blaze",
         &mut std::io::stdout(),
     );
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
 #[derive(Args, Debug)]
@@ -122,7 +122,7 @@ struct VersionArgs {
     json: bool,
 }
 
-fn checksum(args: ChecksumArgs) -> Result<ExitCode, String> {
+fn checksum(args: ChecksumArgs) -> Result<u8, String> {
     let mut rows = Vec::with_capacity(args.files.len());
     for path in &args.files {
         let digest =
@@ -141,10 +141,10 @@ fn checksum(args: ChecksumArgs) -> Result<ExitCode, String> {
     for (digest, size, file) in rows {
         println!("{digest}  {size:>width$}  {file}");
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
-fn version(args: VersionArgs) -> Result<ExitCode, String> {
+fn version(args: VersionArgs) -> Result<u8, String> {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     if args.json {
         let data = serde_json::json!({
@@ -157,7 +157,7 @@ fn version(args: VersionArgs) -> Result<ExitCode, String> {
             "{}",
             serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?
         );
-        return Ok(ExitCode::SUCCESS);
+        return Ok(0);
     }
     let style = Style::stdout();
     println!(
@@ -174,10 +174,10 @@ fn version(args: VersionArgs) -> Result<ExitCode, String> {
             ]
         )
     );
-    Ok(ExitCode::SUCCESS)
+    Ok(0)
 }
 
-fn dispatch(command: Command) -> Result<ExitCode, String> {
+fn dispatch(command: Command) -> Result<u8, String> {
     match command {
         Command::Serve(a) => serve::serve(a),
         Command::Send(a) => serve::send(a),
@@ -195,12 +195,31 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
 /// Parse arguments, run the command, and map the outcome to an exit code:
 /// 0 success, 1 runtime failure, 2 usage error (reported by clap).
 pub fn main() -> ExitCode {
-    let cli = Cli::parse();
+    ExitCode::from(run(Cli::parse()))
+}
+
+/// Like [`main`] for an explicit argument list (embedders). Parse errors and help are
+/// printed and returned as a status instead of ending the process.
+pub fn main_from<I, T>(args: I) -> u8
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match Cli::try_parse_from(args) {
+        Ok(cli) => run(cli),
+        Err(e) => {
+            let _ = e.print();
+            u8::try_from(e.exit_code()).unwrap_or(2)
+        }
+    }
+}
+
+fn run(cli: Cli) -> u8 {
     match dispatch(cli.command) {
         Ok(code) => code,
         Err(message) => {
             eprintln!("{} {message}", Style::stderr().red("Error:"));
-            ExitCode::from(1)
+            1
         }
     }
 }
