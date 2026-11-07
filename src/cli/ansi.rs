@@ -23,6 +23,10 @@ impl Style {
         }
     }
 
+    pub fn enabled(self) -> bool {
+        self.color
+    }
+
     fn paint(self, paint: Paint, s: &str) -> String {
         if self.color {
             format!("{paint}{s}{paint:#}")
@@ -50,6 +54,16 @@ impl Style {
     pub fn yellow(self, s: &str) -> String {
         self.paint(AnsiColor::Yellow.on_default().bold(), s)
     }
+
+    /// Black on bright white, so it reads the same on light and dark themes.
+    pub fn on_white(self, s: &str) -> String {
+        self.paint(
+            Paint::new()
+                .fg_color(Some(AnsiColor::Black.into()))
+                .bg_color(Some(AnsiColor::BrightWhite.into())),
+            s,
+        )
+    }
 }
 
 pub fn rows(style: Style, rows: &[(&str, String)]) -> String {
@@ -74,6 +88,12 @@ pub fn status_line(style: Style, verb: &str, message: &str) -> String {
 
 pub fn announce(verb: &str, message: &str) {
     anstream::eprintln!("{}", status_line(Style::stderr(), verb, message));
+}
+
+#[cfg(test)]
+impl Style {
+    pub const PLAIN: Self = Self { color: false };
+    pub const COLOR: Self = Self { color: true };
 }
 
 #[cfg(test)]

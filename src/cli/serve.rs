@@ -273,11 +273,22 @@ const PATH_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b'{')
     .add(b'}');
 
-/// Terminals are usually dark, so the code is drawn inverted: the filled blocks are the light
-/// modules and the quiet zone, which is what a scanner needs to see around the code.
-fn qr_block(url: &str) -> Option<String> {
+/// With colour the code is black on white whatever the terminal theme, which every scanner
+/// reads. Without colour (piped, `NO_COLOR`) only glyphs are available, so the code is
+/// inverted for the usual dark terminal: the filled blocks are the light modules.
+fn qr_block(url: &str, style: Style) -> Option<String> {
     use qrcode::render::unicode::Dense1x2;
     let code = qrcode::QrCode::new(url.as_bytes()).ok()?;
+    if style.enabled() {
+        let plain = code.render::<Dense1x2>().build();
+        return Some(
+            plain
+                .lines()
+                .map(|l| style.on_white(l))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
     Some(
         code.render::<Dense1x2>()
             .dark_color(Dense1x2::Light)
@@ -328,7 +339,7 @@ fn banner(cfg: &Config, verbose: bool, qr: bool) -> String {
         rows.push(("Metrics", format!("{host}__metrics__")));
     }
     let qr_text = if qr {
-        qr_block(&share).map_or_else(String::new, |q| format!("\n{}\n", q.trim_end()))
+        qr_block(&share, style).map_or_else(String::new, |q| format!("\n{}\n", q.trim_end()))
     } else {
         String::new()
     };
@@ -450,7 +461,7 @@ mod tests {
 
     #[test]
     fn qr_block_is_a_rectangle_of_block_glyphs_with_a_quiet_zone() {
-        let qr = qr_block("http://localhost:8000/").unwrap();
+        let qr = qr_block("http://localhost:8000/", Style::PLAIN).unwrap();
         let lines: Vec<&str> = qr.lines().collect();
         let width = lines[0].chars().count();
         assert!(width >= 21 + 8);
@@ -468,6 +479,67 @@ mod tests {
         );
     }
 
+    fn decode(lines: &[String], dark: impl Fn(char, bool) -> bool) -> Vec<String> {
+        const SCALE: usize = 4;
+        let cols = lines[0].chars().count();
+        let (w, h) = (cols * SCALE, lines.len() * 2 * SCALE);
+        let mut px = vec![255u8; w * h];
+        for (row, line) in lines.iter().enumerate() {
+            for (col, ch) in line.chars().enumerate() {
+                for (half, top) in [(0, true), (1, false)] {
+                    if dark(ch, top) {
+                        for dy in 0..SCALE {
+                            for dx in 0..SCALE {
+                                px[((row * 2 + half) * SCALE + dy) * w + col * SCALE + dx] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut img = rqrr::PreparedImage::prepare_from_greyscale(w, h, |x, y| px[y * w + x]);
+        img.detect_grids()
+            .into_iter()
+            .filter_map(|g| g.decode().ok().map(|(_, text)| text))
+            .collect()
+    }
+
+    #[test]
+    fn coloured_qr_decodes_to_the_share_url_on_any_theme() {
+        let url = "http://192.168.1.20:8000/My%20File.tar.gz";
+        let qr = qr_block(url, Style::COLOR).unwrap();
+        let stripped: Vec<String> = qr
+            .lines()
+            .map(|l| {
+                l.replace("\x1b[30;107m", "")
+                    .replace("\x1b[0m", "")
+                    .replace("\x1b[m", "")
+            })
+            .collect();
+        assert!(qr.contains("\x1b["), "{qr:?}");
+        let decoded = decode(&stripped, |c, top| match c {
+            '█' => true,
+            '▀' => top,
+            '▄' => !top,
+            _ => false,
+        });
+        assert_eq!(decoded, [url]);
+    }
+
+    #[test]
+    fn plain_qr_is_inverted_and_decodes_when_the_terminal_is_dark() {
+        let url = "http://192.168.1.20:8000/";
+        let qr = qr_block(url, Style::PLAIN).unwrap();
+        let lines: Vec<String> = qr.lines().map(str::to_owned).collect();
+        let decoded = decode(&lines, |c, top| match c {
+            '█' => false,
+            '▀' => !top,
+            '▄' => top,
+            _ => true,
+        });
+        assert_eq!(decoded, [url]);
+    }
+
     #[test]
     fn share_url_keeps_dots_and_escapes_only_unsafe_characters() {
         let encode =
@@ -479,7 +551,7 @@ mod tests {
 
     #[test]
     fn qr_block_rejects_urls_beyond_capacity() {
-        assert!(qr_block(&format!("http://h/{}", "a".repeat(4000))).is_none());
+        assert!(qr_block(&format!("http://h/{}", "a".repeat(4000)), Style::PLAIN).is_none());
     }
 
     #[test]
@@ -490,7 +562,7 @@ mod tests {
         };
         let plain = banner(&cfg, false, false);
         let with_qr = banner(&cfg, false, true);
-        let qr = qr_block("http://localhost:8000/").unwrap();
+        let qr = qr_block("http://localhost:8000/", Style::PLAIN).unwrap();
         assert!(!plain.contains(qr.lines().nth(2).unwrap()));
         assert!(with_qr.contains(qr.lines().nth(2).unwrap()));
         assert!(with_qr.contains("http://localhost:8000/"));

@@ -65,6 +65,7 @@ tempfile = "3"
 proptest = "1"
 zip = { version = "9", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rqrr = "0.11"
 
 [profile.release]
 lto = "fat"
