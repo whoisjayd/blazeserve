@@ -42,7 +42,7 @@ CI also enforces 80 percent line coverage with `cargo llvm-cov` and runs `cargo 
 | `src/server.rs` | Sockets, TLS, connection limit, proxy identity, shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes |
 | `src/upload.rs`, `src/zip_stream.rs`, `src/security.rs` | Uploads, ZIP streaming, path containment |
-| `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/telemetry.rs`, `src/usage.rs`, `src/ui.rs` | Throttling, metrics, logs, OpenTelemetry, usage report, directory listing |
+| `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/telemetry/`, `src/usage.rs`, `src/ui.rs` | Throttling, metrics, logs, OpenTelemetry, usage report, directory listing |
 | `tests/` | Integration tests against a live server; unit tests sit beside the code |
 | `deploy/` | Container, Kubernetes, systemd, proxy and monitoring files, and the telemetry relay |
 

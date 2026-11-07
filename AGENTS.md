@@ -32,7 +32,7 @@ Handbook for contributors and coding agents working on BlazeServe, a Rust HTTP/1
 | `src/upload.rs`, `src/zip_stream.rs` | Uploads and streaming ZIPs |
 | `src/security.rs` | Canonical containment, race-resistant file creation, request IDs |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/ui.rs` | Throttling, counters, logs, directory listing |
-| `src/telemetry.rs`, `src/usage.rs` | OpenTelemetry export, anonymous usage report |
+| `src/telemetry/`, `src/usage.rs` | OpenTelemetry export, anonymous usage report |
 | `tests/` | Live-server integration tests; unit tests sit in `#[cfg(test)]` modules |
 | `.github/workflows/` | `ci.yml` and `release.yml`, the authoritative gates |
 | `Dockerfile`, `docker-compose.yml` | `scratch` image running as uid and gid 10001 |
