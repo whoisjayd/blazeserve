@@ -9,7 +9,7 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::{self, ServerConfig};
 
-pub(super) fn load_tls(tls: &TlsConfig) -> Result<TlsAcceptor, BoxError> {
+pub(super) fn load_tls(tls: &TlsConfig, http2: bool) -> Result<TlsAcceptor, BoxError> {
     let open = |what: &str, path: &std::path::Path| {
         File::open(path)
             .map(BufReader::new)
@@ -43,6 +43,10 @@ pub(super) fn load_tls(tls: &TlsConfig) -> Result<TlsAcceptor, BoxError> {
                 tls.key.display()
             ))
         })?;
-    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    cfg.alpn_protocols = if http2 {
+        vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+    } else {
+        vec![b"http/1.1".to_vec()]
+    };
     Ok(TlsAcceptor::from(Arc::new(cfg)))
 }

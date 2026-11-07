@@ -4,6 +4,7 @@ mod accept;
 mod bind;
 mod connection;
 mod idle;
+mod prefixed;
 mod proxy;
 mod tls;
 
@@ -74,7 +75,11 @@ pub async fn start(config: Config) -> Result<ServerHandle, BoxError> {
 pub async fn start_with(config: Config, telemetry: Telemetry) -> Result<ServerHandle, BoxError> {
     config.validate()?;
     // Load TLS before binding so a bad pair never leaves a listener behind.
-    let acceptor = config.tls.as_ref().map(tls::load_tls).transpose()?;
+    let acceptor = config
+        .tls
+        .as_ref()
+        .map(|t| tls::load_tls(t, config.http2))
+        .transpose()?;
     let addr = bind::resolve_bind_addr(&config.host, config.port).await?;
     let listener = bind::bind_listener(addr, &config)
         .map_err(|e| BoxError::from(format!("cannot bind {addr}: {e}")))?;

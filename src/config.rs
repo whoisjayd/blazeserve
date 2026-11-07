@@ -144,6 +144,8 @@ pub struct Config {
     pub log_json: bool,
     pub verbose: bool,
     pub max_connections: usize,
+    /// Serve HTTP/2 (ALPN `h2` over TLS, prior-knowledge h2c over plaintext) next to HTTP/1.1.
+    pub http2: bool,
     /// Trusted reverse proxies. Empty (default) means forwarding headers are ignored.
     pub trusted_proxies: Vec<TrustedProxy>,
     pub max_proxy_hops: usize,
@@ -177,6 +179,7 @@ impl Default for Config {
             log_json: false,
             verbose: false,
             max_connections: 1024,
+            http2: true,
             trusted_proxies: Vec::new(),
             max_proxy_hops: 8,
             otlp_endpoint: None,

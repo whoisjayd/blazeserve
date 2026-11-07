@@ -59,7 +59,7 @@ config, security, limiter, metrics, logging, ui, range, cache, usage -> leaves
 
 HTTP and transfers:
 
-- HTTP/1.1 with an accurate `Content-Length` on persistent responses. `HEAD` returns the GET status and representation headers without a body, including operational routes.
+- HTTP/1.1 and HTTP/2 with an accurate `Content-Length` on persistent responses. `HEAD` returns the GET status and representation headers without a body, including operational routes.
 - Keep `/__health__`, `/__live__`, `/__ready__`, `/__version__`, `/__metrics__`, `/metrics`, `/__stats__`, `/__perf__`, `/__speed__` and `/__zip__`. Writes exist only below `/__upload__/`.
 - `If-None-Match` uses weak comparison and is evaluated before `If-Modified-Since`. A match returns `304` with the validators and cache policy.
 - One range returns `206` with the right `Content-Range`. Several ranges return `multipart/byteranges` with an exact length. A valid but unsatisfiable range returns `416` with `Content-Range: bytes */<size>`. Malformed range syntax is ignored.

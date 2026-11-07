@@ -4,8 +4,8 @@ use super::bind::tune_stream;
 use super::connection::{ConnCtx, serve_connection};
 use super::stopped;
 use crate::AppState;
-use hyper::server::conn::http1;
-use hyper_util::rt::TokioTimer;
+use hyper::server::conn::{http1, http2};
+use hyper_util::rt::{TokioExecutor, TokioTimer};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +17,7 @@ use tokio_rustls::TlsAcceptor;
 
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 const REJECT_SLOTS: usize = 256;
+const MAX_H2_STREAMS: u32 = 64;
 const REJECT_IO_BUDGET: Duration = Duration::from_millis(250);
 const SERVICE_UNAVAILABLE: &[u8] =
     b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
@@ -37,6 +38,7 @@ pub(super) async fn accept_loop(
         .pipeline_flush(true)
         .max_buf_size(64 * 1024)
         .max_headers(64);
+    let h2 = state.config.http2.then(h2_builder);
     let mut conns: JoinSet<()> = JoinSet::new();
 
     loop {
@@ -75,7 +77,8 @@ pub(super) async fn accept_loop(
         let ctx = ConnCtx {
             state: state.clone(),
             tls: tls.clone(),
-            builder: builder.clone(),
+            h1: builder.clone(),
+            h2: h2.clone(),
             stop: stop.clone(),
             peer,
         };
@@ -96,6 +99,23 @@ pub(super) async fn accept_loop(
         conns.abort_all();
         while conns.join_next().await.is_some() {}
     }
+}
+
+/// Limits that bound per-connection memory and work. No keep-alive pings are sent because
+/// pings would count as progress and defeat the idle timeout.
+fn h2_builder() -> http2::Builder<TokioExecutor> {
+    let mut b = http2::Builder::new(TokioExecutor::new());
+    b.timer(TokioTimer::new())
+        .max_concurrent_streams(MAX_H2_STREAMS)
+        // Rapid-reset (CVE-2023-44487): cap streams reset before accept and error resets we send.
+        .max_pending_accept_reset_streams(32)
+        .max_local_error_reset_streams(64)
+        .initial_stream_window_size(1024 * 1024)
+        .initial_connection_window_size(4 * 1024 * 1024)
+        .max_frame_size(64 * 1024)
+        .max_send_buf_size(256 * 1024)
+        .max_header_list_size(64 * 1024);
+    b
 }
 
 /// Best-effort 503. Draining briefly before close avoids a reset discarding the response.
