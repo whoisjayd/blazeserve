@@ -122,11 +122,11 @@ pub(super) fn run(args: &BenchArgs) -> Result<u8, String> {
 
     if !args.json {
         if let Some(origin) = &remote {
-            println!("Benchmarking  {origin}");
+            anstream::println!("Benchmarking  {origin}");
         }
-        println!("Download size  {} MB\n", args.size_mb);
+        anstream::println!("Download size  {} MB\n", args.size_mb);
         if args.size_mb > 500 {
-            eprintln!(
+            anstream::eprintln!(
                 "{} Large benchmark size ({} MB) may impact server performance",
                 Style::stderr().yellow("Warning:"),
                 args.size_mb
@@ -151,15 +151,15 @@ pub(super) fn run(args: &BenchArgs) -> Result<u8, String> {
             elapsed_seconds: elapsed,
             throughput_mib_per_second: mib_per_second,
         };
-        println!(
+        anstream::println!(
             "{}",
             serde_json::to_string(&report).map_err(|e| e.to_string())?
         );
         return Ok(0);
     }
 
-    println!("{}\n", style.bold("Benchmark complete"));
-    print!(
+    anstream::println!("{}\n", style.bold("Benchmark complete"));
+    anstream::print!(
         "{}",
         ansi::rows(
             style,

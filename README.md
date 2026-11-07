@@ -256,7 +256,7 @@ Everything is in [deploy/README.md](deploy/README.md). The image has no shell an
 | `blaze completions SHELL` | Print a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 | `blaze version` | Version and platform; `--json` |
 
-`blaze help [COMMAND]` and `blaze COMMAND --help` show options with examples.
+`blaze help [COMMAND]` and `blaze COMMAND --help` show options with examples. The global `--color auto|always|never` flag overrides detection; `NO_COLOR` and `CLICOLOR_FORCE` are honoured. Progress and status lines go to stderr and appear only on a terminal, so piped output stays clean.
 
 Exit codes are 0 for success, 1 for a runtime failure and 2 for a usage error.
 

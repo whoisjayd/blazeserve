@@ -27,26 +27,26 @@ pub(super) fn run(args: &BenchArgs) -> Result<u8, String> {
             .map_err(|e| format!("could not write {}: {e}", path.display()))?;
     }
     if args.json {
-        println!("{text}");
+        anstream::println!("{text}");
     } else {
         let style = Style::stdout();
-        println!("{}\n", style.bold("Benchmark complete"));
+        anstream::println!("{}\n", style.bold("Benchmark complete"));
         for w in &artifact.workloads {
-            println!("{}", summary_line(w));
+            anstream::println!("{}", summary_line(w));
         }
         if let Some(path) = &args.output {
-            println!("\nArtifact  {}", path.display());
+            anstream::println!("\nArtifact  {}", path.display());
         }
     }
     if let Some(error) = &artifact.error {
         return Err(error.clone());
     }
     if artifact.interrupted {
-        eprintln!("Interrupted; the artifact holds the samples recorded so far");
+        anstream::eprintln!("Interrupted; the artifact holds the samples recorded so far");
         return Ok(130);
     }
     if counts_failed(&artifact.totals) {
-        eprintln!(
+        anstream::eprintln!(
             "{} {} failed and {} incomplete samples were recorded and not counted as throughput",
             Style::stderr().yellow("Warning:"),
             artifact.totals.failed,

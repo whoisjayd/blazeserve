@@ -176,7 +176,7 @@ pub fn run(args: DoctorArgs) -> Result<u8, String> {
             success,
             checks: &checks,
         };
-        println!(
+        anstream::println!(
             "{}",
             serde_json::to_string(&report).map_err(|e| e.to_string())?
         );
@@ -204,7 +204,7 @@ fn print_table(checks: &[Check]) {
         "fail" => style.red("fail"),
         other => style.yellow(other),
     };
-    println!("{}\n", style.bold("BlazeServe diagnostics"));
+    anstream::println!("{}\n", style.bold("BlazeServe diagnostics"));
     for c in checks {
         let name = label(c.id);
         let word = status(c.outcome);
@@ -213,7 +213,7 @@ fn print_table(checks: &[Check]) {
         } else {
             c.outcome.chars().count()
         };
-        println!(
+        anstream::println!(
             "  {name:<14}{word}{}  {}",
             " ".repeat(13usize.saturating_sub(visible)),
             c.details

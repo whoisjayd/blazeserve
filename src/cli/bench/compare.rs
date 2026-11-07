@@ -72,12 +72,16 @@ fn print_comparison(c: &Comparison) {
     let signed = |v: Option<f64>, suffix: &str| {
         v.map_or_else(|| "n/a".to_owned(), |v| format!("{v:+.2}{suffix}"))
     };
-    println!(
+    anstream::println!(
         "{:<8} {:>12} {:>12} {:>12} {:>9}",
-        "Workload", "A median", "B median", "Delta", "Change"
+        "Workload",
+        "A median",
+        "B median",
+        "Delta",
+        "Change"
     );
     for r in &c.rows {
-        println!(
+        anstream::println!(
             "{:<8} {:>12} {:>12} {:>12} {:>9}",
             r.workload,
             num(r.a_median),
@@ -86,9 +90,9 @@ fn print_comparison(c: &Comparison) {
             signed(r.percent, "%")
         );
     }
-    println!("\nMedians in MiB/s. No threshold or significance test is applied.");
+    anstream::println!("\nMedians in MiB/s. No threshold or significance test is applied.");
     for note in &c.notes {
-        println!("Note: {note}");
+        anstream::println!("Note: {note}");
     }
 }
 
@@ -97,7 +101,7 @@ pub(super) fn run(args: &CompareArgs) -> Result<u8, String> {
     let b = read_artifact(&args.b)?;
     let comparison = compare(&a, &b);
     if args.json {
-        println!(
+        anstream::println!(
             "{}",
             serde_json::to_string_pretty(&comparison).map_err(|e| e.to_string())?
         );

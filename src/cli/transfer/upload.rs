@@ -5,7 +5,7 @@ use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, transient_error,
     transient_status,
 };
-use crate::cli::ansi::Style;
+use crate::cli::ansi::{Style, announce};
 use crate::cli::util::{Progress, backoff, existing_file, human_size};
 use base64::Engine as _;
 use clap::Args;
@@ -223,7 +223,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         match up.send(offset, &buf[..want])? {
             Sent::Done => {
                 progress.finish(total);
-                println!(
+                anstream::println!(
                     "{} {} ({})",
                     Style::stdout().green("Uploaded"),
                     args.file.display(),
@@ -244,10 +244,13 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
                         args.retries
                     ));
                 }
-                eprintln!(
-                    "Retrying in {}s (attempt {fails} of {}): {msg}",
-                    backoff(fails).as_secs().max(1),
-                    args.retries
+                announce(
+                    "Retrying",
+                    &format!(
+                        "in {}s (attempt {fails} of {}): {msg}",
+                        backoff(fails).as_secs().max(1),
+                        args.retries
+                    ),
                 );
                 std::thread::sleep(backoff(fails));
                 need_sync = resync;

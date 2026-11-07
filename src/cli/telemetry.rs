@@ -98,22 +98,22 @@ fn preview() -> Result<String, String> {
 
 pub fn run(args: TelemetryArgs) -> Result<u8, String> {
     match args.action {
-        Action::Status => print!("{}", status()),
+        Action::Status => anstream::print!("{}", status()),
         Action::Enable => {
             save(true)?;
-            print!("{}", status());
+            anstream::print!("{}", status());
         }
         Action::Disable => {
             save(false)?;
-            print!("{}", status());
+            anstream::print!("{}", status());
         }
         Action::Reset => {
             let path = settings_path()?;
             usage::reset_settings(&path)
                 .map_err(|e| format!("cannot remove {}: {e}", path.display()))?;
-            println!("Saved choice removed. The notice will show again on the next run.");
+            anstream::println!("Saved choice removed. The notice will show again on the next run.");
         }
-        Action::Preview => print!("{}", preview()?),
+        Action::Preview => anstream::print!("{}", preview()?),
     }
     Ok(0)
 }

@@ -298,9 +298,9 @@ fn banner(cfg: &Config, verbose: bool) -> String {
 
 fn print_status(text: &str, json_logs: bool) {
     if json_logs {
-        eprint!("{text}");
+        anstream::eprint!("{text}");
     } else {
-        print!("{text}");
+        anstream::print!("{text}");
     }
 }
 
@@ -348,7 +348,7 @@ fn run_config(
             },
         );
     }
-    eprintln!("{}", Style::stderr().dim("Stopped"));
+    anstream::eprintln!("{}", Style::stderr().dim("Stopped"));
     Ok(0)
 }
 

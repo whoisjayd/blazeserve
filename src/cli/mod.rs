@@ -11,7 +11,7 @@ mod util;
 
 use ansi::Style;
 use clap::builder::styling::{AnsiColor, Styles};
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -47,8 +47,31 @@ Run 'blaze help <command>' for the options of one command.";
     arg_required_else_help = true
 )]
 pub struct Cli {
+    /// When to use colour in output
+    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorWhen::Auto)]
+    color: ColorWhen,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ColorWhen {
+    /// Colour only on a terminal that supports it
+    Auto,
+    /// Always colour, even when piped
+    Always,
+    /// Never colour
+    Never,
+}
+
+impl ColorWhen {
+    fn apply(self) {
+        anstream::ColorChoice::write_global(match self {
+            Self::Auto => anstream::ColorChoice::Auto,
+            Self::Always => anstream::ColorChoice::Always,
+            Self::Never => anstream::ColorChoice::Never,
+        });
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -131,13 +154,13 @@ fn checksum(args: ChecksumArgs) -> Result<u8, String> {
     let style = Style::stdout();
     let width = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(4);
     if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        println!(
+        anstream::println!(
             "{}",
             style.dim(&format!("{:<64}  {:>width$}  File", "Digest", "Size"))
         );
     }
     for (digest, size, file) in rows {
-        println!("{digest}  {size:>width$}  {file}");
+        anstream::println!("{digest}  {size:>width$}  {file}");
     }
     Ok(0)
 }
@@ -151,18 +174,18 @@ fn version(args: VersionArgs) -> Result<u8, String> {
             "platform": os,
             "architecture": arch,
         });
-        println!(
+        anstream::println!(
             "{}",
             serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?
         );
         return Ok(0);
     }
     let style = Style::stdout();
-    println!(
+    anstream::println!(
         "{}\n",
         style.bold(&format!("BlazeServe {}", crate::VERSION))
     );
-    print!(
+    anstream::print!(
         "{}",
         ansi::rows(
             style,
@@ -213,10 +236,11 @@ where
 }
 
 fn run(cli: Cli) -> u8 {
+    cli.color.apply();
     match dispatch(cli.command) {
         Ok(code) => code,
         Err(message) => {
-            eprintln!("{} {message}", Style::stderr().red("Error:"));
+            anstream::eprintln!("{} {message}", Style::stderr().red("error:"));
             1
         }
     }

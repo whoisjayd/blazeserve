@@ -5,7 +5,7 @@ use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, transient_error,
     transient_status,
 };
-use crate::cli::ansi::Style;
+use crate::cli::ansi::{Style, announce};
 use crate::cli::util::{Progress, backoff, human_size, sha256_file};
 use clap::Args;
 use percent_encoding::percent_decode_str;
@@ -243,6 +243,9 @@ impl Download<'_> {
         }
         .map_err(|e| format!("cannot write {}: {e}", self.part.display()))?;
 
+        if resume_from > 0 {
+            announce("Resuming", &format!("at {}", human_size(resume_from)));
+        }
         let mut progress = Progress::new(total, resume_from);
         let mut reader = resp.into_body().into_reader();
         let mut buf = vec![0u8; READ_BUF];
@@ -302,7 +305,7 @@ fn finish_download(d: &Download<'_>, dest: &Path, sha256: Option<&str>) -> Resul
     rename_with_retry(&d.part, dest)
         .map_err(|e| format!("cannot move download to {}: {e}", dest.display()))?;
     let _ = std::fs::remove_file(&d.meta_path);
-    println!(
+    anstream::println!(
         "{} {} ({})",
         Style::stdout().green("Saved"),
         dest.display(),
@@ -362,10 +365,13 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
                     ));
                 }
                 let wait = backoff(fails);
-                eprintln!(
-                    "Retrying in {}s (attempt {fails} of {}): {msg}",
-                    wait.as_secs().max(1),
-                    args.retries
+                announce(
+                    "Retrying",
+                    &format!(
+                        "in {}s (attempt {fails} of {}): {msg}",
+                        wait.as_secs().max(1),
+                        args.retries
+                    ),
                 );
                 std::thread::sleep(wait);
             }
