@@ -9,7 +9,7 @@ What it does and does not do:
 
 - Accepts `POST /v1/event` only, with a body of at most 2 KB.
 - Rejects any field outside the allowlist, any value outside the enumerated sets, and any
-  extra or missing key. The allowlist lives in `worker.js` and mirrors `src/usage.rs`.
+  extra or missing key. The allowlist lives in `worker.js` and mirrors `src/usage/payload.rs`.
 - Never stores the client address or user agent. The address is used for a moment as the
   rate-limit key and then dropped. Only the attributes below are forwarded.
 - Does not use or forward an install identifier. The client does not send one.
@@ -101,4 +101,4 @@ No dependencies are needed beyond Node.js 20 or newer:
 node --test deploy/telemetry-relay/worker.test.mjs
 ```
 
-The Rust test suite also fails if the allowed values in `worker.js` drift from `src/usage.rs`.
+The Rust test suite also fails if the allowed values in `worker.js` drift from `src/usage/payload.rs`.

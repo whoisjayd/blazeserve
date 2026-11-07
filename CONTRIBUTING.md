@@ -31,7 +31,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
 ```
 
-CI also enforces 80 percent line coverage with `cargo llvm-cov` and runs `cargo deny check`. To build a wheel locally, run `uvx maturin build --release --out dist`.
+CI also enforces 80 percent line coverage with `cargo llvm-cov` and runs `cargo deny check`. To build a wheel locally, run `uvx maturin build --release --out dist`. To test the Python bindings, install that wheel into a clean virtual environment together with `pytest` and run `python -m pytest tests_py`. The `python` Cargo feature is only for wheel builds; ordinary `cargo` commands do not need it.
 
 ## Project layout
 
@@ -39,10 +39,11 @@ CI also enforces 80 percent line coverage with `cargo llvm-cov` and runs `cargo 
 | :--- | :--- |
 | `src/config.rs` | Typed configuration and validation shared by every entry point |
 | `src/cli/` | The `blaze` commands |
-| `src/server.rs` | Sockets, TLS, connection limit, proxy identity, shutdown |
+| `src/server/` | Sockets, TLS, connection limit, proxy identity, shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes |
-| `src/upload.rs`, `src/zip_stream.rs`, `src/security.rs` | Uploads, ZIP streaming, path containment |
-| `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/telemetry/`, `src/usage.rs`, `src/ui.rs` | Throttling, metrics, logs, OpenTelemetry, usage report, directory listing |
+| `src/upload/`, `src/zip_stream/`, `src/security.rs` | Uploads, ZIP streaming, path containment |
+| `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/telemetry/`, `src/usage/`, `src/ui.rs` | Throttling, metrics, logs, OpenTelemetry, usage report, directory listing |
+| `src/python.rs`, `python/`, `tests_py/` | Python bindings, the Python package and its pytest suite |
 | `tests/` | Integration tests against a live server; unit tests sit beside the code |
 | `deploy/` | Container, Kubernetes, systemd, proxy and monitoring files, and the telemetry relay |
 

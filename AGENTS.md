@@ -26,13 +26,13 @@ Handbook for contributors and coding agents working on BlazeServe, a Rust HTTP/1
 | :--- | :--- |
 | `src/lib.rs` | Module list, `VERSION`, `AppState`, `PeerInfo`, `Body` |
 | `src/config.rs` | Typed configuration and validation, the single source of truth for every entry point |
-| `src/cli/`, `src/main.rs` | Commands, help, progress output and input validation; `cli::main_from` runs the CLI for embedders |
-| `src/server.rs` | Bind, socket options, TLS, admission control, proxy identity, shutdown |
+| `src/cli/`, `src/main.rs` | Commands, help, progress output and input validation; `cli::main_from` runs the CLI for embedders. `cli/transfer/` holds resumable `get` and `put`, `cli/bench/` the benchmark harness |
+| `src/server/` | `bind` and `tls` set up the listener, `accept` applies admission control, `connection` and `idle` serve one connection, `proxy` resolves trusted client identity, `mod.rs` owns start and shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP semantics, ranges, validators, operational routes, CORS, auth, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
-| `src/upload.rs`, `src/zip_stream.rs` | Uploads and streaming ZIPs |
+| `src/upload/`, `src/zip_stream/` | Uploads (`request`, `target`, `stream`, `publish`, `plain`, `resumable`) and streaming ZIPs (`writer`, `crc32`, `archive`) |
 | `src/security.rs` | Canonical containment, race-resistant file creation, request IDs |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/ui.rs` | Throttling, counters, logs, directory listing |
-| `src/telemetry/`, `src/usage.rs` | OpenTelemetry export, anonymous usage report |
+| `src/telemetry/`, `src/usage/` | OpenTelemetry export (`settings`, `transport`, `exporter`) and the anonymous usage report (`payload`, `gate`, `settings`, `session`) |
 | `tests/` | Live-server integration tests; unit tests sit in `#[cfg(test)]` modules |
 | `.github/workflows/` | `ci.yml` and `release.yml`, the authoritative gates |
 | `Dockerfile`, `docker-compose.yml` | `scratch` image running as uid and gid 10001 |
@@ -138,7 +138,7 @@ CI also enforces 80 percent line coverage with `cargo llvm-cov`, runs `cargo den
 | Container identity, port, path or writable state | `Dockerfile`, Compose, `deploy/README.md`, `deploy/k8s/` |
 | Proxy transport or identity | Every affected file in `deploy/reverse-proxy/` and `deploy/README.md` |
 | Metric name, type or meaning | README metric table, `deploy/monitoring/` config, alerts and dashboard |
-| Usage telemetry field | README telemetry table, `src/usage.rs`, `tests/usage_payload.rs`, `deploy/telemetry-relay/` |
+| Usage telemetry field | README telemetry table, `src/usage/payload.rs`, `tests/usage_payload.rs`, `deploy/telemetry-relay/` |
 | Gate commands | `Makefile`, pre-commit, `CONTRIBUTING.md`, this file, the workflows |
 
 ## Commits
