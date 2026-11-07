@@ -1,315 +1,300 @@
 <div align="center">
 
-# ⚡ BlazeServe
+# BlazeServe
 
-**High-Performance HTTP Edge Service & File Platform**
+**A fast, safe HTTP file server for large files. One static binary, the same on Linux, Windows and macOS.**
 
-_Engineered with Zero-Copy Kernel I/O, Prometheus Telemetry, RFC 7232 Caching, and Enterprise Cloud Workflows_
+<br />
 
-[![PyPI Version](https://img.shields.io/pypi/v/blazeserve.svg?color=blue&style=flat-square)](https://pypi.org/project/blazeserve/)
-[![Python Versions](https://img.shields.io/pypi/pyversions/blazeserve.svg?style=flat-square)](https://pypi.org/project/blazeserve/)
-[![CI Build](https://img.shields.io/github/actions/workflow/status/whoisjayd/blazeserve/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/whoisjayd/blazeserve/actions)
-[![License](https://img.shields.io/github/license/whoisjayd/blazeserve.svg?style=flat-square)](./LICENSE)
-[![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg?style=flat-square)](https://github.com/astral-sh/ruff)
-[![Type Checked: Mypy](https://img.shields.io/badge/type_checked-mypy-blue.svg?style=flat-square)](https://mypy-lang.org/)
-[![Docker Pulls](https://img.shields.io/badge/docker-ready-2496ed.svg?logo=docker&logoColor=white&style=flat-square)](https://ghcr.io/whoisjayd/blazeserve)
+[![CI](https://img.shields.io/github/actions/workflow/status/whoisjayd/blazeserve/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/whoisjayd/blazeserve/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/whoisjayd/blazeserve?style=flat-square)](https://github.com/whoisjayd/blazeserve/releases)
+[![PyPI](https://img.shields.io/pypi/v/blazeserve?style=flat-square&label=pip)](https://pypi.org/project/blazeserve/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20windows%20%7C%20macos-informational?style=flat-square)
 
-<p align="center">
-  <a href="#-why-blazeserve">Why BlazeServe</a> •
-  <a href="#-architecture">Architecture</a> •
-  <a href="#-engineering-disciplines">Role Highlights</a> •
-  <a href="#-benchmarks">Benchmarks</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-operational-endpoints">Endpoints</a> •
-  <a href="#-deployment-workflows">Deployment</a> •
-  <a href="#-cli-reference">CLI Reference</a> •
-  <a href="#-license--contributing">Contributing</a>
-</p>
+<br />
+
+[Quick start](#quick-start) · [Features](#features) · [Command reference](#command-reference) · [Deploy](#deploy) · [Security](#security-model) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
+## Why BlazeServe
 
-## ⚡ Why BlazeServe?
+Sharing a large file or serving a static folder should not need a runtime, a config file, or a prayer that a dropped connection will not restart a 20 GB transfer. BlazeServe is one binary with no system libraries. It streams with bounded memory, resumes interrupted downloads and uploads, and fails closed on anything that touches the filesystem or credentials.
 
-Standard HTTP file servers (like `python -m http.server`) suffer from high CPU utilization, memory bloat on large transfers, missing conditional cache headers, and a complete absence of production observability.
+It is built for:
 
-**BlazeServe** re-engineers Python's HTTP transport into a production-grade edge service:
+- **Sharing a file** with a colleague over a LAN or a tunnel, in one command
+- **Serving build artifacts, datasets and release mirrors** behind a reverse proxy
+- **Receiving uploads** with length and digest verification and atomic publication
+- **Operating it properly**, with health endpoints, Prometheus metrics, OpenTelemetry and JSON logs
 
-- **Zero-Copy Kernel I/O**: Direct kernel-to-socket transfers using `sendfile(2)` bypasses user-space buffers for multi-gigabyte files.
-- **Deterministic Memory-Mapped Streaming**: High-throughput windowed `mmap` with strict `memoryview` pointer lifecycle management guarantees memory safety and eliminates Windows file-locking bugs.
-- **SRE-Native Observability**: Native Prometheus OpenMetrics exposition (`/__metrics__`, `/metrics`) exposing Golden Signals (throughput, latency, active connections, error counters) alongside Kubernetes liveness (`/__live__`) and readiness (`/__ready__`) health probes.
-- **RFC 7232 / 9110 HTTP Caching**: Full conditional validation (`ETag`, `Last-Modified`, `If-None-Match`, `If-Modified-Since`) returning `304 Not Modified` with zero network overhead.
-- **Traffic Shaping & Rate Limiting**: Thread-safe per-client-IP token bucket rate limiting with RFC 6585 standard headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`) and HTTP `429 Too Many Requests` backoff.
-- **Defense-in-Depth Security**: Automatic injection of `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security`, `Permissions-Policy`, and path traversal verification.
-- **Modern Responsive Web UI**: Glassmorphic HTML5 directory explorer with dark/light themes, instant client-side file filtering, SVG file type icons, and drag-and-drop uploads.
-
-## 🏛️ Architecture
-
-BlazeServe decouples socket orchestration, connection lifecycle, traffic limiting, and observability into modular, focused subsystems:
-
-```mermaid
-flowchart TD
-    Client([Client / Browser / Ingress]) -->|HTTP/1.1 TCP| RevProxy[Reverse Proxy / Ingress\nNginx • Caddy • Traefik]
-    RevProxy -->|Proxy Pass Unbuffered| BlazeSocket[BlazeServer Socket Layer\nSO_REUSEADDR • SO_REUSEPORT • TCP_NODELAY • TCP_QUICKACK]
-
-    subgraph BlazeServe Core Engine
-        BlazeSocket --> Handler[BlazeHandler Dispatcher]
-
-        Handler -->|Security & Correlation| SecEngine[Security Engine\nHeaders • CORS • X-Request-ID]
-        Handler -->|IP Token Bucket| Limiter[IPRateLimiterPool\nRFC 6585 • HTTP 429]
-
-        Handler -->|GET /__metrics__| PromMetrics[ServerMetrics Collector\nPrometheus OpenMetrics Exposition]
-        Handler -->|GET /__live__ /__ready__| K8sProbes[K8s Health Probes\nAlive Status • Directory Validation]
-
-        Handler -->|RFC 7232 Validation| Caching[Conditional Engine\nETag • If-None-Match • 304 Not Modified]
-
-        Caching -->|Full Transfer| Sendfile[Zero-Copy sendfile Fast Path]
-        Caching -->|Range / Windowed| SafeMmap[Safe Windowed mmap Fast Path]
-        Caching -->|Small Chunks / Streams| Buffered[Buffered I/O Fallback]
-
-        Handler -->|GET /| WebUI[Modern HTML5 Directory UI\nDark/Light • Live Search • Uploads]
-        Handler -->|PUT /__upload__| UploadEngine[Upload Engine\nPath Sandbox • Length Gated]
-        Handler -->|GET /__zip__| ZipEngine[Dynamic Streaming ZIP\nStore / Deflate]
-    end
-
-    Sendfile --> Storage[(Storage / Block Volume)]
-    SafeMmap --> Storage
-    Buffered --> Storage
-    UploadEngine --> Storage
-```
-
-
-## 🎯 Engineering Disciplines Demonstrated
-
-### 1. Backend Engineering
-
-- **Zero-Copy & Memory Safety**: Dual-path file transmission leveraging kernel `sendfile` and memoryview-managed `mmap` with strict pointer cleanup (`view.release()`) preventing file descriptor leaks across Windows and Linux.
-- **HTTP Specification Compliance**: Strict compliance with RFC 7232 (Conditional Requests), RFC 7233 (Range Requests & Multipart Byte-Ranges), and RFC 6585 (Rate Limiting).
-- **Prompt Lifecycle Management**: Press `Ctrl+C` in the foreground server terminal to stop BlazeServe. Shutdown closes the listener promptly, and request threads do not keep the process alive.
-- **TLS by Explicit Restart**: TLS requires a certificate/key pair and uses TLS 1.2 or newer. Certificate rotation is performed by a controlled service restart.
-
-### 2. Site Reliability Engineering (SRE)
-
-- **Golden Signals Monitoring**: Native metrics covering Latency, Traffic (`requests_total`, RPS), Errors (`errors_total`), and Saturation (`requests_active`, buffer usage).
-- **Prometheus Telemetry**: Zero-dependency OpenMetrics text format generator for Prometheus scraping (`deploy/monitoring/prometheus.yml`).
-- **Production Grafana Dashboard**: Ready-to-import dashboard (`deploy/monitoring/grafana-dashboard.json`) visualizing real-time bandwidth egress, active connections, and error ratios.
-- **Automated Alerts**: Prometheus alert rules (`deploy/monitoring/alerts.yml`) for instance downtime and error rate spikes.
-- **System Health Diagnostics**: Built-in `blaze doctor` verifying file readability, socket bindability, zero-copy support, and kernel optimization flags.
-
-### 3. Cloud & DevOps Engineering
-
-- **Multi-Stage Containerization**: Hardened `Dockerfile` built on `python:3.13-slim` using a dedicated unprivileged user (`blazeserve:10001`), read-only root filesystem, dropped capabilities, and native container `HEALTHCHECK`.
-- **Cloud Orchestration**: Hardened `docker-compose.yml` with CPU/memory resource quotas and security constraints.
-- **Kubernetes Manifests**: Hardened `Deployment` and `Service` defaults. Optional Ingress and ServiceMonitor manifests are available for deployments that provide their required controllers.
-- **Systemd Architecture**: Sandboxed systemd service (`ProtectSystem=strict`, `ProtectHome=true`, `PrivateTmp=true`, `LimitNOFILE=1048576`); BlazeServe binds its own listening socket.
-- **Reverse Proxy Blueprints**: Battle-tested, streaming-tuned configurations for Nginx, Caddy, and Traefik v3.
-- **Linux Kernel OS Tuning**: Idempotent performance tuning script (`deploy/linux-tuning/tuning.sh`) managing socket queue lengths (`somaxconn=65535`), TCP window memory (`16MB`), and file descriptor limits (`1M`).
-
-
-## 📊 Benchmarking
-
-Run a self-contained benchmark:
-
-```console
-blaze benchmark
-```
-
-By default, BlazeServe starts a temporary server on an OS-assigned free port, binds it only to loopback, benchmarks the synthetic `/__speed__` endpoint, and tears the server down automatically. This mode does not serve your files or expose them outside the local machine.
-
-To benchmark an existing local or remote BlazeServe process, pass its origin explicitly:
-
-```console
-blaze benchmark --url http://127.0.0.1:8000 --size-mb 100
-```
-
-Explicit `--url` mode never starts a replacement server. A connection-refused error means the target server or port is unavailable; confirm that the server is running and that its port matches `--url`.
-
-For CI, request one machine-readable result with no progress or result-table text on standard output:
-
-```console
-blaze benchmark --size-mb 100 --json
-```
-
-The JSON object has `base_url` (the normalized URL prefix), integer `requested_bytes` and `downloaded_bytes`, and numeric `elapsed_seconds` and `throughput_mib_per_second`. Byte counts are bytes; throughput is MiB/s.
-
-Throughput, latency, and memory usage depend on the host kernel, storage, network, TLS, and reverse-proxy configuration. Publish benchmark figures only with the command, workload, machine specifications, and comparison methodology used to obtain them.
-
-
-## 🚀 Quick Start
-
-### 1. Installation via PyPI
-
-Install uv using the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), then install BlazeServe as a standalone command-line tool:
+## Quick start
 
 ```bash
-uv tool install blazeserve
+pip install blazeserve          # or: uv tool install blazeserve
+blaze serve .                   # serve this folder on http://localhost:8000
+blaze send ./big.iso            # share one file
+blaze get http://host:8000/big.iso   # download it, resuming if interrupted
 ```
 
+Prefer another install method?
 
-### 2. Run Instantly
+| Method | Command |
+| :--- | :--- |
+| pip or uv | `pip install blazeserve` or `uv tool install blazeserve` |
+| Cargo | `cargo install --git https://github.com/whoisjayd/blazeserve` |
+| Binary | Download an archive from [Releases](https://github.com/whoisjayd/blazeserve/releases) and check it against `SHA256SUMS` |
+| Container | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 
-```console
-# Serve the current directory on port 8000
-blaze serve .
+Archives and wheels cover Linux (x86_64 and aarch64, glibc and musl), Windows x86_64 and macOS (x86_64 and aarch64). Building from source needs Rust 1.88 or newer.
 
-# Serve a relative data directory with rate limiting, CORS, and JSON logs
-blaze serve data --port 8080 --rate-mbps 100 --cors --log-json
+## Features
 
-# Validate the current directory and port
-blaze doctor . --port 8000
-```
+| Area | What you get |
+| :--- | :--- |
+| Transfers | Single and multi-range requests, `If-None-Match` and `If-Modified-Since`, `If-Range`, precompressed `.gz` and `.br` assets, streaming ZIP of a file or folder |
+| Resumable | `blaze get` continues from a `.part` file; `blaze put` continues an interrupted upload |
+| Uploads | Off by default. Create-only, length and digest verified, published atomically, replace only with a matching `If-Match` |
+| Access | Basic Auth, TLS 1.2+, CORS, per-client throttling |
+| Reliability | Connection limit, header timeout, idle timeout, graceful shutdown, bounded transfer buffers |
+| Proxies | Trusted-proxy client identity from `Forwarded` and `X-Forwarded-For` |
+| Operations | Liveness and readiness probes, Prometheus metrics, OpenTelemetry traces and metrics, structured JSON logs, `blaze doctor` |
+| Browsing | A responsive directory listing with filter and sort, and a JSON listing for scripts |
+| Tooling | `checksum`, `benchmark`, and an opt-out anonymous usage report |
 
-### 3. Run with Docker
-
-POSIX shell:
+## Everyday commands
 
 ```bash
-docker run -d \
-  --name blazeserve \
-  -p 8000:8000 \
-  -v "$(pwd)/data:/data:ro" \
-  --read-only \
-  ghcr.io/whoisjayd/blazeserve:latest
-```
-
-Windows PowerShell:
-
-```powershell
-docker run -d `
-  --name blazeserve `
-  -p 8000:8000 `
-  -v "${PWD}\data:/data:ro" `
-  --read-only `
-  ghcr.io/whoisjayd/blazeserve:latest
-```
-
-
-## 📡 Operational & Telemetry Endpoints
-
-BlazeServe provides dedicated operational endpoints that do not conflict with served filesystem assets:
-
-| Endpoint        |    Method     |      Response Format       | Purpose                                                                                                                                   |
-| :-------------- | :-----------: | :------------------------: | :---------------------------------------------------------------------------------------------------------------------------------------- |
-| `/__live__`     | `GET`, `HEAD` |     `application/json`     | **Kubernetes Liveness Probe**: Returns `200 {"status":"alive"}` when process is healthy.                                                  |
-| `/__ready__`    | `GET`, `HEAD` |     `application/json`     | **Kubernetes Readiness Probe**: Returns `200 {"status":"ready"}` if root directory is readable; returns `503` if storage is disconnected. |
-| `/__metrics__`  | `GET`, `HEAD` |        `text/plain`        | **Prometheus Telemetry**: OpenMetrics text exposition format (`# HELP`, `# TYPE`, counters, gauges).                                      |
-| `/__health__`   | `GET`, `HEAD` |     `application/json`     | **Application Health**: Returns server version and continuous uptime seconds.                                                             |
-| `/__version__`  | `GET`, `HEAD` |     `application/json`     | **Runtime Info**: Machine-readable JSON output of version, python runtime, and OS platform.                                               |
-| `/__perf__`     | `GET`, `HEAD` |     `application/json`     | **Performance Metrics**: In-depth statistics including total requests, active requests, bytes sent/received, and TCP buffer config.       |
-| `/__stats__`    | `GET`, `HEAD` |     `application/json`     | **Legacy Stats**: Lightweight counter tracking total bytes transmitted.                                                                   |
-| `/__speed__`    | `GET`, `HEAD` | `application/octet-stream` | **Synthetic Throughput Test**: Generates zeroed bytes (`?bytes=100000000`) for network throughput benchmarking without disk I/O.          |
-| `/__zip__`      | `GET`, `HEAD` |     `application/zip`      | **Dynamic Directory Archiver**: Streams on-the-fly ZIP archives of entire directories (`?path=subfolder`).                                |
-| `/__upload__/*` | `PUT`, `POST` |     `application/json`     | **Secure File Upload**: Chunked upload destination with path traversal protection and max file size gating.                               |
-
-
-## 💻 CLI Reference
-
-BlazeServe features an intuitive, colorized CLI powered by `click` and `rich`:
-
-```
-Usage: blaze [OPTIONS] COMMAND [ARGS]...
-
-Commands:
-  serve      Serve a directory or a single file.
-  send       Quick share a single file with one command.
-  doctor     Validate system environment and server configuration.
-  benchmark  Run a high-speed throughput benchmark.
-  checksum   Compute SHA256 checksums for files.
-  version    Show version and system info (--json for machine-readable).
-```
-
-### Command Highlights
-
-```console
-# Serve a relative directory with bandwidth throttle and CORS
-blaze serve files --port 8080 --rate-mbps 250 --cors --log-json
-
-# Share one file with TLS
-blaze send archive.tar.gz --port 8443 --tls-cert cert.pem --tls-key key.pem
-
-# Check a relative directory and port
-blaze doctor data --port 8080
-
-# Emit deployment diagnostics as JSON (POSIX shell)
-blaze doctor data --port 8080 --json
-
-# Emit deployment diagnostics as JSON (PowerShell)
-blaze doctor .\data --port 8080 --json
-
-# Run a self-contained benchmark with a temporary loopback-only server
-blaze benchmark
-
-# Benchmark the existing server at this URL
-blaze benchmark --url http://127.0.0.1:8000 --size-mb 200
-
-# Emit one CI-friendly benchmark JSON object
-blaze benchmark --size-mb 200 --json
-
-# Print machine-readable version data
+blaze serve ./site --host 127.0.0.1 -p 9000      # bind loopback on another port
+blaze serve . --rate-mbps 25                     # throttle each client to 25 MB/s
+blaze serve . --max-upload-mb 500 --auth-env BLAZE_AUTH   # accept uploads, with auth
+blaze checksum ./big.iso                         # SHA-256, streamed
+blaze doctor ./site                              # check path, port and capabilities
+blaze benchmark                                  # loopback self-test
 blaze version --json
 ```
 
-`blaze doctor --json` writes one object containing an absolute `path`, integer `port`, boolean `success`, and `checks`. Each check has an `id`, `outcome`, and `details`; IDs are `base_path`, `port_binding`, `zero_copy_io`, and `sequential_read_ahead`. Outcomes are `pass`, `fail`, or `fallback`. Optional unavailable OS optimizations use `fallback` and do not make the diagnostic fail.
+### Authentication and TLS
 
+Prefer `--auth-env` to `--auth` so the credential stays out of process listings.
 
-## 📦 Production Deployment Workflows
-
-Detailed deployment guides and verified configuration templates are provided in the [`deploy/`](./deploy) directory:
-
-- **[Docker & Compose](./deploy/README.md)**: Hardened multi-stage build, unprivileged user (`uid 10001`), and Docker Compose resource limits.
-- **[Kubernetes Manifests](./deploy/k8s/)**: Hardened `Deployment` and `Service` defaults, plus optional Ingress and ServiceMonitor templates.
-- **[Systemd Service](./deploy/systemd/)**: Hardened Linux service unit with kernel sandboxing (`ProtectSystem=strict`); it does not use socket activation.
-- **[Reverse Proxies](./deploy/reverse-proxy/)**: Unbuffered streaming configurations for **Nginx**, **Caddy**, and **Traefik v3**.
-- **[Linux Kernel Tuning](./deploy/linux-tuning/)**: Production `sysctl-blazeserve.conf` settings and automated `tuning.sh` script.
-- **[SRE Monitoring](./deploy/monitoring/)**: Prometheus scrape specs, Prometheus alert rules, and complete Grafana dashboard JSON.
-
-See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for complete operational procedures.
-
-
-## 🛠️ Development & Testing
-
-The development workflow uses uv to create and manage the project environment. Install uv using the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), then:
-
-```console
-# Clone repository
-git clone https://github.com/whoisjayd/blazeserve.git
-cd blazeserve
-
-# Install the project and development dependencies in uv's environment
-uv sync --locked --all-extras --dev
-
-# Run Ruff linter and formatter checks
-uv run ruff check .
-uv run ruff format --check .
-
-# Run strict Mypy type validation
-uv run mypy blazeserve
-
-# Run the test suite concurrently with coverage
-uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
+```powershell
+# PowerShell
+$env:BLAZE_AUTH = "alice:s3cret"
+blaze serve ./site --auth-env BLAZE_AUTH --tls-cert cert.pem --tls-key key.pem
 ```
 
+```bash
+# POSIX
+export BLAZE_AUTH='alice:s3cret'
+blaze serve ./site --auth-env BLAZE_AUTH --tls-cert cert.pem --tls-key key.pem
+```
 
-## 📄 License & Contributing
+A named but empty or unset variable is an error; the server never falls back to running unauthenticated. A certificate without a key, or the reverse, is rejected before binding. Certificate rotation needs a restart.
 
-- **License**: MIT License — see [LICENSE](./LICENSE) for details.
-- **Contributing**: Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, focused checks, issue approval requirements, and pull-request expectations.
-- **Support**: See [SUPPORT.md](./SUPPORT.md) for issue routing and support procedures.
-- **Governance**: See [GOVERNANCE.md](./GOVERNANCE.md) for project decisions and maintainer responsibilities.
-- **Community**: Read the [Code of Conduct](./CODE_OF_CONDUCT.md) before participating.
-- **Security**: For vulnerability disclosure, use the private process in [SECURITY.md](./SECURITY.md), not a public issue.
+### Resumable transfers
 
-### Find work and ask questions
+```bash
+blaze get http://host:8000/big.iso                       # resumes from big.iso.part
+blaze get http://host:8000/big.iso --sha256 <hex>        # also verify the content
+blaze put ./big.iso http://host:8000/__upload__/big.iso  # resumes from the server's offset
+```
 
-- Browse [good first issues](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) for bounded newcomer tasks.
-- Look for issues labeled [`approved-for-work`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22approved-for-work%22) or [`help wanted`](https://github.com/whoisjayd/blazeserve/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
-- Use the [issue chooser](https://github.com/whoisjayd/blazeserve/issues/new/choose) for reproducible bugs, feature requests, usage questions, and documentation improvements.
+`get` continues with a `Range` request, validates it with `If-Range`, retries with backoff, and checks the final size before renaming the file into place. `put` reads the server's `Upload-Offset` and sends the rest in chunks.
 
-### Contribution workflow & review rules
+### Uploads
 
-To maintain code quality, prevent drive-by automated spam, and ensure thorough human review:
+Uploads are off until `--max-upload-mb` is a positive number, which is also the size ceiling. They are create-only: an existing file returns `409`. A request replaces a file only when it carries an `If-Match` with the file's current `ETag`; a stale tag returns `412`.
 
-1. **Issue Approval Required**: External contributors must obtain an approved issue before opening a pull request. Open an issue first; once a maintainer reviews the proposal and applies the `approved-for-work` label, implementation can proceed.
-2. **Closing Keyword Link**: Pull requests must link the approved issue using a closing keyword (e.g., `Fixes #123`). An automated gate closes external PRs lacking an approved issue link.
-3. **Accountable AI-Assisted Contributions**: Unsolicited autonomous or agent-generated pull requests are not accepted. AI-assisted contributions are welcome only when a named human contributor discloses the tools used in both the issue and PR, understands and tests the entire change, takes responsibility for correctness, and personally responds to reviews. Maintainers apply `ai-assisted` so the PR receives careful human review.
-4. **Branch Protection & Workflow Security**: The `main` branch requires code-owner approval, resolved conversations, and passing CI status checks before merge. All GitHub Actions workflows run on modern Node 24 runtimes, and external fork workflow runs require maintainer approval.
+A body is staged next to its destination and published only after the declared length matches and, when sent, the digest matches. `Content-Digest`, `Digest` and `X-Content-SHA256` are accepted, and `Repr-Digest` checks a whole resumed file. Always set `--auth` or `--auth-env` when uploads are enabled on a reachable address.
+
+### Behind a reverse proxy
+
+Pass `--trust-proxy <ip-or-cidr>` (repeatable) so rate limits and logs see the real client. BlazeServe walks `Forwarded`, or `X-Forwarded-For`, from the right and skips trusted hops. The first untrusted address is the client, and headers from any other peer are ignored. The immediate peer is logged separately as `peer_ip`. This is safe only when clients cannot reach BlazeServe directly. Ready-made Nginx, Caddy and Traefik configurations that keep streaming unbuffered are in [deploy/README.md](deploy/README.md#reverse-proxy).
+
+### Limits
+
+`--max-connections` (default 1024) bounds admitted connections. Beyond it a client receives `503` with `Retry-After: 1`, and the refusal is counted. A client that does not finish its request headers within `--header-timeout` (default 10 seconds) is dropped, and idle connections close after `--timeout`.
+
+## Endpoints
+
+| Path | Methods | Notes |
+| :--- | :--- | :--- |
+| `/<path>` | GET, HEAD | Files and listings. `Accept: application/json` returns a JSON listing; `?download=1` sets `Content-Disposition: attachment` |
+| `/__upload__/<path>` | PUT, POST, GET, HEAD, DELETE | Only when uploads are enabled. GET and HEAD report `Upload-Offset` for a partial; DELETE discards a partial and never a published file |
+| `/__zip__?path=<path>` | GET, HEAD | Streamed ZIP; the connection closes afterwards |
+| `/__health__` | GET, HEAD | Status, version, uptime |
+| `/__live__` | GET, HEAD | Liveness |
+| `/__ready__` | GET, HEAD | Readiness; checks the served root |
+| `/__version__` | GET, HEAD | Name, version, platform |
+| `/__metrics__`, `/metrics` | GET, HEAD | Prometheus text |
+| `/__stats__` | GET, HEAD | Bytes sent |
+| `/__perf__` | GET, HEAD | Effective limits and counters |
+| `/__speed__?bytes=N` | GET, HEAD | N zero bytes, at most 1000 MiB; used by `blaze benchmark` |
+
+A `Range` header with more than 64 ranges, or ranges that together exceed the file size, is answered with the whole file, so a range request cannot multiply the response. Operational JSON and metrics send `Cache-Control: no-store`. Every response carries `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and `Permissions-Policy`, plus `Strict-Transport-Security` over TLS and an `X-Request-ID`. A client-supplied request ID is echoed only if it is 1 to 64 characters and alphanumeric once hyphens are removed; otherwise 12 hex characters are generated.
+
+## Observability
+
+### Metrics
+
+`/__metrics__` and `/metrics` serve Prometheus text with no labels. Names and types are a public contract.
+
+| Series | Type | Meaning |
+| :--- | :--- | :--- |
+| `blazeserve_uptime_seconds` | gauge | Time since start |
+| `blazeserve_bytes_sent_total` | counter | Response body bytes written |
+| `blazeserve_bytes_received_total` | counter | Upload body bytes accepted |
+| `blazeserve_requests_total` | counter | Parsed requests; two on one keep-alive connection count twice |
+| `blazeserve_requests_active` | gauge | In-flight requests, balanced on every exit |
+| `blazeserve_errors_total` | counter | Unexpected server failures; client disconnects are not errors |
+| `blazeserve_connections_active` | gauge | Admitted TCP connections |
+| `blazeserve_connections_rejected_total` | counter | Connections refused at `--max-connections` |
+
+Byte counters count bytes actually written or read, never declared lengths. Alert rules and a Grafana dashboard are in [deploy/README.md](deploy/README.md#monitoring).
+
+### Logs
+
+With `--log-json` or `BLAZE_LOG_JSON=1`, stdout carries one JSON object per request: `timestamp` (UTC), `level`, `request_id`, `client_ip`, `peer_ip`, `request`, `status` and `size`, plus `trace_id` and `span_id` when tracing is on. `client_ip` is the resolved client and `peer_ip` is the socket peer. Human output moves to stderr. Authorization values, credentials in URLs, `--auth-env` values, TLS keys and content are never logged.
+
+### OpenTelemetry
+
+Traces (one span per request, HTTP server conventions) and metrics (`http.server.request.duration`, `http.server.active_requests`, `http.server.request.body.size`, `http.server.response.body.size`, `blazeserve.connections.rejected`) export over OTLP/HTTP. Export is off until an endpoint is set, with `--otlp-endpoint` or the standard variables. Any OTLP backend works, including the free tiers of hosted services.
+
+`OTEL_EXPORTER_OTLP_HEADERS` usually holds a token, so treat it as a secret: keep it in the environment or a secret store, never on a command line, in a committed file or in a log. The values below are placeholders.
+
+```powershell
+# PowerShell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp.example.com"
+$env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
+$env:OTEL_EXPORTER_OTLP_HEADERS  = "Authorization=Basic <BASE64_INSTANCE_ID_AND_TOKEN>"
+$env:OTEL_SERVICE_NAME           = "blazeserve"
+blaze serve ./site
+```
+
+```bash
+# POSIX
+export OTEL_EXPORTER_OTLP_ENDPOINT='https://otlp.example.com'
+export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic <BASE64_INSTANCE_ID_AND_TOKEN>'
+export OTEL_SERVICE_NAME='blazeserve'
+blaze serve ./site
+```
+
+Only `http/protobuf` is supported. An unreachable collector never slows requests, and shutdown flushes for at most five seconds. For a local stack, `docker compose --profile observability up -d` adds Grafana on `http://localhost:3000` and OTLP on port 4318.
+
+## Deploy
+
+| Target | Where |
+| :--- | :--- |
+| Docker and Compose | `ghcr.io/whoisjayd/blazeserve`, a `scratch` image running as uid 10001, with a hardened `docker-compose.yml` |
+| Kubernetes | A private, single-replica Deployment and ClusterIP Service, with optional Ingress and ServiceMonitor |
+| systemd | A hardened unit bound to `127.0.0.1:8000` |
+| Reverse proxy | Unbuffered Nginx, Caddy and Traefik configurations |
+| Monitoring | Prometheus scrape config, alert rules and a Grafana dashboard |
+
+Everything is in [deploy/README.md](deploy/README.md). The image has no shell and no in-image health check; probe `/__live__` and `/__ready__` from your orchestrator. `Ctrl+C` or `SIGTERM` closes the listener at once and gives in-flight requests a short grace period.
+
+## Command reference
+
+### `blaze serve [PATH]`
+
+| Option | Default | Meaning |
+| :--- | :--- | :--- |
+| `--host`, `-p/--port` | `0.0.0.0`, `8000` | Bind address (IPv4 or IPv6) and port |
+| `--single FILE` | none | Serve exactly this file |
+| `--no-listing` | listing on | Disable directory listing |
+| `--index NAME` | `index.html`, `index.htm` | Extra index filenames, repeatable |
+| `--precompress` / `--no-precompress` | on | Serve `.br` and `.gz` siblings when safe; never for range requests |
+| `--no-cache` | off | Send no-store cache headers |
+| `--cors` / `--no-cors`, `--cors-origin` | off, `*` | CORS and the allowed origin |
+| `--auth USER:PASS`, `--auth-env VAR` | none | Basic Auth |
+| `--tls-cert`, `--tls-key` | none | PEM certificate and key, required together |
+| `--rate-mbps N` | unlimited | Per-client throttle in MB/s |
+| `--max-upload-mb N` | `0` | Enable uploads with this size ceiling; `0` disables them |
+| `--max-connections N` | `1024` | Admission limit |
+| `--header-timeout S` | `10` | Seconds to receive complete headers |
+| `--timeout S` | `1800` | Idle timeout in seconds |
+| `--trust-proxy CIDR`, `--max-proxy-hops N` | none, `8` | Trusted proxies and chain depth |
+| `--chunk-mb N`, `--sock-sndbuf-mb N`, `--backlog N` | `1`, `4`, `8192` | Transfer chunk, socket send buffer, listen backlog |
+| `--log-json` / `--no-log-json` | env `BLAZE_LOG_JSON` | Structured logs |
+| `--otlp-endpoint URL` | env `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry export |
+| `--open`, `-v/--verbose` | off | Open a browser; show tuning in the banner |
+
+### Other commands
+
+| Command | Purpose |
+| :--- | :--- |
+| `blaze send FILE` | Share one file. Takes the network, access, limit, proxy and telemetry options of `serve`, with listing off |
+| `blaze get URL` | Resumable download. `-o`, `--no-resume`, `--sha256`, `--retries`, `--force`, `--auth`, `--auth-env` |
+| `blaze put FILE URL` | Resumable upload; a bare origin uploads under `/__upload__/`. `--chunk-mb` (8), `--retries`, `--auth`, `--auth-env` |
+| `blaze checksum FILES...` | Streamed SHA-256 |
+| `blaze doctor [PATH]` | Check the path, the port and capabilities; `--json`, exit code 1 on failure |
+| `blaze benchmark` | Time a download from a temporary loopback server, or from `--url`; `--size-mb`, `--json` |
+| `blaze telemetry` | `status`, `enable`, `disable`, `reset`, `preview` |
+| `blaze version` | Version and platform; `--json` |
+
+Exit codes are 0 for success, 1 for a runtime failure and 2 for a usage error.
+
+## Security model
+
+BlazeServe assumes an attacker who controls request paths, query strings, headers, upload names and bodies, and connection behaviour, but has no shell. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+- **Paths.** Decoded once, resolved to a canonical path and checked component by component against the canonical root, for reads, uploads and ZIPs. `..`, encoded and double-encoded dots, sibling prefixes such as `/data` and `/data-evil`, symlinks, junctions and cross-drive Windows paths fail closed.
+- **Uploads.** Off by default. Files are created exclusively, with mode `0600` on Unix, and published without replacing anything. The length and size ceiling are enforced, staging files are removed on any failure, and nothing is published before a sent digest matches. Early rejections close the connection so a body is never read as the next request.
+- **Authentication.** Runs before any filesystem or operational route. Both fields compare in constant time, and malformed or missing credentials fail closed.
+- **Connections.** Header and idle timeouts, a connection limit, and bounded transfer buffers of 1 MiB per active transfer by default.
+- **Residual risks.** A path check followed by an open is not atomic on every platform, so someone who can already write inside the served root could race a symlink swap. Do not give untrusted users write access to a served root. A compromised trusted proxy can name any client, and a flood from many sources still occupies admitted slots.
+
+## Performance
+
+No throughput figures are published. Speed depends on the operating system, filesystem, storage, network, TLS and any proxy, so measure your own setup:
+
+```bash
+blaze benchmark --json --size-mb 100
+```
+
+Without `--url` it starts a temporary loopback server on a free port and stops it afterwards; with `--url` it measures an existing server. The record has `base_url`, `requested_bytes`, `downloaded_bytes`, `elapsed_seconds` and `throughput_mib_per_second`. A run that receives fewer bytes than requested is a failure, not a sample. Repeat the run, discard one warm-up, report the median and range, and when you publish a number include the command, version, OS, CPU, storage and network path.
+
+## Telemetry
+
+BlazeServe sends anonymous usage statistics by default, so the project can see which versions and platforms are in use and which options matter. It is on unless you turn it off.
+
+**Opt out** with any one of `BLAZE_TELEMETRY=0`, `DO_NOT_TRACK=1` or `blaze telemetry disable`. It is also off automatically when `CI` is set. Run `blaze telemetry preview` to print exactly what would be sent, without sending it.
+
+| When | Fields |
+| :--- | :--- |
+| Every event | `schema_version`, `event` (`start` or `stop`), `version`, `os`, `arch`, `command` (`serve` or `send`), `install_channel` |
+| Configuration | Yes or no only: `tls`, `auth`, `uploads_enabled`, `rate_limit`, `cors`, `trust_proxy`, `otlp`, `single_file`, `listing` |
+| `stop` only | Bucketed uptime, bucketed request count, bucketed bytes sent, and whether any error occurred |
+
+**Never collected:** paths, filenames, hostnames, IP addresses, ports, URLs, credentials, environment variable values or any request data. No install identifier is generated or sent. The first run prints a short notice to stderr before anything is sent. The relay that receives events is open source in [deploy/telemetry-relay](deploy/telemetry-relay), and release builds send events only if a relay URL was set at build time.
+
+## Upgrading from 0.x
+
+1.0 is a Rust rewrite. Options and the HTTP surface are unchanged except as listed here.
+
+- **Python API removed.** `create_server`, `run_server`, `BlazeHandler`, `ServerMetrics`, `TokenBucket` and the legacy argparse parser are gone. Wheels carry the binary.
+- **Uploads are off by default.** `--max-upload-mb 0` now disables them. In 0.x it allowed unlimited, unauthenticated uploads, which was a security defect. Set a positive limit and require authentication to keep uploading.
+- **Defaults.** `--chunk-mb` is 1 MiB, down from 256 MiB allocated per connection, and `--sock-sndbuf-mb` is 4 MiB, down from 128 MiB.
+- **Atomic uploads.** Files are staged, verified and then published. Replacing one needs a matching `If-Match`.
+- **Path decoding.** Paths are decoded once, so `%252e%252e` is a literal name rather than traversal input.
+- **Connections.** Bounded by `--max-connections`, with a header timeout. 0.x used one unbounded thread per connection and a 30 minute idle timeout.
+- **Monitoring.** The alert `BlazeServeHighActiveConnections` is now `BlazeServeHighActiveRequests`, matching the metric it uses. Two series were added: `blazeserve_connections_active` and `blazeserve_connections_rejected_total`.
+- **Container.** The image is `scratch`-based and non-root, with no in-image health check.
+
+## Development
+
+```bash
+git clone https://github.com/whoisjayd/blazeserve
+cd blazeserve
+cargo test
+cargo run -- serve .
+```
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Found a bug? [Open an issue](https://github.com/whoisjayd/blazeserve/issues/new/choose). Security concern? See [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE)

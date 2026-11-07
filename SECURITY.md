@@ -1,23 +1,28 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Report a vulnerability
 
-| Version | Supported          |
-| :------ | :----------------- |
-| `0.3.x` | :white_check_mark: |
-| `< 0.3` | :x:                |
+Email **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)** with:
 
-## Reporting a Vulnerability
+- the affected version and platform
+- what you found and the impact you expect
+- the smallest steps or request that reproduce it
 
-Please report security issues privately to **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)**. We will acknowledge receipt within 72 hours and provide a timeline for the fix after initial triage.
+Please do not open a public issue or pull request, and do not post credentials, keys, exploit details or sensitive logs anywhere public. Receipt is acknowledged within 72 hours, and a fix timeline follows initial triage.
 
-Do not report vulnerabilities in public GitHub Issues, pull requests, or support requests. Do not include credentials, tokens, private keys, exploit details, or sensitive logs in public project spaces. For general support routing, see [SUPPORT.md](SUPPORT.md); for community conduct concerns, see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+## What happens next
 
-## Disclosure Policy
+We validate the report, fix it, and release. Please keep the details private until a fix is out and users have had reasonable time to update.
 
--   We will work with you to validate and remediate the issue.
--   Please do not disclose the vulnerability publicly until a fix is released and users have had reasonable time to update.
+## Supported versions
+
+| Version | Supported |
+| :--- | :--- |
+| 1.x | Yes |
+| Earlier than 1.0 | No. The Python implementation is end of life |
 
 ## Scope
 
-Only issues affecting the BlazeServe codebase and published packages are in scope. Third-party dependencies should be reported upstream when appropriate.
+In scope: the BlazeServe binary, its published wheels, archives and container images, and the telemetry relay in `deploy/telemetry-relay`. Report issues in third-party dependencies upstream.
+
+The threat model and the defenses behind it are described in the [README](README.md#security-model). Release artifacts carry build-provenance attestations; verify one with `gh attestation verify <file> --repo whoisjayd/blazeserve`.
