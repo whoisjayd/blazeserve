@@ -170,7 +170,7 @@ Keep every hard-coded release version in sync: `version` in `Cargo.toml` and `py
 
 Do not bump versions, create or reuse tags, push, publish or start release workflows unless explicitly authorised.
 
-The release workflow needs its manual version or `v*` tag to equal `Cargo.toml` and `pyproject.toml`, needs the commit to be on `main`, and rejects a manual tag that already exists. Gates, binaries, wheels and the container come before publication, and the GitHub release is created only after both PyPI and GHCR succeed. PyPI versions are immutable. `PYPI_API_TOKEN` is a repository or `pypi` environment secret, `BLAZE_TELEMETRY_URL` is a repository variable, and GHCR uses `GITHUB_TOKEN`.
+The release workflow needs its manual version or `v*` tag to equal `Cargo.toml` and `pyproject.toml`, needs the commit to be on `main`, and rejects a manual tag that already exists. Gates, binaries, wheels, the crate package and the container come before publication, and the GitHub release is created only after PyPI, crates.io and GHCR all succeed. PyPI files and crates.io versions are immutable, and reruns skip what is already published. `PYPI_API_TOKEN` is a repository or `pypi` environment secret, `CARGO_REGISTRY_TOKEN` is a repository or `crates-io` environment secret, `BLAZE_TELEMETRY_URL` is a repository variable, and GHCR uses `GITHUB_TOKEN`.
 
 ## Secrets and generated files
 

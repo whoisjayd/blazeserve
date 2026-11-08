@@ -1,6 +1,18 @@
-# Maintainer prerequisites: repository secret PYPI_API_TOKEN (or in the pypi environment) with upload scope for the project;
-# repository variable BLAZE_TELEMETRY_URL (a variable, not a secret), left empty until the relay is deployed.
-# Dispatch from main with the exact version. PyPI versions are immutable, so never reuse one.
+# Publishes one version to PyPI, crates.io and GHCR, then creates the GitHub release.
+#
+# Prerequisites
+#   secret    PYPI_API_TOKEN, upload scope for the project (repository or pypi environment)
+#   secret    CARGO_REGISTRY_TOKEN, publish scope for the crate (repository or crates-io environment)
+#   variable  BLAZE_TELEMETRY_URL, the telemetry relay URL baked into release binaries, wheels and the image
+#
+# Run it from main with the exact version, or push a v* tag on a commit that is on main. Every gate passes
+# before any publisher starts. PyPI files and crates.io versions are immutable, so a version is never reused.
+# If one publisher fails, rerun the failed jobs: PyPI skips files it already has, the crate job skips a
+# version that is already on crates.io, and the GitHub release waits for all three.
+#
+# After the first release, crates.io Trusted Publishing can replace CARGO_REGISTRY_TOKEN: configure the
+# publisher on crates.io, grant the publish-crate job id-token: write, and authenticate with
+# rust-lang/crates-io-auth-action. It cannot be set up before the crate exists.
 name: Release
 
 on:
@@ -22,6 +34,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   validate:
@@ -119,13 +132,19 @@ jobs:
           push: false
           build-args: BLAZE_TELEMETRY_URL=${{ vars.BLAZE_TELEMETRY_URL }}
           tags: blazeserve:release-gate
-      - name: Probe endpoints
-        run: |
-          docker run -d --name srv -p 8000:8000 blazeserve:release-gate
-          trap 'docker rm -f srv >/dev/null 2>&1 || true' EXIT
-          for path in __live__ __ready__ __metrics__; do
-            curl --fail --retry 10 --retry-delay 1 --retry-connrefused "http://127.0.0.1:8000/$path"
-          done
+      - uses: ./.github/actions/probe-container
+        with:
+          image: blazeserve:release-gate
+
+  crate-gate:
+    name: Crate package
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+      - run: cargo package --locked
 
   binaries:
     name: Binary (${{ matrix.target }})
@@ -229,7 +248,7 @@ jobs:
 
   assets:
     name: Checksums and provenance
-    needs: [validate, quality, test, container-gate, binaries, wheels, sdist]
+    needs: [validate, quality, test, container-gate, crate-gate, binaries, wheels, sdist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -283,6 +302,28 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
+  publish-crate:
+    name: Publish to crates.io
+    needs: [validate, assets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+      - name: Publish unless this version is already on crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          : "${CARGO_REGISTRY_TOKEN:?The CARGO_REGISTRY_TOKEN secret is not set}"
+          status="$(curl -s -o /dev/null -w '%{http_code}' -A "blazeserve-release (https://github.com/${GITHUB_REPOSITORY})" "https://crates.io/api/v1/crates/blazeserve/${VERSION}")"
+          case "$status" in
+            200) echo "blazeserve ${VERSION} is already on crates.io; nothing to publish" ;;
+            404) cargo publish --locked ;;
+            *) echo "Unexpected crates.io response ${status}" >&2; exit 1 ;;
+          esac
+
   publish-container:
     name: Publish to GHCR
     needs: [validate, assets]
@@ -322,7 +363,7 @@ jobs:
 
   github-release:
     name: GitHub release
-    needs: [validate, publish-package, publish-container]
+    needs: [validate, publish-package, publish-crate, publish-container]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
