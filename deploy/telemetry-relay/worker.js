@@ -1,5 +1,7 @@
 const MAX_BODY_BYTES = 2048;
 const RATE_PER_MINUTE = 20;
+const UPSTREAM_TIMEOUT_MS = 8000;
+const RETRY_DELAY_MS = 250;
 
 const ENUMS = {
   event: ["start", "stop"],
@@ -119,6 +121,35 @@ export function toOtlp(event, nowMs = Date.now()) {
   };
 }
 
+const unquote = (value) => String(value ?? "").trim().replace(/^["']+|["']+$/g, "").trim();
+
+// Accepts the header value in the shapes people actually paste: the full "Basic <base64>",
+// "Authorization=Basic <base64>" as printed by the Grafana setup page, or the bare base64.
+export function normalizeAuth(raw) {
+  let value = unquote(raw).replace(/^authorization\s*[=:]\s*/i, "").trim();
+  if (/^(basic|bearer)\s+\S/i.test(value)) return value;
+  if (/^[A-Za-z0-9+/]+=*$/.test(value)) value = `Basic ${value}`;
+  return value;
+}
+
+// Accepts the OTLP base address with or without a scheme, a trailing slash, a signal path
+// such as /v1/logs, or a missing /otlp on a Grafana Cloud gateway.
+export function normalizeEndpoint(raw) {
+  let value = unquote(raw);
+  if (!value) return "";
+  if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
+  value = value.replace(/\/+$/, "").replace(/\/v1\/(logs|traces|metrics)$/i, "");
+  try {
+    const url = new URL(value);
+    if (url.hostname.endsWith(".grafana.net") && (url.pathname === "/" || url.pathname === "")) {
+      return `${url.origin}/otlp`;
+    }
+  } catch {
+    return "";
+  }
+  return value;
+}
+
 // Best-effort fallback for when the Workers rate limiting binding is not configured.
 // State is per isolate and resets on eviction.
 const windows = new Map();
@@ -144,10 +175,48 @@ async function allowed(request, env) {
   return localLimit(key, Date.now());
 }
 
-const reply = (status) => new Response(null, { status, headers: { "cache-control": "no-store" } });
+const reply = (status, extra = {}) =>
+  new Response(null, { status, headers: { "cache-control": "no-store", ...extra } });
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function attempt(url, auth, payload) {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: auth },
+      body: payload,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (response.ok) return { ok: true, status: response.status, detail: "" };
+    const detail = (await response.text().catch(() => "")).slice(0, 300);
+    return { ok: false, status: response.status, detail };
+  } catch (error) {
+    return { ok: false, status: 0, detail: String(error?.message ?? error).slice(0, 200) };
+  }
+}
+
+// Retries once for a network failure, a timeout, a rate limit or a server error. A rejected
+// credential (401, 403) or a bad request is final. Only the status and the backend's own
+// error text are logged, never the Authorization value.
+async function forward(event, endpoint, auth) {
+  const url = `${endpoint}/v1/logs`;
+  const payload = JSON.stringify(toOtlp(event));
+  let result = await attempt(url, auth, payload);
+  if (!result.ok && (result.status === 0 || result.status === 429 || result.status >= 500)) {
+    await sleep(RETRY_DELAY_MS);
+    result = await attempt(url, auth, payload);
+  }
+  if (!result.ok) {
+    console.error(
+      `relay: backend refused ${event.event} report: status=${result.status} ${result.detail}`,
+    );
+  }
+  return result;
+}
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname !== "/v1/event") return reply(404);
     if (request.method !== "POST") return reply(405);
@@ -166,17 +235,17 @@ export default {
     }
     if (validate(event) !== null) return reply(400);
 
-    if (!env.OTLP_ENDPOINT || !env.OTLP_AUTH) return reply(503);
-    let upstream;
-    try {
-      upstream = await fetch(`${env.OTLP_ENDPOINT.replace(/\/+$/, "")}/v1/logs`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: env.OTLP_AUTH },
-        body: JSON.stringify(toOtlp(event)),
-      });
-    } catch {
-      return reply(502);
+    const endpoint = normalizeEndpoint(env.OTLP_ENDPOINT);
+    const auth = normalizeAuth(env.OTLP_AUTH);
+    if (!endpoint || !auth) {
+      console.error("relay: OTLP_ENDPOINT or OTLP_AUTH is missing or empty");
+      return reply(503);
     }
-    return upstream.ok ? reply(204) : reply(502);
+
+    // The client may hang up before the backend answers. waitUntil lets the forward finish anyway.
+    const forwarded = forward(event, endpoint, auth);
+    ctx?.waitUntil?.(forwarded);
+    const result = await forwarded;
+    return result.ok ? reply(204) : reply(502, { "x-upstream-status": String(result.status) });
   },
 };

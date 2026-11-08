@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import worker, { toOtlp, validate } from "./worker.js";
+import worker, { normalizeAuth, normalizeEndpoint, toOtlp, validate } from "./worker.js";
 
 const features = {
   tls: false,
@@ -80,6 +80,16 @@ test("accepts a valid event, forwards it, and returns 204", async () => {
   assert.deepEqual(Object.keys(seen[0].init.headers).sort(), ["authorization", "content-type"]);
 });
 
+test("the backend call is kept alive after the client may have left", async () => {
+  globalThis.fetch = async () => new Response("{}", { status: 200 });
+  const kept = [];
+  const ctx = { waitUntil: (p) => kept.push(p) };
+  const res = await worker.fetch(post(start), env, ctx);
+  assert.equal(res.status, 204);
+  assert.equal(kept.length, 1);
+  assert.equal((await kept[0]).ok, true);
+});
+
 test("rejects bad routes, methods, size and json", async () => {
   globalThis.fetch = async () => assert.fail("must not forward");
   assert.equal((await worker.fetch(new Request("https://relay.test/other"), env)).status, 404);
@@ -90,13 +100,83 @@ test("rejects bad routes, methods, size and json", async () => {
 });
 
 test("upstream failure and missing config are not reported as success", async () => {
-  globalThis.fetch = async () => new Response("no", { status: 500 });
-  assert.equal((await worker.fetch(post(start), env)).status, 502);
+  const logged = [];
+  const original = console.error;
+  console.error = (line) => logged.push(line);
+  try {
+    globalThis.fetch = async () => new Response("invalid scope", { status: 401 });
+    assert.equal((await worker.fetch(post(start), env)).status, 502);
+    globalThis.fetch = async () => {
+      throw new Error("network");
+    };
+    assert.equal((await worker.fetch(post(start), env)).status, 502);
+    assert.equal((await worker.fetch(post(start), {})).status, 503);
+  } finally {
+    console.error = original;
+  }
+  assert.match(logged[0], /status=401 invalid scope/);
+  assert.match(logged[1], /status=0 network/);
+  assert.match(logged[2], /missing or empty/);
+  assert.ok(logged.every((line) => !line.includes(env.OTLP_AUTH)));
+});
+
+test("a refused report exposes only the backend status", async () => {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    globalThis.fetch = async () => new Response("denied", { status: 401 });
+    const res = await worker.fetch(post(start), env);
+    assert.equal(res.status, 502);
+    assert.equal(res.headers.get("x-upstream-status"), "401");
+  } finally {
+    console.error = original;
+  }
+});
+
+test("a transient backend failure is retried once", async () => {
+  let calls = 0;
   globalThis.fetch = async () => {
-    throw new Error("network");
+    calls += 1;
+    return calls === 1 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
   };
-  assert.equal((await worker.fetch(post(start), env)).status, 502);
-  assert.equal((await worker.fetch(post(start), {})).status, 503);
+  assert.equal((await worker.fetch(post(start), env)).status, 204);
+  assert.equal(calls, 2);
+});
+
+test("a rejected credential is not retried", async () => {
+  let calls = 0;
+  const original = console.error;
+  console.error = () => {};
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response("no", { status: 401 });
+    };
+    await worker.fetch(post(start), env);
+  } finally {
+    console.error = original;
+  }
+  assert.equal(calls, 1);
+});
+
+test("pasted credentials and endpoints are normalized", () => {
+  assert.equal(normalizeAuth("Basic abc123=="), "Basic abc123==");
+  assert.equal(normalizeAuth("Authorization=Basic abc123=="), "Basic abc123==");
+  assert.equal(normalizeAuth(' "abc123==" \n'), "Basic abc123==");
+  assert.equal(normalizeAuth(""), "");
+  assert.equal(
+    normalizeEndpoint("https://otlp-gateway-prod-ap-south-1.grafana.net/otlp/"),
+    "https://otlp-gateway-prod-ap-south-1.grafana.net/otlp",
+  );
+  assert.equal(
+    normalizeEndpoint("otlp-gateway-prod-ap-south-1.grafana.net"),
+    "https://otlp-gateway-prod-ap-south-1.grafana.net/otlp",
+  );
+  assert.equal(
+    normalizeEndpoint("https://x.grafana.net/otlp/v1/logs"),
+    "https://x.grafana.net/otlp",
+  );
+  assert.equal(normalizeEndpoint(undefined), "");
 });
 
 test("the fallback limiter throttles one address", async () => {
