@@ -147,23 +147,23 @@ jobs:
     name: Deployment config
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Pinned validators: Compose v2.30.3; kubectl v1.32.2; yq v4.45.4;
-    # Python v3.13.2; Prometheus v3.4.0; Nginx v1.27.4; Caddy v2.9.1;
-    # Traefik v3.3.4. systemd-analyze is the runner-provided Ubuntu version.
+    # Pinned validators: Compose v5.7.0; kubectl v1.37.2; yq v4.54.2;
+    # Python v3.15.2; Bash v5.3.20; Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9;
+    # Traefik v3.7.17. systemd-analyze is the runner-provided Ubuntu version.
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Docker Compose v2.30.3
+      - name: Set up Docker Compose v5.7.0
         uses: docker/setup-compose-action@v2
         with:
-          version: v2.30.3
+          version: v5.7.0
       - name: Validate Docker Compose configuration
         run: docker compose -f docker-compose.yml config --quiet
       - name: Render Kubernetes base and validate Kubernetes YAML
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work registry.k8s.io/kubectl:v1.32.2 kustomize deploy/k8s > /tmp/blazeserve-k8s.yaml
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval-all -e '.' deploy/k8s/*.yaml > /dev/null
-          kinds="$(docker run --rm -i mikefarah/yq:4.45.4 eval -N -r '.kind' - < /tmp/blazeserve-k8s.yaml | sort)"
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work registry.k8s.io/kubectl:v1.37.2 kustomize deploy/k8s > /tmp/blazeserve-k8s.yaml
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.54.2 eval-all -e '.' deploy/k8s/*.yaml > /dev/null
+          kinds="$(docker run --rm -i mikefarah/yq:4.54.2 eval -N -r '.kind' - < /tmp/blazeserve-k8s.yaml | sort)"
           test "$kinds" = $'Deployment\nService' || {
             printf 'default deploy/k8s base must render only Deployment and Service; got:\n%s\n' "$kinds" >&2
             exit 1
@@ -171,8 +171,8 @@ jobs:
       - name: Validate Linux tuning syntax and documented format subset
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly bash:5.2.37 -n /work/deploy/linux-tuning/tuning.sh
-          docker run --rm -i --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python - <<'PY'
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly bash:5.3.20 -n /work/deploy/linux-tuning/tuning.sh
+          docker run --rm -i --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python - <<'PY'
           from pathlib import Path
           import re
 
@@ -199,23 +199,23 @@ jobs:
       - name: Validate monitoring configuration
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check config /etc/prometheus/prometheus.yml
-          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check rules /etc/prometheus/alerts.yml
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json > /dev/null
+          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check rules /etc/prometheus/alerts.yml
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json > /dev/null
       - name: Validate reverse-proxy configuration
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/nginx.conf",dst=/etc/nginx/nginx.conf,readonly nginx:1.27.4-alpine nginx -t -c /etc/nginx/nginx.conf
-          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/Caddyfile",dst=/etc/caddy/Caddyfile,readonly caddy:2.9.1-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/nginx.conf",dst=/etc/nginx/nginx.conf,readonly nginx:1.31.8-alpine nginx -t -c /etc/nginx/nginx.conf
+          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/Caddyfile",dst=/etc/caddy/Caddyfile,readonly caddy:2.11.9-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           set +e
-          timeout 5s docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy",dst=/etc/traefik,readonly --entrypoint traefik traefik:v3.3.4 --configFile=/etc/traefik/traefik.yml
+          timeout 5s docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy",dst=/etc/traefik,readonly --entrypoint traefik traefik:v3.7.17 --configFile=/etc/traefik/traefik.yml
           status=$?
           set -e
           test "$status" -eq 124 || {
             printf 'Traefik configuration validation exited unexpectedly with status %s\n' "$status" >&2
             exit 1
           }
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval -e '.' deploy/reverse-proxy/traefik-dynamic.yml > /dev/null
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.54.2 eval -e '.' deploy/reverse-proxy/traefik-dynamic.yml > /dev/null
       - name: Validate systemd unit without starting it
         # Unpinned: systemd-analyze comes from the runner image.
         run: |
