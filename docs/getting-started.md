@@ -9,7 +9,7 @@ Pick whichever method suits you.
 | Method | Command |
 | :--- | :--- |
 | pip or uv | `pip install blazeserve` or `uv tool install blazeserve` |
-| Cargo | `cargo install --git https://github.com/whoisjayd/blazeserve` |
+| Cargo | `cargo install blazeserve` |
 | Download | Get an archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases) and check it against the `SHA256SUMS` file |
 | Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 

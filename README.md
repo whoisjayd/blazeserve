@@ -13,6 +13,8 @@ Share a folder or a single file in one command, and pick up interrupted download
 [![CI](https://img.shields.io/github/actions/workflow/status/whoisjayd/blazeserve/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/whoisjayd/blazeserve/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/whoisjayd/blazeserve?style=flat-square)](https://github.com/whoisjayd/blazeserve/releases)
 [![PyPI](https://img.shields.io/pypi/v/blazeserve?style=flat-square&label=pip)](https://pypi.org/project/blazeserve/)
+[![crates.io](https://img.shields.io/crates/v/blazeserve?style=flat-square&label=cargo)](https://crates.io/crates/blazeserve)
+[![Container](https://img.shields.io/badge/container-ghcr.io-blue?style=flat-square)](https://github.com/whoisjayd/blazeserve/pkgs/container/blazeserve)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 <a href="#quick-start">Quick start</a> · <a href="#common-jobs">Common jobs</a> · <a href="#documentation">Documentation</a> · <a href="#security">Security</a> · <a href="#contributing">Contributing</a>
@@ -52,7 +54,7 @@ Open `http://localhost:8000` to browse the folder, with search and sorting. Pres
 | Method | Command |
 | :--- | :--- |
 | uv | `uv tool install blazeserve` |
-| Cargo | `cargo install --git https://github.com/whoisjayd/blazeserve` |
+| Cargo | `cargo install blazeserve` |
 | Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 | Download | An archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases), checked against `SHA256SUMS` |
 
