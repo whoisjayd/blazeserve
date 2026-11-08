@@ -1,10 +1,14 @@
 /target/
 /target-*/
 /dist/
+/build/
 /wheels/
 *.whl
 *.rs.bk
+*.rs.pending-snap
 *.pdb
+rustc-ice-*.txt
+**/mutants.out*/
 
 *.profraw
 *.profdata
@@ -13,19 +17,44 @@ cobertura.xml
 coverage.xml
 /coverage/
 tarpaulin-report.html
+.coverage
+.coverage.*
+htmlcov/
+perf.data
+perf.data.old
+flamegraph.svg
+profile.json
 
 .env
 .env.*
 !.env.example
-.venv/
+.pypirc
 *.pem
 *.key
 *.crt
+*.p12
+*.pfx
 /certificates/
 .dev.vars
 
 node_modules/
+npm-debug.log*
 .wrangler/
+
+.venv/
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.hypothesis/
 
 *.part
 *.part.meta
@@ -37,6 +66,7 @@ bench-results/
 /data/
 *.log
 *.pid
+*.tmp
 
 .vscode/
 .idea/
@@ -45,17 +75,22 @@ bench-results/
 *~
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 *.orig
 *.rej
 
 .claude/settings.local.json
 .claude/worktrees/
+CLAUDE.local.md
+AGENTS.local.md
 .serena/
+.cursor/
 local_*.md
 /local/
 release_notes.txt
 
-__pycache__/
-*.pyc
-.pytest_cache/
+/brag-output/
+/blaze-terminal.mp4
+.hyperframes/
+.remotion/
