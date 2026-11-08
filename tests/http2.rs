@@ -176,6 +176,10 @@ async fn many_streams_on_one_connection_succeed_beyond_the_stream_limit() {
     let (_dir, handle) = start(|_| {}).await;
     let expected = http_common::pattern(SIZE);
     let c = h2c(handle.local_addr()).await;
+    // One answered request proves the client has the server's SETTINGS, so it queues streams
+    // beyond the advertised limit instead of opening them early and getting REFUSED_STREAM.
+    let warmup = fetch(&mut c.clone(), "GET", "/__live__", &[], b"").await;
+    assert_eq!(warmup.status, StatusCode::OK);
 
     let mut tasks = Vec::new();
     for i in 0..200usize {
