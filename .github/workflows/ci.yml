@@ -154,17 +154,16 @@ jobs:
     # systemd-analyze is the runner-provided Ubuntu version.
     steps:
       - uses: actions/checkout@v7
-      - name: Install Docker Compose v5.7.0
+      - name: Install Docker Compose v5.7.0 from its Docker Hub image
         env:
           COMPOSE_VERSION: v5.7.0
         run: |
           set -Eeuo pipefail
-          url="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64"
           plugin="$HOME/.docker/cli-plugins/docker-compose"
           mkdir -p "$(dirname "$plugin")"
-          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 5 --output "$plugin" "$url"
-          expected="$(curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 5 "$url.sha256" | cut -d ' ' -f 1)"
-          echo "$expected  $plugin" | sha256sum --check
+          id="$(docker create "docker/compose-bin:${COMPOSE_VERSION}" /docker-compose)"
+          docker cp "$id:/docker-compose" "$plugin"
+          docker rm "$id" > /dev/null
           chmod +x "$plugin"
           docker compose version
       - name: Validate Docker Compose configuration
