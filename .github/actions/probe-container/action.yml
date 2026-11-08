@@ -1,0 +1,20 @@
+name: Probe container
+description: Run an image and require its liveness, readiness and metrics endpoints to answer
+
+inputs:
+  image:
+    description: Image reference to run
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        docker run -d --name srv -p 8000:8000 "$IMAGE"
+        trap 'status=$?; [ "$status" -eq 0 ] || docker logs srv; docker rm -f srv >/dev/null 2>&1 || true' EXIT
+        for path in __live__ __ready__ __metrics__; do
+          curl --fail --retry 10 --retry-delay 1 --retry-connrefused "http://127.0.0.1:8000/$path"
+        done

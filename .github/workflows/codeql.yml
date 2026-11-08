@@ -2,9 +2,9 @@ name: CodeQL
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-    branches: ["main"]
+    branches: [main]
   schedule:
     - cron: "30 4 * * 1"
 
@@ -13,19 +13,25 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze (Python)
+    name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The rust category keeps the name code scanning already has for this workflow on main.
+          - { language: rust, category: ".github/workflows/codeql.yml:analyze" }
+          - { language: actions, category: ".github/workflows/codeql.yml:analyze-actions" }
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
         with:
-          languages: python
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: ${{ matrix.category }}

@@ -1,41 +1,35 @@
 name: Feature request
-description: Suggest an idea or improvement for BlazeServe
-labels: [enhancement]
+description: Propose an improvement
+labels: [enhancement, needs-triage]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for proposing an improvement. Please focus on the user problem and the outcome you want to achieve.
-
   - type: textarea
     id: problem
     attributes:
-      label: User problem
-      description: What problem would this feature solve, and who is affected?
+      label: Problem
+      description: What is hard or impossible today, and who is affected?
     validations:
       required: true
 
   - type: textarea
-    id: solution
+    id: outcome
     attributes:
       label: Proposed outcome
-      description: Describe the user-visible result or behavior you would like.
+      description: The user-visible result you want.
     validations:
       required: true
 
   - type: dropdown
-    id: affected-area
+    id: area
     attributes:
-      label: Affected area
-      description: Which part of BlazeServe would this proposal primarily affect?
+      label: Area
       options:
-        - cli
-        - http
-        - security
-        - performance
-        - observability
-        - deployment
-        - docs
+        - CLI
+        - HTTP
+        - Security
+        - Performance
+        - Observability
+        - Deployment
+        - Documentation
     validations:
       required: true
 
@@ -43,36 +37,19 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: What alternatives, workarounds, or existing tools have you considered?
 
   - type: textarea
-    id: context
+    id: ai
     attributes:
-      label: Additional context
-      description: Add relevant use cases, links, examples, or constraints. Remove private information before submitting.
-
-  - type: textarea
-    id: ai-assistance
-    attributes:
-      label: AI assistance disclosure
-      description: If AI or automation assisted this proposal or will assist implementation, name the tools, explain their role, and identify the accountable human who understands and will test the work. Otherwise write "None."
+      label: AI assistance
+      description: Name any AI tools that helped with this proposal or will help implement it, and the accountable human. Write "None" otherwise.
     validations:
       required: true
 
   - type: checkboxes
-    id: ai-accountability
+    id: checks
     attributes:
-      label: AI-assisted contribution policy
+      label: Checks
       options:
-        - label: I disclosed AI or automation assistance above, or confirmed that none was used; I understand disclosure is for careful human review, not AI detection.
-          required: true
-
-  - type: checkboxes
-    id: confirmations
-    attributes:
-      label: Submission checks
-      options:
-        - label: I checked existing issues for duplicates or related proposals.
-          required: true
-        - label: This proposal fits BlazeServe's purpose as a Python HTTP file server and CLI.
+        - label: I searched existing issues for duplicates.
           required: true

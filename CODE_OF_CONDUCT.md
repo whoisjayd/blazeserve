@@ -1,41 +1,43 @@
-# Contributor Covenant Code of Conduct
+# Code of Conduct
 
-## Our Pledge
+## Our pledge
 
-We pledge to make participation in this project and our community a harassment-free experience for everyone.
+We want everyone to be able to take part in this project without being harassed.
 
-## Our Standards
+## What we expect
 
-Examples of behavior that contributes to a positive environment include:
+Things that help the community:
 
--   Demonstrating empathy and kindness
--   Being respectful of differing viewpoints
--   Accepting constructive feedback
+- Showing empathy and kindness
+- Respecting different viewpoints
+- Accepting feedback graciously
 
-Unacceptable behavior includes:
+Things that are not acceptable:
 
--   Harassment, trolling, or insults
--   Publishing others’ private information
--   Other conduct which could reasonably be considered inappropriate
+- Harassment, trolling or insults
+- Sharing someone else's private information
+- Anything else that would reasonably be seen as inappropriate
 
-## Enforcement Responsibilities
+## Who is responsible
 
-Project maintainers are responsible for clarifying standards and taking appropriate corrective action.
+Project maintainers explain these standards and take action when they are broken.
 
-## Scope
+## Where it applies
 
-This Code applies within project spaces and when representing the project in public spaces.
+This code applies in all project spaces, and whenever someone represents the project in public.
 
-## Enforcement
+## Reporting a problem
 
-Report abuse to **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)**. All complaints will be reviewed and investigated.
+Please report abuse to **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)**. Every report will be reviewed and looked into.
 
-## Enforcement Guidelines
+## What may happen
 
-1. **Correction** – Private, written warning.
-2. **Warning** – Consequences for continued behavior.
-3. **Temporary Ban** – Temporary suspension.
-4. **Permanent Ban** – Permanent removal from community spaces.
+Maintainers decide on a case by case basis. The usual steps are:
+
+1. A private, written warning.
+2. A warning that spells out the consequences if the behaviour continues.
+3. A temporary ban from community spaces.
+4. A permanent ban.
 
 ## Attribution
 

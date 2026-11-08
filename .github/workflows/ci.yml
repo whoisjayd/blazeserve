@@ -2,128 +2,170 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-    branches: ["main"]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
 jobs:
-  lint-and-typecheck:
-    name: Code Quality (Ruff & Mypy)
+  quality:
+    name: Format and clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
         with:
-          python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: true
-      - name: Install dependencies
-        run: uv sync --locked --all-extras --dev
-      - name: Lint with Ruff
-        run: uv run ruff check .
-      - name: Format check with Ruff
-        run: uv run ruff format --check .
-      - name: Type check with Mypy
-        run: uv run mypy blazeserve
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
-    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    needs: [lint-and-typecheck]
+    name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    needs: quality
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            toolchain: "1.88"
     steps:
-      - uses: actions/checkout@v6
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: true
-      - name: Install dependencies
-        run: uv sync --locked --all-extras --dev
-      - name: Run Pytest concurrently with Coverage
-        run: uv run pytest -n auto -q --cov=blazeserve --cov-report=xml --cov-report=term-missing
+          toolchain: ${{ matrix.toolchain }}
+          cache-key: ${{ matrix.toolchain }}
+      - run: cargo test --all-targets --locked
 
-  docker-smoke:
-    name: Container Build & Probe Smoke Test
-    needs: [test]
+  coverage:
+    name: Coverage
+    needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Build Docker Image
-        run: docker build -t blazeserve:ci .
-      - name: Run Container & Verify Liveness Probe
-        run: |
-          docker run -d --name test-srv -p 8000:8000 blazeserve:ci
-          trap 'docker rm -f test-srv >/dev/null 2>&1 || true' EXIT
-          sleep 4
-          curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8000/__live__
-          curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8000/__ready__
-          curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8000/__metrics__
-          docker stop test-srv
-  build-package:
-    name: Build & Validate Distribution Packages
-    needs: [test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
         with:
-          python-version: "3.12"
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
         with:
-          enable-cache: true
-      - name: Install dependencies
-        run: uv sync --locked --all-extras --dev
-      - name: Build Wheel & Sdist
-        run: |
-          uv run python -m build
-          uv run twine check dist/*
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --locked --fail-under-lines 80 --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v7
         with:
-          name: dist
-          path: dist/
+          name: lcov
+          path: lcov.info
 
-  deployment-config-validation:
-    name: Offline Deployment Configuration Validation
+  deny:
+    name: Advisories and licenses
     runs-on: ubuntu-latest
-    # Pinned validators: Compose v2.30.3; kubectl v1.32.2; yq v4.45.4;
-    # Python v3.13.2; Prometheus v3.4.0; Nginx v1.27.4; Caddy v2.9.1;
-    # Traefik v3.3.4. systemd-analyze is the runner-provided Ubuntu version.
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - name: Set up Docker Compose v2.30.3
-        uses: docker/setup-compose-action@v1
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+      - uses: taiki-e/install-action@v2
         with:
-          version: v2.30.3
+          tool: cargo-deny
+      - run: cargo deny check
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+
+  package:
+    name: Wheel (${{ matrix.os }})
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the wheel and, on Linux, the source distribution
+        shell: bash
+        run: |
+          pipx run --spec 'maturin>=1.9.4,<2' maturin build --release --locked --out dist
+          if [ "$RUNNER_OS" = Linux ]; then
+            pipx run --spec 'maturin>=1.9.4,<2' maturin sdist --out dist
+          fi
+      - name: Check and smoke-test the wheel
+        shell: bash
+        run: |
+          pipx run twine check dist/*
+          python -m pip install --force-reinstall --no-index --find-links dist blazeserve
+          blaze version
+          python -m pip install pytest
+          python -m pytest -q tests_py
+
+  container:
+    name: Container probes
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - run: docker build -t blazeserve:ci .
+      - uses: ./.github/actions/probe-container
+        with:
+          image: blazeserve:ci
+
+  crate:
+    name: Crate package
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+      - run: cargo package --locked
+
+  deploy-config:
+    name: Deployment config
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Pinned validators: Compose v5.7.0; kubectl v1.37.2; yq v4.54.2;
+    # Python v3.15.2; Bash v5.3.20; Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9;
+    # Traefik v3.7.17. systemd-analyze is the runner-provided Ubuntu version.
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Compose v5.7.0
+        uses: docker/setup-compose-action@v2
+        with:
+          version: v5.7.0
       - name: Validate Docker Compose configuration
         run: docker compose -f docker-compose.yml config --quiet
       - name: Render Kubernetes base and validate Kubernetes YAML
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work registry.k8s.io/kubectl:v1.32.2 kustomize deploy/k8s > /tmp/blazeserve-k8s.yaml
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval-all -e '.' deploy/k8s/*.yaml > /dev/null
-          kinds="$(docker run --rm -i mikefarah/yq:4.45.4 eval -N -r '.kind' - < /tmp/blazeserve-k8s.yaml | sort)"
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work registry.k8s.io/kubectl:v1.37.2 kustomize deploy/k8s > /tmp/blazeserve-k8s.yaml
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.54.2 eval-all -e '.' deploy/k8s/*.yaml > /dev/null
+          kinds="$(docker run --rm -i mikefarah/yq:4.54.2 eval -N -r '.kind' - < /tmp/blazeserve-k8s.yaml | sort)"
           test "$kinds" = $'Deployment\nService' || {
             printf 'default deploy/k8s base must render only Deployment and Service; got:\n%s\n' "$kinds" >&2
             exit 1
@@ -131,8 +173,8 @@ jobs:
       - name: Validate Linux tuning syntax and documented format subset
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly bash:5.2.37 -n /work/deploy/linux-tuning/tuning.sh
-          docker run --rm -i --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python - <<'PY'
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly bash:5.3.20 -n /work/deploy/linux-tuning/tuning.sh
+          docker run --rm -i --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python - <<'PY'
           from pathlib import Path
           import re
 
@@ -159,26 +201,25 @@ jobs:
       - name: Validate monitoring configuration
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check config /etc/prometheus/prometheus.yml
-          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.4.0 check rules /etc/prometheus/alerts.yml
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.13.2-alpine3.21 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json > /dev/null
+          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check rules /etc/prometheus/alerts.yml
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json > /dev/null
       - name: Validate reverse-proxy configuration
         run: |
           set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/nginx.conf",dst=/etc/nginx/nginx.conf,readonly nginx:1.27.4-alpine nginx -t -c /etc/nginx/nginx.conf
-          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/Caddyfile",dst=/etc/caddy/Caddyfile,readonly caddy:2.9.1-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/nginx.conf",dst=/etc/nginx/nginx.conf,readonly nginx:1.31.8-alpine nginx -t -c /etc/nginx/nginx.conf
+          docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy/Caddyfile",dst=/etc/caddy/Caddyfile,readonly caddy:2.11.9-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           set +e
-          timeout 5s docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy",dst=/etc/traefik,readonly --entrypoint traefik traefik:v3.3.4 --configFile=/etc/traefik/traefik.yml
+          timeout 5s docker run --rm --mount type=bind,src="$PWD/deploy/reverse-proxy",dst=/etc/traefik,readonly --entrypoint traefik traefik:v3.7.17 --configFile=/etc/traefik/traefik.yml
           status=$?
           set -e
           test "$status" -eq 124 || {
             printf 'Traefik configuration validation exited unexpectedly with status %s\n' "$status" >&2
             exit 1
           }
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.45.4 eval -e '.' deploy/reverse-proxy/traefik-dynamic.yml > /dev/null
+          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly --workdir /work mikefarah/yq:4.54.2 eval -e '.' deploy/reverse-proxy/traefik-dynamic.yml > /dev/null
       - name: Validate systemd unit without starting it
-        # ubuntu-latest supplies systemd-analyze; its version tracks the runner image.
-        # systemd-analyze verify checks unit syntax and validates that ExecStart is executable.
+        # Unpinned: systemd-analyze comes from the runner image.
         run: |
           sudo ln -sf /bin/true /usr/local/bin/blaze
           trap 'sudo rm -f /usr/local/bin/blaze' EXIT

@@ -1,8 +1,5 @@
 * text=auto eol=lf
-
-# Ensure consistent diffs
-*.py diff=python
+*.rs diff=rust
 *.md diff=markdown
-*.yml diff=yaml
-*.toml diff=toml
 LICENSE text eol=lf
+Cargo.lock -diff linguist-generated

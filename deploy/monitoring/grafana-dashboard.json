@@ -13,7 +13,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 1,
-      "title": "⚡ Golden Signals Overview",
+      "title": "Golden signals",
       "type": "row"
     },
     {
@@ -111,7 +111,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
       "id": 6,
-      "title": "⚡ Network & Data I/O",
+      "title": "Network and data I/O",
       "type": "row"
     },
     {
@@ -151,12 +151,50 @@
           "legendFormat": "Ingress"
         }
       ]
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 9,
+      "title": "Admitted connections",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "blazeserve_connections_active",
+          "legendFormat": "Connections"
+        }
+      ]
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 10,
+      "title": "Rejected connections per second",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(blazeserve_connections_rejected_total[1m])",
+          "legendFormat": "Rejected"
+        }
+      ]
     }
   ],
   "schemaVersion": 36,
   "style": "dark",
   "tags": ["blazeserve", "sre", "http", "infrastructure"],
   "time": { "from": "now-1h", "to": "now" },
-  "title": "⚡ BlazeServe Production Telemetry",
+  "title": "BlazeServe",
   "uid": "blazeserve-sre-overview"
 }
