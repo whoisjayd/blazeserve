@@ -1,0 +1,12 @@
+name = "blazeserve-telemetry-relay"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+OTLP_ENDPOINT = "https://otlp-gateway-prod-ap-south-1.grafana.net/otlp"
+
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }

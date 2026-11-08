@@ -1,11 +1,18 @@
-# Traefik v3 Dynamic Configuration for BlazeServe
 http:
   routers:
     blazeserve-router:
       rule: "PathPrefix(`/`)"
       service: blazeserve-service
+      middlewares:
+        - drop-forwarded
       entryPoints:
         - web
+
+  middlewares:
+    drop-forwarded:
+      headers:
+        customRequestHeaders:
+          Forwarded: ""
 
   services:
     blazeserve-service:

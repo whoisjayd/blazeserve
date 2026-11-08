@@ -1,23 +1,28 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Reporting a vulnerability
 
-| Version | Supported          |
-| :------ | :----------------- |
-| `0.3.x` | :white_check_mark: |
-| `< 0.3` | :x:                |
+If you think you have found a security problem, please tell us privately. Email **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)** and include:
 
-## Reporting a Vulnerability
+- the version and platform you tested
+- what you found and what you think the impact is
+- the smallest set of steps or the smallest request that reproduces it
 
-Please report security issues privately to **[contactjaydeepsolanki@gmail.com](mailto:contactjaydeepsolanki@gmail.com)**. We will acknowledge receipt within 72 hours and provide a timeline for the fix after initial triage.
+Please do not open a public issue or pull request, and do not post passwords, keys, exploit details or sensitive logs anywhere public. We will confirm that we received your report within 72 hours and give you a timeline once we have looked into it.
 
-Do not report vulnerabilities in public GitHub Issues, pull requests, or support requests. Do not include credentials, tokens, private keys, exploit details, or sensitive logs in public project spaces. For general support routing, see [SUPPORT.md](SUPPORT.md); for community conduct concerns, see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+## What happens next
 
-## Disclosure Policy
+We check the report, work on a fix and publish a release. Please keep the details private until the fix is out and people have had a fair chance to update.
 
--   We will work with you to validate and remediate the issue.
--   Please do not disclose the vulnerability publicly until a fix is released and users have had reasonable time to update.
+## Supported versions
 
-## Scope
+| Version | Supported |
+| :--- | :--- |
+| 1.x | Yes |
+| Earlier than 1.0 | No. The old Python version is no longer maintained |
 
-Only issues affecting the BlazeServe codebase and published packages are in scope. Third-party dependencies should be reported upstream when appropriate.
+## What is covered
+
+This policy covers the BlazeServe program, its published Python wheels, release archives and container images, and the telemetry relay in `deploy/telemetry-relay`. If the problem is in a library BlazeServe depends on, please report it to that project.
+
+To see what BlazeServe is designed to defend against, and what it is not, read the [security guide](docs/security.md). Release files come with build provenance. You can check one with `gh attestation verify <file> --repo whoisjayd/blazeserve`.
