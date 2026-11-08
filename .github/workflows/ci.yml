@@ -149,11 +149,24 @@ jobs:
     name: Deployment config
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Pinned validators: kubectl v1.37.2; yq v4.54.2; Python v3.15.2; Bash v5.3.20;
+    # Pinned validators: Compose v5.7.0; kubectl v1.37.2; yq v4.54.2; Python v3.15.2; Bash v5.3.20;
     # Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9; Traefik v3.7.17.
-    # Docker Compose and systemd-analyze are the versions on the runner image.
+    # systemd-analyze is the runner-provided Ubuntu version.
     steps:
       - uses: actions/checkout@v7
+      - name: Install Docker Compose v5.7.0
+        env:
+          COMPOSE_VERSION: v5.7.0
+        run: |
+          set -Eeuo pipefail
+          url="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64"
+          plugin="$HOME/.docker/cli-plugins/docker-compose"
+          mkdir -p "$(dirname "$plugin")"
+          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 5 --output "$plugin" "$url"
+          expected="$(curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 5 "$url.sha256" | cut -d ' ' -f 1)"
+          echo "$expected  $plugin" | sha256sum --check
+          chmod +x "$plugin"
+          docker compose version
       - name: Validate Docker Compose configuration
         run: docker compose -f docker-compose.yml config --quiet
       - name: Render Kubernetes base and validate Kubernetes YAML
