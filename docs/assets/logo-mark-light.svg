@@ -1,5 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-labelledby="t">
-  <title id="t">BlazeServe</title>
-  <rect x="42" y="10" width="16" height="34" rx="8" fill="#11111b"/>
-  <polyline points="24,58 50,84 76,58" fill="none" stroke="#f5a524" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" aria-labelledby="t" role="img" viewBox="0 0 100 100"><title id="t">BlazeServe</title><rect width="16" height="34" x="42" y="10" fill="#11111b" rx="8"/><polyline fill="none" stroke="#f5a524" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" points="24 58 50 84 76 58"/></svg>
