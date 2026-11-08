@@ -236,10 +236,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
+      - run: pipx run --spec 'maturin>=1.9.4,<2' maturin sdist --out dist
       - uses: actions/upload-artifact@v7
         with:
           name: sdist

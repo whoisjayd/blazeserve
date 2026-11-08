@@ -106,15 +106,13 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          args: --release --locked --out dist
-      - uses: PyO3/maturin-action@v1
-        if: matrix.os == 'ubuntu-latest'
-        with:
-          command: sdist
-          args: --out dist
+      - name: Build the wheel and, on Linux, the source distribution
+        shell: bash
+        run: |
+          pipx run --spec 'maturin>=1.9.4,<2' maturin build --release --locked --out dist
+          if [ "$RUNNER_OS" = Linux ]; then
+            pipx run --spec 'maturin>=1.9.4,<2' maturin sdist --out dist
+          fi
       - name: Check and smoke-test the wheel
         shell: bash
         run: |
