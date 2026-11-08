@@ -149,15 +149,11 @@ jobs:
     name: Deployment config
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Pinned validators: Compose v5.7.0; kubectl v1.37.2; yq v4.54.2;
-    # Python v3.15.2; Bash v5.3.20; Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9;
-    # Traefik v3.7.17. systemd-analyze is the runner-provided Ubuntu version.
+    # Pinned validators: kubectl v1.37.2; yq v4.54.2; Python v3.15.2; Bash v5.3.20;
+    # Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9; Traefik v3.7.17.
+    # Docker Compose and systemd-analyze are the versions on the runner image.
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Docker Compose v5.7.0
-        uses: docker/setup-compose-action@v2
-        with:
-          version: v5.7.0
       - name: Validate Docker Compose configuration
         run: docker compose -f docker-compose.yml config --quiet
       - name: Render Kubernetes base and validate Kubernetes YAML
