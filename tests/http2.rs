@@ -202,6 +202,40 @@ async fn many_streams_on_one_connection_succeed_beyond_the_stream_limit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_opens_streams_too_fast_gets_429_while_others_are_served() {
+    let (_dir, handle) = start(|_| {}).await;
+    let mut flooder = h2c(handle.local_addr()).await;
+
+    let mut statuses = Vec::new();
+    for _ in 0..1500 {
+        statuses.push(
+            fetch(&mut flooder, "GET", "/__live__", &[], b"")
+                .await
+                .status,
+        );
+    }
+    // The burst allowance is always granted before any refill can matter.
+    assert!(
+        statuses[..256].iter().all(|s| *s == StatusCode::OK),
+        "burst was not honoured"
+    );
+    assert!(
+        statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
+        "1500 back-to-back streams were never throttled"
+    );
+
+    let mut other = h2c(handle.local_addr()).await;
+    let r = fetch(&mut other, "GET", "/__live__", &[], b"").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        http_common::get(handle.local_addr(), "/__live__").status,
+        200
+    );
+    wait_idle(&handle).await;
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn zip_download_works_over_h2_and_http1_still_closes() {
     let (_dir, handle) = start(|_| {}).await;
     let mut c = h2c(handle.local_addr()).await;
