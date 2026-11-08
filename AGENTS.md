@@ -36,7 +36,7 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | `src/python.rs`, `python/blazeserve/`, `tests_py/` | PyO3 bindings (feature `python`), the thin Python package with its type stubs, and the pytest suite run against the built wheel |
 | `pyproject.toml` | maturin metadata for the abi3 wheels and the `blaze` console script |
 | `tests/` | Integration tests against a live server. Unit tests sit in `#[cfg(test)]` modules |
-| `docs/` | The user guides, and `assets/` with the README demo animation. `README.md` is the front page and links to them |
+| `docs/` | The user guides, and `assets/` with the logo, social preview, README demo animation and the VHS tapes that record it. `README.md` is the front page and links to them |
 | `.github/workflows/` | `ci.yml` and `release.yml`, the authoritative gates |
 | `Dockerfile`, `docker-compose.yml` | The `scratch` image, running as uid and gid 10001 |
 | `deploy/` | Kubernetes, systemd, proxy, monitoring, Linux tuning and the telemetry relay. Start at `deploy/README.md` |

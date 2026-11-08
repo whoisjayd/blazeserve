@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/whoisjayd/blazeserve/main/docs/assets/logo-mark.svg" />
+  <img src="https://raw.githubusercontent.com/whoisjayd/blazeserve/main/docs/assets/logo-mark-light.svg" alt="BlazeServe logo" width="88" />
+</picture>
+
 # BlazeServe
 
 **A file server for large files.**<br />
@@ -14,7 +19,9 @@ Share a folder or a single file in one command, and pick up interrupted download
 
 <br />
 
-<img src="https://raw.githubusercontent.com/whoisjayd/blazeserve/main/docs/assets/demo.gif" alt="A one minute tour: serve a folder, resume a dropped download, check files, upload, and read metrics and logs" width="880" />
+<img src="https://raw.githubusercontent.com/whoisjayd/blazeserve/main/docs/assets/demo.gif" alt="A tour of BlazeServe: serve a folder, resume a dropped download, check files, upload, and read metrics and logs" width="880" />
+
+[Watch the full video](https://github.com/whoisjayd/blazeserve/blob/main/docs/assets/demo.mp4) (88 seconds, MP4)
 
 </div>
 
