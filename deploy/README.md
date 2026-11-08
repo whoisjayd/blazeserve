@@ -92,7 +92,7 @@ blaze serve /srv/files --host 127.0.0.1 --trust-proxy 127.0.0.1/32
 
 `--trust-proxy` can be repeated. For a request from a trusted peer, BlazeServe reads `Forwarded` or `X-Forwarded-For` and walks the chain from the right, skipping trusted hops. The first untrusted address becomes the client identity, and `--max-proxy-hops` bounds the walk. A peer outside the trusted set has these headers ignored, and the immediate peer is logged in its own field.
 
-This holds only if clients cannot reach BlazeServe directly. Bind it to loopback or a private network and firewall the port. The proxy must also set `X-Forwarded-For`; `nginx.conf` does this with `$proxy_add_x_forwarded_for`. Check that your Caddy and Traefik setups forward it. If the proxy sits behind another trusted proxy, list both networks.
+This holds only if clients cannot reach BlazeServe directly. Bind it to loopback or a private network and firewall the port. The proxy must also set `X-Forwarded-For`; `nginx.conf` does this with `$proxy_add_x_forwarded_for`. Check that your Caddy and Traefik setups forward it. `Forwarded` takes precedence over `X-Forwarded-For`, so the proxy must also drop any client-supplied `Forwarded` header, as all three examples do; otherwise a client can choose its own identity. If the proxy sits behind another trusted proxy, list both networks.
 
 ## Monitoring
 

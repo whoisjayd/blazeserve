@@ -3,8 +3,16 @@ http:
     blazeserve-router:
       rule: "PathPrefix(`/`)"
       service: blazeserve-service
+      middlewares:
+        - drop-forwarded
       entryPoints:
         - web
+
+  middlewares:
+    drop-forwarded:
+      headers:
+        customRequestHeaders:
+          Forwarded: ""
 
   services:
     blazeserve-service:
