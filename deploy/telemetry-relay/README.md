@@ -1,42 +1,29 @@
 # Telemetry relay
 
-A small Cloudflare Worker that receives BlazeServe's anonymous usage events, validates them
-against a strict allowlist, and forwards them to an OTLP/HTTP logs endpoint. It exists so
-the backend credential stays on the server: the released binary only knows this Worker's
-public URL.
+This is a small Cloudflare Worker. It receives BlazeServe's anonymous usage reports, checks them against a strict list of allowed fields, and passes them on to a metrics backend. It exists so the backend password stays on a server. The released program only knows this Worker's public address.
 
-What it does and does not do:
+You only need this if you publish your own build of BlazeServe. For what users see, read the [telemetry guide](../../docs/telemetry.md).
 
-- Accepts `POST /v1/event` only, with a body of at most 2 KB.
-- Rejects any field outside the allowlist, any value outside the enumerated sets, and any
-  extra or missing key. The allowlist lives in `worker.js` and mirrors `src/usage/payload.rs`.
-- Never stores the client address or user agent. The address is used for a moment as the
-  rate-limit key and then dropped. Only the attributes below are forwarded.
-- Does not use or forward an install identifier. The client does not send one.
-- Returns `204` on success, `400` invalid, `413` too large, `429` rate limited, `502` backend
-  failure and `503` when the Worker is not configured.
+## What it does and does not do
+
+- It accepts `POST /v1/event` only, with a body of at most 2 KB.
+- It rejects any field that is not on the list, any value outside the allowed sets, and any extra or missing key. The list lives in `worker.js` and mirrors `src/usage/payload.rs`.
+- It never stores the sender's address or user agent. The address is used for a moment to rate-limit and is then dropped. Only the attributes below are forwarded.
+- It does not use an install identifier, because the program does not send one.
+- It answers `204` on success, `400` for an invalid report, `413` if too large, `429` if rate limited, `502` if the backend fails, and `503` if the Worker is not configured.
 
 ## What it writes
 
-One OTLP log record per event, sent to `/v1/logs`. Each record has the attributes `event`,
-`version`, `os`, `arch`, `command`, `install_channel` and a `feature.<name>` boolean for each
-feature. Stop events add `uptime_bucket`, `requests_bucket`, `bytes_sent_bucket` and
-`had_errors`. Records are individual events, so the Worker holds no counter state.
+One OpenTelemetry log record per report, sent to `/v1/logs`. Each record has the attributes `event`, `version`, `os`, `arch`, `command`, `install_channel` and a `feature.<name>` yes or no value for each feature. Stop reports add `uptime_bucket`, `requests_bucket`, `bytes_sent_bucket` and `had_errors`. Because each report is its own record, the Worker keeps no counters.
 
-Logs are used because a stateless Worker cannot keep the running total that cumulative
-counters need, and Grafana Cloud rejects delta counters. In Grafana, query the Loki data
-source, for example `sum by (os) (count_over_time({service_name="blazeserve-usage"}[24h]))`.
-The access policy token needs the `logs:write` scope.
+Logs are used because a Worker with no memory between requests cannot keep the running totals that cumulative counters need, and Grafana Cloud does not accept delta counters. In Grafana, query the Loki data source, for example `sum by (os) (count_over_time({service_name="blazeserve-usage"}[24h]))`. The access token needs the `logs:write` scope.
 
-## Deploy
+## Deploy it
 
 You need a Cloudflare account and Node.js.
 
-1. Edit `wrangler.toml` and set `OTLP_ENDPOINT` to your backend's OTLP base URL, without
-   `/v1/logs`. Replace the `<region>` placeholder.
-2. Log in and set the credential as a Worker secret. The value is the whole `Authorization`
-   header your backend expects, for example `Basic <base64 of instanceID:token>`. Paste it at
-   the prompt. Never put it in a file or on a command line.
+1. Edit `wrangler.toml` and set `OTLP_ENDPOINT` to your backend's OTLP base address, without `/v1/logs`. Replace the `<region>` placeholder.
+2. Log in and store the credential as a Worker secret. The value is the whole `Authorization` header your backend expects, for example `Basic <base64 of instanceID:token>`. Paste it at the prompt, and never put it in a file or on a command line.
 
    ```console
    npx wrangler login
@@ -44,34 +31,31 @@ You need a Cloudflare account and Node.js.
    npx wrangler deploy
    ```
 
-3. Note the URL Wrangler prints, for example `https://blazeserve-telemetry-relay.<account>.workers.dev`.
-4. Build release binaries with that URL baked in:
+3. Note the address Wrangler prints, for example `https://blazeserve-telemetry-relay.<account>.workers.dev`.
+4. Build release binaries with that address built in.
 
-   POSIX shell:
+   Linux and macOS:
 
    ```console
    BLAZE_TELEMETRY_URL=https://blazeserve-telemetry-relay.example.workers.dev cargo build --release
    ```
 
-   PowerShell:
+   Windows PowerShell:
 
    ```powershell
    $env:BLAZE_TELEMETRY_URL = 'https://blazeserve-telemetry-relay.example.workers.dev'
    cargo build --release
    ```
 
-   A build without this variable is inert: it never sends anything. Users can still override
-   it at run time with the same variable.
+   A build without this variable never sends anything. Users can still override it at run time with the same variable.
 
-The `ratelimit` binding in `wrangler.toml` allows 20 events per minute per address. If you
-remove it, the Worker falls back to a per-isolate counter that resets whenever the isolate is
-evicted, which is a weaker limit.
+The `ratelimit` binding in `wrangler.toml` allows 20 reports per minute per address. If you remove it, the Worker falls back to a counter that resets whenever Cloudflare recycles the Worker, which is a weaker limit.
 
-## Check it
+## Check that it works
 
-Replace the URL with yours. A valid event returns `204`.
+Replace the address with yours. A valid report returns `204`.
 
-POSIX shell:
+Linux and macOS:
 
 ```console
 URL=https://blazeserve-telemetry-relay.example.workers.dev/v1/event
@@ -81,7 +65,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -d '{"path":"/home/x"}' "$URL"
 curl -s -o /dev/null -w '%{http_code}\n' "$URL"
 ```
 
-PowerShell:
+Windows PowerShell:
 
 ```powershell
 $url = 'https://blazeserve-telemetry-relay.example.workers.dev/v1/event'
@@ -91,14 +75,14 @@ curl.exe -s -o NUL -w '%{http_code}`n' -X POST -d '{"path":"/home/x"}' $url
 curl.exe -s -o NUL -w '%{http_code}`n' $url
 ```
 
-Expected: `204`, then `400` for the extra field, then `405` for the GET.
+You should see `204`, then `400` for the extra field, then `405` for the GET.
 
-## Test locally
+## Test it locally
 
-No dependencies are needed beyond Node.js 20 or newer:
+You only need Node.js 20 or newer:
 
 ```console
 node --test deploy/telemetry-relay/worker.test.mjs
 ```
 
-The Rust test suite also fails if the allowed values in `worker.js` drift from `src/usage/payload.rs`.
+The Rust tests also fail if the allowed values in `worker.js` drift away from `src/usage/payload.rs`.

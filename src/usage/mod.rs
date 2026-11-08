@@ -1,4 +1,4 @@
-//! Anonymous, opt-out usage telemetry. The README "Telemetry" section is the public contract.
+//! Anonymous, opt-out usage telemetry. `docs/telemetry.md` is the public contract.
 //!
 //! Nothing here may block, slow or fail a command: every error degrades to "do not send".
 

@@ -1,34 +1,38 @@
 # Deployment
 
-BlazeServe is one static binary: run it directly, under systemd, or in a container. Every example here binds loopback or a private network. Before exposing it publicly, require authentication, terminate TLS (built in or at a proxy), and decide on an upload policy.
+BlazeServe is one program, so you can run it directly, under systemd, or in a container. The examples here all listen on the loopback address or a private network. Before you open a server to the internet, set a password, use HTTPS (built in, or at a proxy), and decide whether to allow uploads.
 
-- BlazeServe binds its own socket; systemd socket activation is not supported.
-- TLS certificate rotation needs a restart. There is no in-process reload.
-- `Ctrl+C` or `SIGTERM` closes the listener at once and gives in-flight requests a bounded grace period.
-- Uploads are off unless `--max-upload-mb` is a positive number. Enable them only with `--auth` or `--auth-env` and writable storage; the examples below mount data read-only.
+A few things to know up front:
+
+- BlazeServe opens its own port. It does not support systemd socket activation.
+- Certificates are read at startup. After renewing one, restart the server.
+- `Ctrl+C` or `SIGTERM` stops it accepting new connections at once and gives running downloads a short time to finish.
+- Uploads are off unless `--max-upload-mb` is set above zero. Turn them on only with a password and writable storage. The examples below mount data read-only.
+
+For what each option does, see the [documentation](../docs/README.md), especially [Serving files](../docs/serving-files.md).
 
 ## Docker and Compose
 
-The image is built from `scratch` with a static musl binary and runs as uid/gid 10001. It has no shell and no in-image health check; probe `/__live__` and `/__ready__` from your orchestrator.
+The image is built from `scratch` with a static binary and runs as user and group 10001. It has no shell and no built-in health check, so have your orchestrator probe `/__live__` and `/__ready__`.
 
 ```bash
-# POSIX
+# Linux and macOS
 docker run --rm -p 8000:8000 -v "$PWD/data:/data:ro" ghcr.io/whoisjayd/blazeserve:latest
 ```
 
 ```powershell
-# PowerShell
+# Windows PowerShell
 docker run --rm -p 8000:8000 -v "${PWD}\data:/data:ro" ghcr.io/whoisjayd/blazeserve:latest
 ```
 
-`docker-compose.yml` runs the same image with a read-only root, `no-new-privileges`, all capabilities dropped, a 64 MiB `/tmp`, and limits of 2 CPUs and 256 MiB.
+`docker-compose.yml` runs the same image with a read-only root filesystem, `no-new-privileges`, all capabilities dropped, a 64 MiB `/tmp`, and limits of 2 CPUs and 256 MiB of memory.
 
 ```console
 docker compose up -d
 docker compose logs -f blazeserve
 ```
 
-Compose passes `BLAZE_TELEMETRY` and the `OTEL_*` variables through from the host when they are set, so no value is stored in the file. To enable uploads, mount a writable volume, set `--max-upload-mb` and require authentication.
+Compose passes `BLAZE_TELEMETRY` and the `OTEL_*` variables through from your shell when they are set, so no values are stored in the file. To allow uploads, mount a writable volume, set `--max-upload-mb` and require a password.
 
 ## Kubernetes
 
@@ -37,25 +41,25 @@ kubectl apply -k deploy/k8s/
 kubectl rollout status deployment/blazeserve
 ```
 
-The Kustomize base contains only `deployment.yaml` and `service.yaml`: one pod and a ClusterIP Service on port 80. The pod runs as uid/gid 10001 with a read-only root filesystem, a read-only data mount, dropped capabilities, resource limits, and liveness and readiness probes on `/__live__` and `/__ready__`.
+The base contains two files: a Deployment with one pod, and a ClusterIP Service on port 80. The pod runs as user and group 10001 with a read-only root filesystem, a read-only data mount, dropped capabilities, resource limits, and probes on `/__live__` and `/__ready__`.
 
-Replicas stay at `1` because the data volume is an `emptyDir`, which is ephemeral and not shared between pods. Replace it with storage that has the access semantics you need before scaling out.
+The deployment stays at one replica because its data volume is an `emptyDir`, which disappears with the pod and is not shared between pods. If you want more replicas, replace it with storage that suits your needs first.
 
-Two manifests are optional and left out of the base, so applying it never exposes the service:
+Two more files are optional and are left out of the base, so applying it never exposes the service by accident:
 
-- `ingress.yaml` is for the Nginx Ingress Controller. Replace `files.example.com` first. It turns proxy buffering off and sets `proxy-body-size` to `100m`, so raise that if you enable large uploads.
-- `servicemonitor.yaml` is for clusters with the Prometheus Operator CRDs. It scrapes `/__metrics__` through the Service every 10 seconds.
+- `ingress.yaml` is for the Nginx Ingress Controller. Replace `files.example.com` first. It turns proxy buffering off and sets the body limit to `100m`, so raise that if you enable large uploads.
+- `servicemonitor.yaml` is for clusters with the Prometheus Operator. It scrapes `/__metrics__` through the Service every 10 seconds.
 
 ```console
 kubectl apply -f deploy/k8s/ingress.yaml
 kubectl apply -f deploy/k8s/servicemonitor.yaml
 ```
 
-To turn off usage telemetry, add `BLAZE_TELEMETRY=0` under the container `env` in `deployment.yaml`.
+To turn off the usage report, add `BLAZE_TELEMETRY=0` under the container's `env` in `deployment.yaml`.
 
 ## systemd
 
-`systemd/blazeserve.service` is a hardened unit that serves `/srv/blazeserve` on `127.0.0.1:8000`. It trusts forwarded client addresses only from `127.0.0.1/32`, matching the local proxy examples; drop `--trust-proxy` if nothing proxies to it.
+`systemd/blazeserve.service` is a hardened unit that serves `/srv/blazeserve` on `127.0.0.1:8000`. It trusts forwarded visitor addresses only from `127.0.0.1/32`, which matches the local proxy examples below. If nothing proxies to it, remove `--trust-proxy` from the unit.
 
 ```bash
 sudo useradd -r -u 10001 -s /sbin/nologin -d /srv/blazeserve blazeserve
@@ -68,69 +72,69 @@ sudo systemctl enable --now blazeserve.service
 journalctl -u blazeserve.service -f
 ```
 
-`blaze` comes from a release archive; use the musl build on older distributions. `ReadWritePaths` matters only when uploads are enabled.
+Get `blaze` from a release archive, and use the musl build on older distributions. `ReadWritePaths` in the unit only matters if you enable uploads.
 
 ## Windows and macOS
 
-Download the archive for your platform from [Releases](https://github.com/whoisjayd/blazeserve/releases), check it against `SHA256SUMS`, and run `blaze serve`. The repository ships no Windows service or launchd definition; use your platform's service manager.
+Download the archive for your system from [Releases](https://github.com/whoisjayd/blazeserve/releases), check it against `SHA256SUMS`, and run `blaze serve`. The repository does not include a Windows service or launchd definition, so use your system's own service manager if you want it to start automatically.
 
 ## Reverse proxy
 
-`reverse-proxy/` holds configurations for Nginx, Caddy and Traefik v3. Each streams without buffering, because buffering turns range requests and multi-gigabyte downloads into double disk I/O.
+`reverse-proxy/` has configurations for Nginx, Caddy and Traefik v3. Each one passes data through without buffering, because buffering turns range requests and multi-gigabyte downloads into extra disk work.
 
 | Proxy | Setting |
 | :--- | :--- |
 | Nginx | `proxy_buffering off;` and `proxy_request_buffering off;` |
 | Caddy | `flush_interval -1` |
-| Traefik | direct pass-through with a health check on `/__live__` |
+| Traefik | Direct pass-through, with a health check on `/__live__` |
 
-Behind a proxy every connection comes from the proxy's address, so rate limits and logs would share one identity. Pass the proxy's address or network:
+Behind a proxy, every connection appears to come from the proxy's address, so speed limits and logs would treat all visitors as one. Tell BlazeServe which proxy to trust:
 
 ```console
 blaze serve /srv/files --host 127.0.0.1 --trust-proxy 127.0.0.1/32
 ```
 
-`--trust-proxy` can be repeated. For a request from a trusted peer, BlazeServe reads `Forwarded` or `X-Forwarded-For` and walks the chain from the right, skipping trusted hops. The first untrusted address becomes the client identity, and `--max-proxy-hops` bounds the walk. A peer outside the trusted set has these headers ignored, and the immediate peer is logged in its own field.
+You can repeat `--trust-proxy`. When a request comes from a trusted proxy, BlazeServe reads the `Forwarded` or `X-Forwarded-For` header and walks the list from the right, skipping trusted proxies. The first address that is not trusted is the visitor. `--max-proxy-hops` limits how far it looks. Headers from anyone else are ignored, and the address that actually connected is logged separately as `peer_ip`.
 
-This holds only if clients cannot reach BlazeServe directly. Bind it to loopback or a private network and firewall the port. The proxy must also set `X-Forwarded-For`; `nginx.conf` does this with `$proxy_add_x_forwarded_for`. Check that your Caddy and Traefik setups forward it. `Forwarded` takes precedence over `X-Forwarded-For`, so the proxy must also drop any client-supplied `Forwarded` header, as all three examples do; otherwise a client can choose its own identity. If the proxy sits behind another trusted proxy, list both networks.
+This is only safe if visitors cannot reach BlazeServe directly, so bind it to the loopback address or a private network and firewall the port. Your proxy must also set `X-Forwarded-For`; the Nginx example does this with `$proxy_add_x_forwarded_for`, and you should check that your Caddy and Traefik setups do the same. Because `Forwarded` wins over `X-Forwarded-For`, the proxy must also remove any `Forwarded` header a visitor sends, as all three examples do. Without that, a visitor can pick their own identity. If your proxy sits behind another trusted proxy, list both networks.
 
 ## Monitoring
 
-`monitoring/` has a Prometheus scrape config, alert rules and a Grafana dashboard. Prometheus scrapes `/__metrics__`; series are listed in the main [README](../README.md#metrics-and-logs). Keep the endpoint off untrusted networks.
+`monitoring/` has a Prometheus scrape config, alert rules and a Grafana dashboard. Prometheus reads `/__metrics__`, and the metrics are listed in the [monitoring guide](../docs/monitoring.md#metrics). Keep that address off untrusted networks.
 
-- **Alerts** (`alerts.yml`): `BlazeServeInstanceDown`, `BlazeServeHighErrorRate`, `BlazeServeHighActiveRequests` and `BlazeServeConnectionsRejected`.
-- **Scrape target:** `prometheus.yml` defaults to `blazeserve.default.svc.cluster.local:80`, the Service from `k8s/service.yaml`. Use `127.0.0.1:8000` for the systemd unit, or `blazeserve:8000` when Prometheus shares the Compose network. Mount both `prometheus.yml` and `alerts.yml` into Prometheus.
-- **Dashboard:** import `monitoring/grafana-dashboard.json` from Dashboards, then New, then Import, and pick the Prometheus data source that uses this scrape config.
+- **Alerts** in `alerts.yml`: `BlazeServeInstanceDown`, `BlazeServeHighErrorRate`, `BlazeServeHighActiveRequests` and `BlazeServeConnectionsRejected`.
+- **Scrape target:** `prometheus.yml` points at `blazeserve.default.svc.cluster.local:80`, the Service from `k8s/service.yaml`. Use `127.0.0.1:8000` for the systemd unit, or `blazeserve:8000` when Prometheus shares the Compose network. Give Prometheus both `prometheus.yml` and `alerts.yml`.
+- **Dashboard:** in Grafana choose Dashboards, then New, then Import, load `monitoring/grafana-dashboard.json`, and pick the Prometheus data source that uses this scrape config.
 
-OTLP export of traces and metrics is configured with the variables in the README's [OpenTelemetry](../README.md#opentelemetry) section. OTLP metrics use the `http.server.*` names, separate from the `blazeserve_*` series the dashboard and alerts use.
+Traces and metrics can also be exported with OpenTelemetry, described in the [monitoring guide](../docs/monitoring.md#opentelemetry). Those metrics use the `http.server.*` names and are separate from the `blazeserve_*` series the dashboard and alerts use.
 
-For a local OTLP backend, the `observability` Compose profile starts `grafana/otel-lgtm`, with Grafana, Tempo, Loki and Prometheus in one container. Its ports are published on loopback only and it uses default credentials, so keep it to local use.
+For a local backend to try things out, the `observability` Compose profile starts `grafana/otel-lgtm`, which bundles Grafana, Tempo, Loki and Prometheus in one container. Its ports are published on loopback only and it uses default credentials, so keep it to local use.
 
 ```bash
-# POSIX
+# Linux and macOS
 OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4318 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
   docker compose --profile observability up -d
 ```
 
 ```powershell
-# PowerShell
+# Windows PowerShell
 $env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://lgtm:4318"
 $env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
 docker compose --profile observability up -d
 ```
 
-Open Grafana at `http://localhost:3000`.
+Then open Grafana at `http://localhost:3000`.
 
 ## Linux tuning
 
-`linux-tuning/tuning.sh` takes `--check` (the default), `--dry-run` or `--apply`. `--apply` writes `/etc/sysctl.d/99-blazeserve.conf`. `sysctl-blazeserve.conf` and `limits.conf` are the same values for manual use.
+`linux-tuning/tuning.sh` takes `--check` (the default), `--dry-run` or `--apply`. With `--apply` it writes `/etc/sysctl.d/99-blazeserve.conf`. `sysctl-blazeserve.conf` and `limits.conf` hold the same values if you would rather apply them by hand.
 
 ```console
 ./deploy/linux-tuning/tuning.sh --check
 sudo ./deploy/linux-tuning/tuning.sh --apply
 ```
 
-`--backlog` is capped by `net.core.somaxconn`. File descriptor limits matter at a high `--max-connections`; the systemd unit sets `LimitNOFILE`. Measure before changing defaults; the method is in the README's [Performance](../README.md#performance) section.
+`--backlog` cannot exceed `net.core.somaxconn`. If you raise `--max-connections` a lot, also check the open file limit; the systemd unit sets `LimitNOFILE`. Measure before changing defaults, as described in the [performance guide](../docs/performance.md).
 
 ## Diagnostics
 
@@ -139,4 +143,4 @@ blaze doctor /srv/files --port 8000
 blaze doctor /srv/files --json
 ```
 
-It checks the path, port binding, async I/O, TLS readiness and the file descriptor limit. `--json` exits non-zero on failure.
+`doctor` checks the folder, whether the port can be bound, async I/O support, TLS readiness and the open file limit. With `--json` it exits with a non-zero code on failure, which makes it easy to use in scripts.
