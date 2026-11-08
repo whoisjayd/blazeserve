@@ -3,8 +3,22 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/FUNDING.yml"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/FUNDING.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -106,6 +120,9 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wheel-${{ matrix.os }}
       - name: Build the wheel and, on Linux, the source distribution
         shell: bash
         run: |
@@ -130,7 +147,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      - run: docker build -t blazeserve:ci .
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: blazeserve:ci
+          cache-from: type=gha,scope=blazeserve-amd64
+          cache-to: type=gha,scope=blazeserve-amd64,mode=max,ignore-error=true
       - uses: ./.github/actions/probe-container
         with:
           image: blazeserve:ci

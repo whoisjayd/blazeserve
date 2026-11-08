@@ -132,6 +132,8 @@ jobs:
           push: false
           build-args: BLAZE_TELEMETRY_URL=${{ vars.BLAZE_TELEMETRY_URL }}
           tags: blazeserve:release-gate
+          cache-from: type=gha,scope=blazeserve-amd64
+          cache-to: type=gha,scope=blazeserve-amd64,mode=max,ignore-error=true
       - uses: ./.github/actions/probe-container
         with:
           image: blazeserve:release-gate
@@ -214,6 +216,9 @@ jobs:
           - { target: aarch64, os: macos-latest }
     steps:
       - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'native' }}
       - uses: PyO3/maturin-action@v1
         env:
           BLAZE_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
@@ -349,6 +354,8 @@ jobs:
           provenance: mode=max
           sbom: true
           build-args: BLAZE_TELEMETRY_URL=${{ vars.BLAZE_TELEMETRY_URL }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max,ignore-error=true
           tags: |
             ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
             ghcr.io/${{ github.repository }}:latest
