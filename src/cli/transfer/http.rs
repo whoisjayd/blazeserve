@@ -109,6 +109,9 @@ pub(super) fn http_failure(code: u16, upload: bool) -> String {
         405 | 501 => "the server does not support this request",
         409 => "the destination already exists or changed; remove it or choose another name",
         410 => "the resource is gone",
+        412 if upload => {
+            "the --if-match ETag is stale or the destination is missing; nothing was replaced, so read the current ETag and decide again"
+        }
         413 => "the server says the upload is too large",
         _ => "the server refused the request",
     };

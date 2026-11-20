@@ -78,7 +78,10 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | :--- | :--- | :--- |
 | `--chunk-mb N` | `8` | Size of each request |
 | `--retries N` | `5` | Failed attempts in a row before giving up |
+| `--if-match ETAG` | none | Replace an existing file only if its current quoted `ETag` equals this value. `*` and weak tags are refused |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
+
+Without `--if-match`, an existing file is never replaced. With it, every request carries the tag. A stale tag or a missing file exits with an error (HTTP `412`) and leaves the file alone. The client never fetches a newer tag and tries again.
 
 ## Other options
 

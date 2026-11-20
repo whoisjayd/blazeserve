@@ -40,6 +40,26 @@ pub struct PutArgs {
     /// Consecutive failed attempts allowed before giving up
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(0..=100))]
     pub retries: u32,
+    /// Replace an existing file only if its current ETag is this value, e.g. '"3f2a9c"'
+    ///
+    /// Read the current ETag from a HEAD or GET response (curl -I URL). The upload fails
+    /// with HTTP 412 if the file changed or is missing, and is never retried against a
+    /// newer version. Without this option an existing file is never replaced.
+    #[arg(long, value_name = "ETAG", value_parser = parse_etag)]
+    pub if_match: Option<String>,
+}
+
+/// A single strong entity tag. Weak tags and `*` cannot guard a replacement.
+fn parse_etag(raw: &str) -> Result<String, String> {
+    let tag = raw.trim();
+    let inner = tag
+        .strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .ok_or("the ETag must be a quoted strong validator such as '\"abc\"'")?;
+    if inner.contains('"') || inner.contains(',') || inner.chars().any(|c| c.is_ascii_control()) {
+        return Err("the ETag must be exactly one quoted validator".to_owned());
+    }
+    Ok(tag.to_owned())
 }
 
 fn upload_target(url: &str, file: &Path) -> Result<String, String> {
@@ -96,6 +116,7 @@ struct Upload<'a> {
     auth: Option<String>,
     total: u64,
     repr_digest: String,
+    if_match: Option<String>,
 }
 
 impl Upload<'_> {
@@ -106,12 +127,31 @@ impl Upload<'_> {
         req
     }
 
-    fn remote_offset(&self) -> Result<Result<u64, String>, String> {
+    /// `staged_is_ours` says this run already sent a chunk, so a staged partial can only be
+    /// its own. A replacement never adopts a staged partial it cannot identify.
+    fn remote_offset(&self, staged_is_ours: bool) -> Result<Result<u64, String>, String> {
         let resp = match self.authorize(self.agent.head(self.url)).call() {
             Ok(r) => r,
             Err(e) if transient_error(&e) => return Ok(Err(describe_error(&e))),
             Err(e) => return Err(describe_error(&e)),
         };
+        if self.if_match.is_some() {
+            return match resp.status().as_u16() {
+                404 => Err("nothing to replace: the destination does not exist".to_owned()),
+                200 if header(&resp, "upload-complete").as_deref() == Some("?1") => Ok(Ok(0)),
+                200 => match header(&resp, "upload-offset").and_then(|v| v.parse().ok()) {
+                    Some(0) => Ok(Ok(0)),
+                    Some(n) if staged_is_ours => Ok(Ok(n)),
+                    _ => Err(
+                        "a partial upload of unknown origin is staged at the destination; \
+                              finish or discard it, then retry"
+                            .to_owned(),
+                    ),
+                },
+                code if transient_status(code) => Ok(Err(format!("server returned HTTP {code}"))),
+                code => Err(http_failure(code, true)),
+            };
+        }
         match resp.status().as_u16() {
             404 => Ok(Ok(0)),
             200 => match header(&resp, "upload-offset").and_then(|v| v.parse().ok()) {
@@ -130,14 +170,18 @@ impl Upload<'_> {
             .agent
             .put(self.url)
             .header("Content-Digest", digest_header(chunk));
-        req = if chunk.is_empty() {
-            req.header("Content-Range", format!("bytes */{}", self.total))
+        // The server has no range form for zero bytes, so an empty file is a plain PUT.
+        req = if self.total == 0 {
+            req
         } else {
             req.header(
                 "Content-Range",
                 format!("bytes {offset}-{}/{}", end - 1, self.total),
             )
         };
+        if let Some(tag) = &self.if_match {
+            req = req.header("If-Match", tag);
+        }
         if last {
             req = req.header("Repr-Digest", &self.repr_digest);
         }
@@ -184,6 +228,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         auth,
         total,
         repr_digest: whole_file_digest(&args.file)?,
+        if_match: args.if_match.clone(),
     };
 
     let mut file =
@@ -193,11 +238,12 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
     let mut offset = 0u64;
     let mut fails = 0u32;
     let mut need_sync = true;
+    let mut sent_any = false;
     let mut progress = Progress::new(Some(total), 0);
 
     loop {
         if need_sync {
-            match up.remote_offset()? {
+            match up.remote_offset(sent_any)? {
                 Ok(n) => offset = n.min(total),
                 Err(msg) => {
                     fails += 1;
@@ -220,6 +266,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         file.read_exact(&mut buf[..want])
             .map_err(|e| format!("read failed: {e}"))?;
 
+        sent_any = true;
         match up.send(offset, &buf[..want])? {
             Sent::Done => {
                 progress.finish(total);

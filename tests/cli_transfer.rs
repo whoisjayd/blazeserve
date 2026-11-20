@@ -515,3 +515,169 @@ fn get_rejects_invalid_limit_rates() {
         assert_eq!(code(&out), 2, "{rate}: {}", stderr(&out));
     }
 }
+
+fn etag(path: &Path) -> String {
+    blazeserve::cache::etag_for(&std::fs::metadata(path).unwrap())
+}
+
+async fn put_replacing(src: &Path, origin: &str, tag: &str, extra: &[&str]) -> Output {
+    let mut args = vec![
+        "put".into(),
+        s(src),
+        origin.to_owned(),
+        "--if-match".into(),
+        tag.to_owned(),
+    ];
+    args.extend(extra.iter().map(|a| (*a).to_owned()));
+    blaze_async(args).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_refuses_an_existing_target_by_default() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("doc.bin"), b"original").unwrap();
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("doc.bin");
+    std::fs::write(&src, b"replacement").unwrap();
+
+    let out = blaze_async(vec![
+        "put".into(),
+        s(&src),
+        format!("http://{}", server.local_addr()),
+        "--retries".into(),
+        "0".into(),
+    ])
+    .await;
+    assert_ne!(code(&out), 0);
+    assert_eq!(
+        std::fs::read(served.path().join("doc.bin")).unwrap(),
+        b"original"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_if_match_replaces_with_different_content_and_size() {
+    let served = tempfile::tempdir().unwrap();
+    let target = served.path().join("doc.bin");
+    std::fs::write(&target, b"original").unwrap();
+    let tag = etag(&target);
+    let server = serve(served.path(), 8).await;
+    let origin = format!("http://{}", server.local_addr());
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("doc.bin");
+    let data = pattern(MIB + 17);
+    std::fs::write(&src, &data).unwrap();
+
+    let out = put_replacing(&src, &origin, &tag, &["--chunk-mb", "1"]).await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(&target).unwrap(), data);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_if_match_can_replace_with_an_empty_file() {
+    let served = tempfile::tempdir().unwrap();
+    let target = served.path().join("doc.bin");
+    std::fs::write(&target, b"original").unwrap();
+    let tag = etag(&target);
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("doc.bin");
+    std::fs::write(&src, b"").unwrap();
+
+    let out = put_replacing(&src, &format!("http://{}", server.local_addr()), &tag, &[]).await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::metadata(&target).unwrap().len(), 0);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_uploads_an_empty_file() {
+    let served = tempfile::tempdir().unwrap();
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("empty.bin");
+    std::fs::write(&src, b"").unwrap();
+
+    let out = blaze_async(vec![
+        "put".into(),
+        s(&src),
+        format!("http://{}", server.local_addr()),
+    ])
+    .await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::metadata(served.path().join("empty.bin"))
+            .unwrap()
+            .len(),
+        0
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_if_match_fails_on_a_stale_tag_without_retrying() {
+    let served = tempfile::tempdir().unwrap();
+    let target = served.path().join("doc.bin");
+    std::fs::write(&target, b"newer").unwrap();
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("doc.bin");
+    std::fs::write(&src, b"mine").unwrap();
+
+    let origin = format!("http://{}", server.local_addr());
+    let out = put_replacing(&src, &origin, "\"stale\"", &[]).await;
+    assert_eq!(code(&out), 1);
+    assert!(stderr(&out).contains("HTTP 412"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("Retrying"));
+    assert_eq!(std::fs::read(&target).unwrap(), b"newer");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_if_match_fails_when_the_target_is_missing() {
+    let served = tempfile::tempdir().unwrap();
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("doc.bin");
+    std::fs::write(&src, b"mine").unwrap();
+
+    let origin = format!("http://{}", server.local_addr());
+    let out = put_replacing(&src, &origin, "\"gone\"", &[]).await;
+    assert_eq!(code(&out), 1);
+    assert!(stderr(&out).contains("does not exist"), "{}", stderr(&out));
+    assert!(!served.path().join("doc.bin").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_if_match_refuses_a_staged_partial_of_unknown_origin() {
+    let served = tempfile::tempdir().unwrap();
+    let target = served.path().join("doc.bin");
+    std::fs::write(&target, b"original").unwrap();
+    let tag = etag(&target);
+    std::fs::write(served.path().join(".doc.bin.blaze-resume"), b"foreign").unwrap();
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("doc.bin");
+    std::fs::write(&src, b"mine, which is longer than the stage").unwrap();
+
+    let out = put_replacing(&src, &format!("http://{}", server.local_addr()), &tag, &[]).await;
+    assert_eq!(code(&out), 1);
+    assert!(stderr(&out).contains("unknown origin"), "{}", stderr(&out));
+    assert_eq!(std::fs::read(&target).unwrap(), b"original");
+    server.shutdown().await;
+}
+
+#[test]
+fn put_rejects_unusable_if_match_values() {
+    for tag in ["*", "W/\"x\"", "abc", "\"a\",\"b\"", "\"\"\""] {
+        let out = blaze()
+            .args(["put", "Cargo.toml", "http://127.0.0.1:1", "--if-match", tag])
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 2, "{tag}: {}", stderr(&out));
+    }
+}

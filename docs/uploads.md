@@ -21,7 +21,13 @@ The address `/__upload__/big.iso` puts the file at `big.iso` in the served folde
 
 ## How uploads behave
 
-- **Nothing is overwritten.** If the file already exists, the server answers `409 Conflict`. To replace a file on purpose, send an `If-Match` header with the file's current `ETag`. If the tag is out of date, the server answers `412 Precondition Failed`, which means someone changed the file since you last looked.
+- **Nothing is overwritten.** If the file already exists, the server answers `409 Conflict`. To replace a file on purpose, send an `If-Match` header with the file's current `ETag`. If the tag is out of date, the server answers `412 Precondition Failed`, which means someone changed the file since you last looked. With the client, read the tag with `curl -I http://host:8000/big.iso` and pass it along:
+
+  ```console
+  blaze put ./big.iso http://host:8000/ --if-match '"3f2a9c1d5e7b8a0c4d6e"'
+  ```
+
+  The replacement starts from the first byte. If another upload has left a partial file at the destination, `blaze put` refuses to build on it. If the file changes between your check and the upload, the command fails instead of overwriting the newer version.
 - **Files appear whole or not at all.** The upload is written to a temporary file next to its destination and moved into place only when everything checks out. If anything fails, the temporary file is deleted. A new file is published with a hard link, so the destination filesystem must support them. If it does not, the upload is refused with `501` and nothing appears at the final name.
 - **Sizes and checksums are verified.** The server checks the length you declared. If you also send a checksum, the file is rejected when it does not match. `Content-Digest`, `Digest` and `X-Content-SHA256` are accepted, and `Repr-Digest` verifies a whole resumed file.
 - **Partial uploads can be resumed.** `GET` or `HEAD` on an upload address reports how many bytes the server has, in an `Upload-Offset` header. `DELETE` discards a partial upload. It never deletes a finished file. A partial upload that can no longer finish, because the name has since been taken or a `If-Match` check failed, is discarded by the server and has to be started again.
