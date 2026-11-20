@@ -24,10 +24,10 @@ A rejected write closes the connection, so its unread body is never parsed as th
 
 The code is in `src/upload/`.
 
-1. `target` resolves the destination under the root and names a staging file in the same directory, `.<name>.blaze-part-<id>`. Names carrying these markers are reserved.
+1. `target` resolves the destination under the root and names a staging file in the same directory, `.<name>.blaze-part-<id>`. Names carrying these markers are reserved: they are never served, listed or zipped, and cannot be uploaded to.
 2. `stream` writes the body into the staging file in chunks. Any failure removes the staging file.
 3. The digest headers are checked. A mismatch is `422` and nothing is published.
-4. `publish` makes the file visible. With no `If-Match`, it hard-links the staging file to the target, so an existing file is never replaced (`409`). On a filesystem without hard links it reserves the name exclusively and copies. With a current `If-Match` ETag it renames over the target. A stale one is `412`.
+4. `publish` makes the file visible. With no `If-Match`, it hard-links the staging file to the target, so an existing file is never replaced (`409`). On a filesystem without hard links the upload is refused with `501`, because copying into the final name would let a reader see a partial file. With a current `If-Match` ETag it renames over the target. A stale one is `412`.
 5. Resumable uploads (`resumable`) append chunks to a `.blaze-resume` file by offset, and publish when the last byte arrives.
 
 The status table is at the top of `src/upload/mod.rs` and in [Uploads](uploads.md).
@@ -43,6 +43,7 @@ The status table is at the top of `src/upload/mod.rs` and in [Uploads](uploads.m
 - `download` writes to `<name>.part` and keeps progress in `<name>.part.meta`. It resumes with `Range`, and renames the file into place only after it is complete.
 - `segmented` handles larger files. It downloads 8 MiB segments in parallel and records which are done, so a restart repeats only unfinished segments.
 - `upload` sends a file in chunks to the upload endpoint.
+- `filename` takes the saved name from the server's `Content-Disposition`, keeping only a safe final path segment. `retry` decides how long to wait after a `429` or `503`. `extract` unpacks a finished archive in place with `hatchzip-core`.
 
 ## Shared state
 
