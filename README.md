@@ -74,6 +74,7 @@ Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and
 | Download, resuming if the connection drops | `blaze get http://host:8000/big.iso` |
 | Download faster over eight connections | `blaze get http://host:8000/big.iso -c 8` |
 | Upload with resume | `blaze put ./big.iso http://host:8000/` |
+| Run a download in the background, then check it | `blaze get http://host:8000/big.iso --background`, `blaze status` |
 | Allow only this computer | `blaze serve ./site --host 127.0.0.1` |
 | Limit each visitor to 25 MB/s | `blaze serve . --rate-mbps 25` |
 | Keep sensitive files out of sight | `blaze serve . --hide '*.env' --hide .git` |

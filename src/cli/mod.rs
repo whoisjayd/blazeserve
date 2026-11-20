@@ -5,6 +5,7 @@ mod ansi;
 mod bench;
 mod doctor;
 mod exit;
+mod jobs;
 mod live;
 mod serve;
 mod telemetry;
@@ -121,6 +122,18 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
     Get(transfer::GetArgs),
     /// Upload a file, resuming a partial transfer
     Put(transfer::PutArgs),
+    /// Show background jobs started with --background
+    #[command(after_help = "Examples:
+  blaze status
+  blaze status 3f9a01bc
+  blaze status --watch
+  blaze status --json")]
+    Status(jobs::StatusArgs),
+    /// Stop a background job
+    #[command(after_help = "Examples:
+  blaze stop 3f9a01bc
+  blaze stop 3f9a01bc --yes")]
+    Stop(jobs::StopArgs),
     /// Manage anonymous usage statistics
     Telemetry(telemetry::TelemetryArgs),
     /// Print a shell completion script
@@ -223,8 +236,16 @@ fn dispatch(command: Command) -> Result<u8, String> {
         Command::Version(a) => version(a),
         Command::Doctor(a) => doctor::run(a),
         Command::Benchmark(a) => bench::run(a),
-        Command::Get(a) => transfer::get(a),
-        Command::Put(a) => transfer::put(a),
+        Command::Get(a) => {
+            let bg = a.bg.clone();
+            jobs::run(jobs::Kind::Get, &bg, move || transfer::get(a))
+        }
+        Command::Put(a) => {
+            let bg = a.bg.clone();
+            jobs::run(jobs::Kind::Put, &bg, move || transfer::put(a))
+        }
+        Command::Status(a) => jobs::status(a),
+        Command::Stop(a) => jobs::stop(a),
         Command::Telemetry(a) => telemetry::run(a),
         Command::Completions(a) => completions(a),
     }
@@ -234,6 +255,7 @@ fn dispatch(command: Command) -> Result<u8, String> {
 /// 0 success, 1 runtime failure, 2 usage error (reported by clap), 3 not enough disk space,
 /// 4 integrity failure and 5 authentication refused (see `exit`).
 pub fn main() -> ExitCode {
+    jobs::mark_standalone();
     ExitCode::from(run(Cli::parse()))
 }
 

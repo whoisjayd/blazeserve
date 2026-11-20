@@ -41,6 +41,8 @@ If the download is interrupted by a dropped connection, a closed laptop or a cra
 
 Use `--no-resume` to always start from the beginning, and `--force` to replace a file that already exists.
 
+To run a download in the background and check on it later, see [Background jobs](background-jobs.md).
+
 ### Extracting an archive
 
 ```bash

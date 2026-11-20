@@ -234,7 +234,7 @@ impl Shared<'_> {
     }
 
     fn stopped(&self) -> bool {
-        self.stop.load(Ordering::SeqCst)
+        self.stop.load(Ordering::SeqCst) || crate::cli::jobs::tracker::cancelled()
     }
 
     fn sleep(&self, wait: Duration) {
@@ -389,6 +389,7 @@ impl Shared<'_> {
                         );
                         self.extend_cooldown(Instant::now() + backoff(fails).max(h));
                     }
+                    crate::cli::jobs::tracker::set_phase(crate::cli::jobs::Phase::Retrying);
                     self.sleep(wait);
                     if self.stopped() {
                         return;

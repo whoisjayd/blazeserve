@@ -10,6 +10,8 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy and telemetry options of `serve`, plus `--expires-after DURATION` |
 | `blaze get URL` | Download with resume |
 | `blaze put FILE URL` | Upload with resume. A bare server address uploads under `/__upload__/` |
+| `blaze status [JOB]` | Show background jobs. `--watch` refreshes, `--json` prints one snapshot, `--all` adds finished jobs |
+| `blaze stop JOB` | Stop a background job after confirmation. `--yes` skips the question |
 | `blaze checksum FILES...` | SHA-256 of one or more files |
 | `blaze doctor [PATH]` | Check the folder, the port and system capabilities |
 | `blaze benchmark` | Time a download. See [Performance](performance.md) |
@@ -79,6 +81,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--connect-timeout TIME` | `15s` | Give up if the connection is not made in time. `off` waits as long as the system allows |
 | `--idle-timeout TIME` | `off` | Give up when no data moves for this long |
 | `--max-time TIME` | `off` | Give up when the whole command, retries and waits included, takes longer than this |
+| `--background` | off | Run as a [background job](background-jobs.md) and print its job ID |
 | `--extract` | off | After the download, extract the archive in place (zip, 7z, tar, `.tar.gz`, `.tar.bz2`, `.tar.xz`) |
 | `--keep-archive` | off | With `--extract`, keep the archive instead of consuming it as files come out |
 | `--no-verify-first` | off | With `--extract`, skip the check of the whole archive that runs before it is consumed |
@@ -98,6 +101,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--max-time TIME` | `off` | Give up when the whole command, retries and waits included, takes longer than this |
 | `--if-match ETAG` | none | Replace an existing file only if its current quoted `ETag` equals this value. `*` and weak tags are refused |
 | `--limit-rate RATE` | none | Cap on upload speed in bytes per second, with optional `K`, `M` or `G` (minimum `1K`), as for `get` |
+| `--background` | off | Run as a [background job](background-jobs.md) and print its job ID |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
 
 `--limit-rate` limits the speed of the request body, for example `blaze put backup.tar http://host:8000 --limit-rate 2M`. Bytes sent again after a retry count against the limit. Bytes the server already holds from an earlier attempt are not sent and do not. It is not an exact cap on TLS and TCP overhead.
@@ -168,4 +172,5 @@ A range request with an `If-Range` that no longer matches gets the whole file. S
 | `CI` | When set, the usage report is off |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` | OpenTelemetry export. See [Monitoring](monitoring.md) |
 | `NO_COLOR`, `CLICOLOR_FORCE` | Colour control |
+| `BLAZE_STATE_DIR` | Where background job records live: `<folder>/jobs`. Defaults to the per-user state folder. See [Background jobs](background-jobs.md) |
 | `BLAZE_TELEMETRY_URL` | Where usage reports are sent. Set when building a release; a build without it sends nothing |

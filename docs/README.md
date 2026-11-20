@@ -8,6 +8,7 @@ These guides explain how to use BlazeServe, from sharing a single file to runnin
 | [Sharing and downloading files](sharing-files.md) | Send a file to someone, or download and upload with resume |
 | [Serving files](serving-files.md) | Run a proper file server: passwords, HTTPS, hidden files, speed limits |
 | [Uploads](uploads.md) | Let people send files to your server safely |
+| [Background jobs](background-jobs.md) | Run transfers and servers in the background, and check or stop them |
 | [Monitoring](monitoring.md) | Watch health, metrics, logs and traces |
 | [Security](security.md) | Understand what BlazeServe protects you from, and what it does not |
 | [Python and Rust](python-and-rust.md) | Start a server from your own code |

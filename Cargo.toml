@@ -59,6 +59,9 @@ globset = { version = "0.4.21", default-features = false }
 # through `zip`, so building from source needs a C compiler; no system library is used.
 hatchzip-core = { version = "0.1.10", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
+
 [features]
 default = ["otel", "extract"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:async-trait"]

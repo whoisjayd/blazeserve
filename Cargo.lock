@@ -244,6 +244,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "ureq",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

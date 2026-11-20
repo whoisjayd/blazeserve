@@ -9,6 +9,7 @@ use super::limits::{self, TimeoutArgs};
 use super::retry::{jitter, plan_wait, retry_note};
 use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
+use crate::cli::jobs::{self, tracker};
 use crate::cli::util::{Progress, existing_file, human_size, transfer_title};
 use base64::Engine as _;
 use clap::Args;
@@ -60,6 +61,8 @@ pub struct PutArgs {
     pub limit_rate: Option<u64>,
     #[command(flatten)]
     pub timeouts: TimeoutArgs,
+    #[command(flatten)]
+    pub bg: jobs::BackgroundArgs,
 }
 
 /// A single strong entity tag. Weak tags and `*` cannot guard a replacement.
@@ -265,6 +268,15 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
     let total = std::fs::metadata(&args.file)
         .map_err(|e| e.to_string())?
         .len();
+    jobs::ready(|| jobs::Info {
+        label: args
+            .file
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+        url: Some(url.clone()),
+        direction: Some(jobs::Direction::Upload),
+        listen: None,
+    });
     let up = Upload {
         agent: agent(),
         url: &url,
@@ -287,9 +299,13 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
 
     loop {
         limits::check()?;
+        tracker::check()?;
         if need_sync {
             match up.remote_offset(sent_any)? {
-                Ok(n) => offset = n.min(total),
+                Ok(n) => {
+                    offset = n.min(total);
+                    progress.rebase(offset);
+                }
                 Err((msg, retry_after)) => {
                     fails += 1;
                     pause(fails, args.retries, &msg, retry_after)?;
@@ -305,6 +321,9 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         file.read_exact(&mut buf[..want])
             .map_err(|e| format!("read failed: {e}"))?;
 
+        if offset + want as u64 >= total {
+            tracker::set_phase(jobs::Phase::Finalizing);
+        }
         sent_any = true;
         match up.send(offset, &buf[..want])? {
             Sent::Done => {
@@ -348,8 +367,7 @@ fn pause(fails: u32, retries: u32, msg: &str, retry_after: Option<Duration>) -> 
         "Retrying",
         &format!("{}: {msg}", retry_note(wait, retry_after, fails, retries)),
     );
-    std::thread::sleep(wait);
-    Ok(())
+    tracker::retry_wait(wait)
 }
 
 #[cfg(test)]

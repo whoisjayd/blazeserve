@@ -170,6 +170,7 @@ impl Progress {
 
     fn build(title: Option<&str>, total: Option<u64>, base: u64) -> Self {
         let target = ProgressDrawTarget::stderr_with_hz(20);
+        let reported = total;
         let total = total.filter(|t| *t > 0);
         let template = progress_template(title.is_some(), total.is_some());
         let style = ProgressStyle::with_template(&template)
@@ -181,7 +182,19 @@ impl Progress {
         }
         bar.set_position(base);
         super::ansi::set_active_bar(Some(bar.clone()));
+        super::jobs::tracker::begin(reported, base);
         Self { bar }
+    }
+
+    /// The position moved to `pos` without those bytes being transferred now, such as an
+    /// upload resuming at the offset the server already holds.
+    pub fn rebase(&mut self, pos: u64) {
+        self.bar.set_position(pos);
+        super::jobs::tracker::rebase(pos);
+    }
+
+    fn publish(&self) {
+        super::jobs::tracker::set_done(self.bar.position());
     }
 
     /// Text shown at the end of the stats line, updated in place.
@@ -191,20 +204,24 @@ impl Progress {
 
     pub fn update(&mut self, done: u64) {
         self.bar.set_position(done);
+        self.publish();
     }
 
     /// Safe to call from several threads at once.
     pub fn inc(&self, delta: u64) {
         self.bar.inc(delta);
+        self.publish();
     }
 
     pub fn dec(&self, delta: u64) {
         self.bar.dec(delta);
+        self.publish();
     }
 
     pub fn finish(&mut self, done: u64) {
         super::ansi::set_active_bar(None);
         self.bar.set_position(done);
+        self.publish();
         self.bar.finish_and_clear();
     }
 }

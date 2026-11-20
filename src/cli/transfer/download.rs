@@ -12,6 +12,7 @@ use super::retry::{jitter, plan_wait, retry_note};
 use super::segmented::{self, SegMeta};
 use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
+use crate::cli::jobs::{self, tracker};
 use crate::cli::util::{Progress, human_size, sha256_file_within, transfer_title};
 use clap::Args;
 use percent_encoding::percent_decode_str;
@@ -120,6 +121,8 @@ pub struct GetArgs {
     pub keep_free: Option<u64>,
     #[command(flatten)]
     pub timeouts: TimeoutArgs,
+    #[command(flatten)]
+    pub bg: jobs::BackgroundArgs,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -369,6 +372,11 @@ impl Download<'_> {
             match reader.read(&mut buf[..self.read_len()]) {
                 Ok(0) => break,
                 Ok(n) => {
+                    if tracker::cancelled() {
+                        let _ = file.sync_data();
+                        progress.finish(have);
+                        return Err(tracker::INTERRUPTED.to_owned());
+                    }
                     if let Err(why) = self.pace(n) {
                         progress.finish(have);
                         return Err(why);
@@ -448,6 +456,7 @@ fn finish_download(
     sha256: Option<&str>,
     size: Option<u64>,
 ) -> Result<u8, String> {
+    tracker::set_phase(jobs::Phase::Finalizing);
     if let Some(expected) = size
         && d.part_len() != expected
     {
@@ -511,6 +520,14 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
             dest.display()
         ));
     }
+    jobs::ready(|| jobs::Info {
+        label: dest
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+        url: Some(args.url.clone()),
+        direction: Some(jobs::Direction::Download),
+        listen: None,
+    });
 
     let server_digest = match args.verify {
         Some(VerifyMode::ServerSha256) => {
@@ -580,7 +597,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
                         retry_note(wait, retry_after, fails, args.retries)
                     ),
                 );
-                std::thread::sleep(wait);
+                tracker::retry_wait(wait)?;
             }
         }
     }
