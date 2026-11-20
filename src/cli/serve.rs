@@ -6,6 +6,7 @@ use crate::config::{Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_SNDBUF_MB, Hi
 use crate::usage;
 use clap::Args;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 #[derive(Args, Debug)]
 pub struct Common {
@@ -124,6 +125,16 @@ pub struct SendArgs {
     /// File to share
     #[arg(value_parser = existing_file)]
     pub file: PathBuf,
+    /// Stop sharing after this long, for example 90s, 20m, 2h, 1d or 1h30m
+    ///
+    /// The countdown starts once the port is bound. At expiry the server stops accepting
+    /// connections and ends keep-alive connections after their current response. Responses
+    /// already in progress may keep sending for up to 10 more seconds, so this is not an exact
+    /// cutoff. Ctrl+C or SIGTERM still stops the share earlier. The timer uses the monotonic
+    /// clock, which on most systems pauses while the computer sleeps, so a suspended share is
+    /// not expired the moment it wakes. Omit it to share until you stop it.
+    #[arg(long, value_name = "DURATION", value_parser = parse_expiry)]
+    pub expires_after: Option<Duration>,
     #[command(flatten)]
     pub common: Common,
 }
@@ -135,6 +146,61 @@ fn parse_rate(s: &str) -> Result<f64, String> {
     } else {
         Err("must be at least 0.1".to_owned())
     }
+}
+
+const MAX_EXPIRY_SECS: u64 = 365 * 86_400;
+
+/// One or more `<number><unit>` parts with units `s`, `m`, `h` and `d`, such as `90s` or `1h30m`.
+fn parse_expiry(s: &str) -> Result<Duration, String> {
+    let bad = || {
+        format!(
+            "'{s}' is not a duration; use a number with s, m, h or d, such as 90s, 20m, 2h, 1d or 1h30m"
+        )
+    };
+    if s.is_empty() {
+        return Err(bad());
+    }
+    let mut total: u64 = 0;
+    let mut rest = s;
+    while !rest.is_empty() {
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let (number, tail) = rest.split_at(digits);
+        let unit = tail.chars().next().ok_or_else(bad)?;
+        let factor: u64 = match unit {
+            's' => 1,
+            'm' => 60,
+            'h' => 3600,
+            'd' => 86_400,
+            _ => return Err(bad()),
+        };
+        let n: u64 = number.parse().map_err(|_| bad())?;
+        total = n
+            .checked_mul(factor)
+            .and_then(|v| total.checked_add(v))
+            .filter(|v| *v <= MAX_EXPIRY_SECS)
+            .ok_or_else(|| format!("'{s}' is too long; the longest expiry is 365d"))?;
+        rest = &tail[unit.len_utf8()..];
+    }
+    if total == 0 {
+        return Err("the expiry must be longer than zero".to_owned());
+    }
+    Ok(Duration::from_secs(total))
+}
+
+fn format_span(span: Duration) -> String {
+    let secs = span.as_secs();
+    [
+        (secs / 86_400, 'd'),
+        (secs % 86_400 / 3600, 'h'),
+        (secs % 3600 / 60, 'm'),
+        (secs % 60, 's'),
+    ]
+    .iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, u)| format!("{n}{u}"))
+    .collect()
 }
 
 fn parse_proxy(s: &str) -> Result<TrustedProxy, String> {
@@ -297,7 +363,7 @@ fn qr_block(url: &str, style: Style) -> Option<String> {
     )
 }
 
-fn banner(cfg: &Config, verbose: bool, qr: bool) -> String {
+fn banner(cfg: &Config, verbose: bool, qr: bool, expiry: Option<(Duration, SystemTime)>) -> String {
     let style = Style::stdout();
     let scheme = if cfg.tls.is_some() { "https" } else { "http" };
     let port = cfg.port;
@@ -318,6 +384,19 @@ fn banner(cfg: &Config, verbose: bool, qr: bool) -> String {
         let name = percent_encoding::utf8_percent_encode(&raw, PATH_SEGMENT);
         share.push_str(&name.to_string());
         rows.push(("Download", format!("blaze get {share}")));
+    }
+    if let Some((after, at)) = expiry {
+        let secs = at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        rows.push((
+            "Expires",
+            format!(
+                "in {} (at {})",
+                format_span(after),
+                crate::logging::format_utc(secs)
+            ),
+        ));
     }
     if verbose {
         rows.push((
@@ -369,9 +448,10 @@ fn run_config(
     verbose: bool,
     open: bool,
     qr: bool,
+    expires_after: Option<Duration>,
 ) -> Result<u8, String> {
     let json_logs = cfg.log_json;
-    let text = banner(&cfg, verbose, qr);
+    let banner_cfg = cfg.clone();
     let url = format!(
         "{}://localhost:{}/",
         if cfg.tls.is_some() { "https" } else { "http" },
@@ -381,8 +461,9 @@ fn run_config(
     let features = usage::Features::from_config(&cfg, otlp);
     let slot: UsageSlot = UsageSlot::default();
     let slot_in = slot.clone();
-    crate::server::run(cfg, move |handle| {
-        print_status(&text, json_logs);
+    let reason = crate::server::run_expiring(cfg, expires_after, move |handle| {
+        let expiry = expires_after.map(|d| (d, SystemTime::now() + d));
+        print_status(&banner(&banner_cfg, verbose, qr, expiry), json_logs);
         if let Some(session) = usage::begin_from_process(command, features)
             && let Ok(mut g) = slot_in.lock()
         {
@@ -405,7 +486,13 @@ fn run_config(
             },
         );
     }
-    anstream::eprintln!("{}", Style::stderr().dim("Stopped"));
+    let stopped = match (reason, expires_after) {
+        (crate::server::StopReason::Expired, Some(after)) => {
+            format!("Stopped: share expired after {}", format_span(after))
+        }
+        _ => "Stopped".to_owned(),
+    };
+    anstream::eprintln!("{}", Style::stderr().dim(&stopped));
     Ok(0)
 }
 
@@ -417,12 +504,20 @@ pub fn serve(args: ServeArgs) -> Result<u8, String> {
         args.verbose,
         args.open_browser,
         args.common.qr,
+        None,
     )
 }
 
 pub fn send(args: SendArgs) -> Result<u8, String> {
     let cfg = send_config(&args)?;
-    run_config(cfg, usage::Command::Send, false, false, args.common.qr)
+    run_config(
+        cfg,
+        usage::Command::Send,
+        false,
+        false,
+        args.common.qr,
+        args.expires_after,
+    )
 }
 
 #[cfg(test)]
@@ -550,6 +645,51 @@ mod tests {
     }
 
     #[test]
+    fn expiry_accepts_units_and_sums_parts() {
+        let secs = |s: &str| parse_expiry(s).unwrap().as_secs();
+        assert_eq!(secs("90s"), 90);
+        assert_eq!(secs("20m"), 1200);
+        assert_eq!(secs("2h"), 7200);
+        assert_eq!(secs("1d"), 86_400);
+        assert_eq!(secs("1h30m"), 5400);
+        assert_eq!(secs("365d"), MAX_EXPIRY_SECS);
+    }
+
+    #[test]
+    fn expiry_rejects_zero_negative_unitless_and_unsupported_input() {
+        for bad in [
+            "", "0", "0s", "0m0s", "-5m", "20", "m", "1.5h", "1w", "10 m", "5M", "1h30", "+5m",
+            "abc",
+        ] {
+            assert!(parse_expiry(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn expiry_rejects_overflow_and_absurd_lengths() {
+        assert!(parse_expiry("366d").is_err());
+        assert!(parse_expiry("18446744073709551615s").is_err());
+        assert!(parse_expiry("18446744073709551615d").is_err());
+        assert!(parse_expiry("99999999999999999999999s").is_err());
+    }
+
+    #[test]
+    fn span_formats_back_to_the_units_it_was_given() {
+        assert_eq!(format_span(Duration::from_secs(1200)), "20m");
+        assert_eq!(format_span(Duration::from_secs(5400)), "1h30m");
+        assert_eq!(format_span(Duration::from_secs(90_061)), "1d1h1m1s");
+    }
+
+    #[test]
+    fn banner_shows_the_lifetime_and_expected_expiry_only_when_set() {
+        let cfg = Config::default();
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let with = banner(&cfg, false, false, Some((Duration::from_secs(1200), at)));
+        assert!(with.contains("in 20m (at 2023-11-14T22:13:20Z)"), "{with}");
+        assert!(!banner(&cfg, false, false, None).contains("Expires"));
+    }
+
+    #[test]
     fn qr_block_rejects_urls_beyond_capacity() {
         assert!(qr_block(&format!("http://h/{}", "a".repeat(4000)), Style::PLAIN).is_none());
     }
@@ -560,8 +700,8 @@ mod tests {
             host: "127.0.0.1".into(),
             ..Config::default()
         };
-        let plain = banner(&cfg, false, false);
-        let with_qr = banner(&cfg, false, true);
+        let plain = banner(&cfg, false, false, None);
+        let with_qr = banner(&cfg, false, true, None);
         let qr = qr_block("http://localhost:8000/", Style::PLAIN).unwrap();
         assert!(!plain.contains(qr.lines().nth(2).unwrap()));
         assert!(with_qr.contains(qr.lines().nth(2).unwrap()));

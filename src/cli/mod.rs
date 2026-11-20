@@ -87,7 +87,8 @@ enum Command {
     /// Quick share a single file
     #[command(after_help = "Examples:
   blaze send ./big.iso
-  blaze send ./big.iso --qr")]
+  blaze send ./big.iso --qr
+  blaze send ./big.iso --expires-after 20m")]
     Send(serve::SendArgs),
     /// SHA256 for files
     Checksum(ChecksumArgs),

@@ -15,6 +15,7 @@ use crate::AppState;
 use crate::config::Config;
 use crate::telemetry::{FLUSH_TIMEOUT, Telemetry};
 use std::error::Error;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -110,7 +111,43 @@ pub async fn start_with(config: Config, telemetry: Telemetry) -> Result<ServerHa
     })
 }
 
+/// Why a running server stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    /// Ctrl+C or SIGTERM.
+    Signal,
+    /// The lifetime set with `expires_after` ran out.
+    Expired,
+    /// The accept loop ended on its own.
+    Closed,
+}
+
+impl ServerHandle {
+    /// Waits for `interrupt`, for `expiry`, or for the server to end on its own.
+    pub async fn wait_until(
+        &mut self,
+        expiry: impl Future<Output = ()>,
+        interrupt: impl Future<Output = ()>,
+    ) -> StopReason {
+        tokio::select! {
+            () = interrupt => StopReason::Signal,
+            () = expiry => StopReason::Expired,
+            () = self.wait() => StopReason::Closed,
+        }
+    }
+}
+
 pub fn run(config: Config, on_bound: impl FnOnce(&ServerHandle)) -> Result<(), BoxError> {
+    run_expiring(config, None, on_bound).map(|_| ())
+}
+
+/// Like [`run`], and stops serving after `expires_after` when given. The countdown starts
+/// once the listener is bound.
+pub fn run_expiring(
+    config: Config,
+    expires_after: Option<Duration>,
+    on_bound: impl FnOnce(&ServerHandle),
+) -> Result<StopReason, BoxError> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -121,12 +158,15 @@ pub fn run(config: Config, on_bound: impl FnOnce(&ServerHandle)) -> Result<(), B
             handle.shutdown().await;
             std::panic::resume_unwind(panic);
         }
-        tokio::select! {
-            () = shutdown_signal() => {}
-            () = handle.wait() => {}
-        }
+        let expiry = async {
+            match expires_after {
+                Some(after) => tokio::time::sleep(after).await,
+                None => std::future::pending().await,
+            }
+        };
+        let reason = handle.wait_until(expiry, shutdown_signal()).await;
         handle.shutdown().await;
-        Ok::<(), BoxError>(())
+        Ok::<StopReason, BoxError>(reason)
     });
     // Blocking-pool threads (file I/O) must not delay process exit.
     rt.shutdown_timeout(Duration::from_secs(1));

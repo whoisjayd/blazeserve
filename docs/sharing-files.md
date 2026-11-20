@@ -14,7 +14,16 @@ blaze send ./big.iso
 blaze send ./big.iso --qr                  # QR code for a phone
 blaze send ./big.iso --rate-mbps 10        # give each downloader at most 10 MB/s
 blaze send ./big.iso --auth-env BLAZE_AUTH # require a password
+blaze send ./big.iso --expires-after 20m   # stop sharing after 20 minutes
 ```
+
+### Stop sharing automatically
+
+`--expires-after` takes a number with a unit (`s`, `m`, `h` or `d`) or several together, such as `90s`, `20m`, `2h`, `1d` or `1h30m`. The longest is `365d`. Zero, negative, unitless and unsupported values are refused before anything starts listening. Without the option, the share runs until you stop it.
+
+The countdown starts once the port is bound, and the startup output shows the lifetime and the expected expiry time. When it runs out, BlazeServe stops accepting connections and ends keep-alive connections after their current response, then exits normally with `Stopped: share expired after 20m` on standard error. A download that is already in progress may keep going for up to 10 more seconds, so expiry is not an exact cutoff. Press Ctrl+C at any time to stop earlier.
+
+The timer uses the monotonic clock, which on most systems does not advance while the computer sleeps. A suspended share is therefore not expired the moment the machine wakes; it stays available for the time that was left. Expiry only stops your server. It cannot recall copies that were already downloaded. `serve` does not have this option.
 
 ## Download a file
 

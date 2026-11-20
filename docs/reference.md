@@ -7,7 +7,7 @@ Every command, option, address and setting in one place. For explanations, use t
 | Command | What it does |
 | :--- | :--- |
 | `blaze serve [PATH]` | Serve a folder or a file |
-| `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy and telemetry options of `serve` |
+| `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy and telemetry options of `serve`, plus `--expires-after DURATION` |
 | `blaze get URL` | Download with resume |
 | `blaze put FILE URL` | Upload with resume. A bare server address uploads under `/__upload__/` |
 | `blaze checksum FILES...` | SHA-256 of one or more files |

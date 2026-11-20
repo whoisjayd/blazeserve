@@ -69,6 +69,7 @@ Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and
 | Share a folder | `blaze serve ./site` |
 | Share one file | `blaze send ./big.iso` |
 | Open a shared file on a phone | `blaze send ./big.iso --qr` |
+| Share a file for a limited time | `blaze send ./big.iso --expires-after 20m` |
 | Download, resuming if the connection drops | `blaze get http://host:8000/big.iso` |
 | Download faster over eight connections | `blaze get http://host:8000/big.iso -c 8` |
 | Upload with resume | `blaze put ./big.iso http://host:8000/` |

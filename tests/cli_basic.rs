@@ -318,3 +318,61 @@ fn benchmark_local_json_is_one_line() {
     assert!(v["elapsed_seconds"].as_f64().unwrap() > 0.0);
     assert!(v["throughput_mib_per_second"].as_f64().unwrap() > 0.0);
 }
+
+#[test]
+fn send_rejects_bad_expiry_before_listening() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("f.txt");
+    std::fs::write(&file, b"x").unwrap();
+    for bad in [
+        "0",
+        "0s",
+        "-5m",
+        "20",
+        "10x",
+        "99999999999999999999d",
+        "366d",
+    ] {
+        let flag = format!("--expires-after={bad}");
+        let out = run(&["send", file.to_str().unwrap(), &flag]);
+        assert_eq!(code(&out), 2, "{bad}: {}", stderr(&out));
+        assert!(stderr(&out).contains("expires-after"), "{bad}");
+        assert!(stdout(&out).is_empty(), "{bad} must not print a banner");
+    }
+}
+
+#[test]
+fn send_expires_on_its_own_and_reports_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("f.txt");
+    std::fs::write(&file, b"x").unwrap();
+    let port = {
+        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        probe.local_addr().unwrap().port().to_string()
+    };
+    let out = run(&[
+        "send",
+        file.to_str().unwrap(),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port,
+        "--expires-after",
+        "1s",
+    ]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stdout(&out).contains("in 1s (at "), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("Stopped: share expired after 1s"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn send_help_explains_the_expiry_grace_period() {
+    let help = stdout(&run(&["send", "--help"]));
+    assert!(help.contains("--expires-after"));
+    assert!(help.contains("10 more seconds"), "{help}");
+    assert!(help.contains("sleeps"), "{help}");
+}
