@@ -180,6 +180,8 @@ struct Shared<'a> {
     stop: AtomicBool,
     changed: AtomicBool,
     error: Mutex<Option<String>>,
+    /// Set when a worker gave up on a transient failure, which fewer connections may avoid.
+    retry_fewer: AtomicBool,
     done: Mutex<(BTreeSet<u64>, Instant)>,
     progress: Progress,
     retries: u32,
@@ -356,6 +358,7 @@ impl Shared<'_> {
                 }) => {
                     fails = if progressed { 1 } else { fails + 1 };
                     if fails > self.retries {
+                        self.retry_fewer.store(true, Ordering::SeqCst);
                         return self.fail(format!(
                             "download failed after {} retries: {msg}",
                             self.retries
@@ -423,7 +426,7 @@ fn attempt(
     conns: usize,
     retries: u32,
     first: bool,
-) -> Result<Outcome, String> {
+) -> Result<Outcome, Failure> {
     let count = segment_count(probe.total);
     let done = trusted_progress(d, probe, count).unwrap_or_else(|| {
         d.reset();
@@ -464,16 +467,17 @@ fn attempt(
         stop: AtomicBool::new(false),
         changed: AtomicBool::new(false),
         error: Mutex::new(None),
+        retry_fewer: AtomicBool::new(false),
         done: Mutex::new((done, Instant::now())),
-        progress: Progress::titled(
-            &format!("{}  ·  {workers} connections", transfer_title("↓", &d.part)),
-            Some(probe.total),
-            base,
-        ),
+        progress: Progress::titled(&transfer_title("↓", &d.part), Some(probe.total), base),
         retries,
         cooldown: Mutex::new(None),
         pending,
     };
+    shared.progress.set_note(&format!(
+        "{workers} connection{}",
+        if workers == 1 { "" } else { "s" }
+    ));
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| shared.worker());
@@ -483,6 +487,7 @@ fn attempt(
     let Shared {
         file,
         error,
+        retry_fewer,
         changed,
         done,
         mut progress,
@@ -498,7 +503,10 @@ fn attempt(
     let failure = error.into_inner().ok().flatten();
     if failure.is_some() || done.len() as u64 != count {
         save_sidecar(d, probe, &file, &done);
-        return Err(failure.unwrap_or_else(|| "download interrupted".to_owned()));
+        return Err(Failure {
+            retry_fewer: retry_fewer.load(Ordering::SeqCst),
+            msg: failure.unwrap_or_else(|| "download interrupted".to_owned()),
+        });
     }
     file.sync_data().map_err(|e| format!("write failed: {e}"))?;
     drop(file);
@@ -507,9 +515,31 @@ fn attempt(
             "downloaded file is {} but the server announced {}",
             human_size(d.part_len()),
             human_size(probe.total)
-        ));
+        )
+        .into());
     }
     Ok(Outcome::Done)
+}
+
+/// Why an attempt ended. `retry_fewer` marks a transient failure that a smaller number of
+/// connections may get past, such as a server capping connections per client.
+struct Failure {
+    msg: String,
+    retry_fewer: bool,
+}
+
+impl From<String> for Failure {
+    fn from(msg: String) -> Self {
+        Self {
+            msg,
+            retry_fewer: false,
+        }
+    }
+}
+
+/// 32, 16, 8, 4, 2, 1.
+fn fewer(conns: usize) -> usize {
+    (conns / 2).max(1)
 }
 
 /// Runs the segmented download when the origin qualifies. `Ok(false)` means the caller
@@ -524,11 +554,26 @@ pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, 
         return Ok(false);
     }
     let mut restarts = 0u32;
+    let mut conns = conns;
     loop {
         let Some(probe) = probe(d) else {
             return Ok(false);
         };
-        match attempt(d, &probe, conns, retries, restarts == 0)? {
+        let outcome = match attempt(d, &probe, conns, retries, restarts == 0) {
+            Ok(outcome) => outcome,
+            // Finished segments are kept in the sidecar, so the next attempt carries on.
+            Err(f) if f.retry_fewer && conns > 1 => {
+                let next = fewer(conns);
+                announce(
+                    "Fewer connections",
+                    &format!("{}; trying {next} instead of {conns}", f.msg),
+                );
+                conns = next;
+                continue;
+            }
+            Err(f) => return Err(f.msg),
+        };
+        match outcome {
             Outcome::Done => return Ok(true),
             Outcome::Changed => {
                 restarts += 1;
@@ -557,6 +602,15 @@ mod tests {
         assert_eq!(segment_bounds(2, total), (2 * SEGMENT, total - 1));
         let done: BTreeSet<u64> = (0..3).collect();
         assert_eq!(segments_len(&done, total), total);
+    }
+
+    #[test]
+    fn connections_halve_down_to_one() {
+        let steps: Vec<usize> =
+            std::iter::successors(Some(32), |&n| (n > 1).then(|| fewer(n))).collect();
+        assert_eq!(steps, [32, 16, 8, 4, 2, 1]);
+        assert_eq!(fewer(1), 1);
+        assert_eq!(fewer(7), 3);
     }
 
     #[test]

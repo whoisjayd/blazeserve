@@ -52,6 +52,8 @@ blaze get http://host:8000/big.iso -c max
 
 More connections only help when one stream cannot fill your link, which is typical on a very fast line to a distant server. Each connection costs a thread and a socket, and some servers throttle or block clients that open many, so BlazeServe prints a note above 16. The live display shows how many connections are in use.
 
+If a server refuses or drops the extra connections and the retries run out, `get` does not give up. It halves the count, for example 32, 16, 8, 4, 2 and then 1, and carries on with the parts it already has. Permanent errors such as a wrong password or a missing file still stop the download straight away.
+
 This applies to files of at least 8 MiB, from servers that support byte ranges and give the file a stable identity. If the server cannot do that, BlazeServe quietly falls back to a single stream. If a multi-connection download is interrupted, the next run skips the parts that already finished. Use `-c 1` to force a single stream.
 
 To be polite to a shared network, cap the total speed:

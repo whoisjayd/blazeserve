@@ -2,8 +2,20 @@
 
 use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style as Paint};
+use indicatif::ProgressBar;
+use std::sync::Mutex;
 
 const STATUS_WIDTH: usize = 12;
+
+/// The transfer dashboard currently on screen, so notices can be printed above it without
+/// tearing its redraw.
+static ACTIVE_BAR: Mutex<Option<ProgressBar>> = Mutex::new(None);
+
+pub(super) fn set_active_bar(bar: Option<ProgressBar>) {
+    if let Ok(mut slot) = ACTIVE_BAR.lock() {
+        *slot = bar;
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Style {
@@ -87,7 +99,12 @@ pub fn status_line(style: Style, verb: &str, message: &str) -> String {
 }
 
 pub fn announce(verb: &str, message: &str) {
-    anstream::eprintln!("{}", status_line(Style::stderr(), verb, message));
+    let line = status_line(Style::stderr(), verb, message);
+    let bar = ACTIVE_BAR.lock().ok().and_then(|slot| slot.clone());
+    match bar {
+        Some(bar) => bar.suspend(|| anstream::eprintln!("{line}")),
+        None => anstream::eprintln!("{line}"),
+    }
 }
 
 #[cfg(test)]

@@ -125,13 +125,14 @@ pub struct Progress {
 }
 
 const BAR_LINE: &str = "{bar:40.green/dim} {percent:>3}%  {binary_bytes:>9} / {binary_total_bytes}";
-const STATS_LINE: &str = "{binary_bytes_per_sec:>11}  ·  ETA {eta}  ·  {elapsed_precise} elapsed";
+const STATS_LINE: &str =
+    "{binary_bytes_per_sec:>11}  ·  ETA {eta}  ·  {elapsed_precise} elapsed  {msg:.dim}";
 
 fn progress_template(titled: bool, known_total: bool) -> String {
     let head = if titled { "  {prefix:.bold}\n" } else { "" };
     if !known_total {
         return format!(
-            "{head}  {{spinner}} {{binary_bytes}}  {{binary_bytes_per_sec}}  ·  {{elapsed_precise}} elapsed"
+            "{head}  {{spinner}} {{binary_bytes}}  {{binary_bytes_per_sec}}  ·  {{elapsed_precise}} elapsed  {{msg:.dim}}"
         );
     }
     if titled {
@@ -141,12 +142,19 @@ fn progress_template(titled: bool, known_total: bool) -> String {
     }
 }
 
+impl Drop for Progress {
+    fn drop(&mut self) {
+        super::ansi::set_active_bar(None);
+    }
+}
+
 impl Progress {
     pub fn new(total: Option<u64>, base: u64) -> Self {
         Self::build(None, total, base)
     }
 
-    /// A small dashboard: a title, the bar with sizes, then speed, ETA and elapsed time.
+    /// A small dashboard: a title, the bar with sizes, then speed, ETA, elapsed time and an
+    /// optional note such as the connection count.
     pub fn titled(title: &str, total: Option<u64>, base: u64) -> Self {
         Self::build(Some(title), total, base)
     }
@@ -163,7 +171,13 @@ impl Progress {
             bar.set_prefix(title.to_owned());
         }
         bar.set_position(base);
+        super::ansi::set_active_bar(Some(bar.clone()));
         Self { bar }
+    }
+
+    /// Text shown at the end of the stats line, updated in place.
+    pub fn set_note(&self, note: &str) {
+        self.bar.set_message(format!("·  {note}"));
     }
 
     pub fn update(&mut self, done: u64) {
@@ -180,6 +194,7 @@ impl Progress {
     }
 
     pub fn finish(&mut self, done: u64) {
+        super::ansi::set_active_bar(None);
         self.bar.set_position(done);
         self.bar.finish_and_clear();
     }
