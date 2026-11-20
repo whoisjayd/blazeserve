@@ -153,6 +153,11 @@ const MAX_EXPIRY_SECS: u64 = 365 * 86_400;
 
 /// One or more `<number><unit>` parts with units `s`, `m`, `h` and `d`, such as `90s` or `1h30m`.
 fn parse_expiry(s: &str) -> Result<Duration, String> {
+    parse_span(s, "expiry", MAX_EXPIRY_SECS)
+}
+
+/// `20m`, `1h30m` and the like. `noun` names the setting in error messages.
+pub(super) fn parse_span(s: &str, noun: &str, max_secs: u64) -> Result<Duration, String> {
     let bad = || {
         format!(
             "'{s}' is not a duration; use a number with s, m, h or d, such as 90s, 20m, 2h, 1d or 1h30m"
@@ -180,17 +185,22 @@ fn parse_expiry(s: &str) -> Result<Duration, String> {
         total = n
             .checked_mul(factor)
             .and_then(|v| total.checked_add(v))
-            .filter(|v| *v <= MAX_EXPIRY_SECS)
-            .ok_or_else(|| format!("'{s}' is too long; the longest expiry is 365d"))?;
+            .filter(|v| *v <= max_secs)
+            .ok_or_else(|| {
+                format!(
+                    "'{s}' is too long; the longest {noun} is {}",
+                    format_span(Duration::from_secs(max_secs))
+                )
+            })?;
         rest = &tail[unit.len_utf8()..];
     }
     if total == 0 {
-        return Err("the expiry must be longer than zero".to_owned());
+        return Err(format!("the {noun} must be longer than zero"));
     }
     Ok(Duration::from_secs(total))
 }
 
-fn format_span(span: Duration) -> String {
+pub(super) fn format_span(span: Duration) -> String {
     let secs = span.as_secs();
     [
         (secs / 86_400, 'd'),
