@@ -1,14 +1,14 @@
-.PHONY: build test lint fmt check audit wheel clean
+.PHONY: build test lint fmt check audit wheel hooks clean
 
 build:
 	cargo build --release
 
 test:
-	cargo test --all-targets
+	cargo test --all-targets --locked
 
 lint:
 	cargo fmt --all -- --check
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-targets --locked -- -D warnings
 
 fmt:
 	cargo fmt --all
@@ -24,3 +24,6 @@ wheel:
 clean:
 	cargo clean
 	rm -rf dist
+
+hooks:
+	git config core.hooksPath .githooks
