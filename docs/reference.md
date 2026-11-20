@@ -132,7 +132,7 @@ blaze serve ./shared --host ::1 --port 8000
 | 404 | Not found, hidden, or outside the served folder |
 | 409, 412, 413 | Upload conflicts: the file exists, the `If-Match` tag is stale, or the upload is too large |
 | 416 | A valid range that does not exist in the file. `Content-Range: bytes */<size>` says how big it is |
-| 429 | An HTTP/2 connection opened requests too fast; `Retry-After` is set |
+| 429 | An HTTP/2 connection opened requests too fast; `Retry-After` is set. The response carries the usual security headers and `X-Request-ID`, and counts as a request |
 | 503 | The server is at `--max-connections`; `Retry-After: 1` is set |
 
 A range request with an `If-Range` that no longer matches gets the whole file. Syntax errors in a `Range` header are ignored.

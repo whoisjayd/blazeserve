@@ -75,9 +75,6 @@ where
         let state = state.clone();
         let over_budget = budget.as_ref().is_some_and(|b| !b.try_take());
         async move {
-            if over_budget {
-                return Ok(handler::rate_limited());
-            }
             let client_ip = client_ip_for(&state.config, peer.ip(), req.headers());
             handler::handle(
                 state,
@@ -87,6 +84,7 @@ where
                     tls,
                 },
                 req,
+                over_budget,
             )
             .await
         }

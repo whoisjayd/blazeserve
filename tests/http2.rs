@@ -211,12 +211,13 @@ async fn a_connection_that_opens_streams_too_fast_gets_429_while_others_are_serv
     let mut flooder = h2c(handle.local_addr()).await;
 
     let mut statuses = Vec::new();
+    let mut throttled = None;
     for _ in 0..1500 {
-        statuses.push(
-            fetch(&mut flooder, "GET", "/__live__", &[], b"")
-                .await
-                .status,
-        );
+        let r = fetch(&mut flooder, "GET", "/__live__", &[], b"").await;
+        statuses.push(r.status);
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            throttled = Some(r);
+        }
     }
     // The burst allowance is always granted before any refill can matter.
     assert!(
@@ -227,6 +228,15 @@ async fn a_connection_that_opens_streams_too_fast_gets_429_while_others_are_serv
         statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
         "1500 back-to-back streams were never throttled"
     );
+    let throttled = throttled.expect("a throttled response");
+    assert_eq!(throttled.header("retry-after"), Some("1"));
+    assert!(
+        throttled
+            .header("x-request-id")
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert_eq!(throttled.header("x-content-type-options"), Some("nosniff"));
+    assert_eq!(throttled.header("x-frame-options"), Some("DENY"));
 
     let mut other = h2c(handle.local_addr()).await;
     let r = fetch(&mut other, "GET", "/__live__", &[], b"").await;

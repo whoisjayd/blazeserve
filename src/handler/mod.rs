@@ -25,10 +25,13 @@ pub use hash::HashCache;
 
 const UPLOAD_PREFIX: &str = "/__upload__/";
 
+/// `over_budget` marks a request the connection's stream budget refused: it is answered `429`
+/// without any filesystem work, but is still counted and gets the standard headers.
 pub async fn handle(
     state: Arc<AppState>,
     peer: PeerInfo,
     req: Request<Incoming>,
+    over_budget: bool,
 ) -> Result<Response<Body>, Infallible> {
     let request_id = security::generate_request_id(
         req.headers()
@@ -37,12 +40,15 @@ pub async fn handle(
     );
     let head = req.method() == Method::HEAD;
     let scope = RequestScope::begin(&state, &peer, &req, &request_id);
-    let response = route(&state, &peer, req).await;
+    let response = if over_budget {
+        rate_limited()
+    } else {
+        route(&state, &peer, req).await
+    };
     Ok(finalize(&state, &peer, &request_id, head, scope, response))
 }
 
-/// Answer for a request the connection's stream budget refused; does no filesystem work.
-pub fn rate_limited() -> Response<Body> {
+fn rate_limited() -> Response<Body> {
     let mut resp = response::error(StatusCode::TOO_MANY_REQUESTS);
     resp.headers_mut().insert(
         hyper::header::RETRY_AFTER,
