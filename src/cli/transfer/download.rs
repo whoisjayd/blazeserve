@@ -1,6 +1,7 @@
 //! Resumable `blaze get`: sidecar metadata, range handling and verified finish.
 
 use super::READ_BUF;
+use super::filename::suggested_name;
 use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
     transient_error, transient_status,
@@ -26,7 +27,7 @@ pub(super) const MAX_RESTARTS: u32 = 3;
 pub struct GetArgs {
     /// URL to download
     pub url: String,
-    /// Destination file (default: last URL path segment)
+    /// Destination file (default: the name the server suggests, else the last URL path segment)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
     /// Continue a previous partial download (default)
@@ -89,6 +90,20 @@ pub(super) fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
         }
     }
     Err(last.unwrap_or_else(|| std::io::Error::other("rename failed")))
+}
+
+/// The name the server suggests, asked with a `HEAD` before any resume state is looked
+/// up so a re-run lands on the same files. Any failure falls back to the URL's name.
+fn server_file_name(agent: &ureq::Agent, url: &str, auth: Option<&str>) -> Option<String> {
+    let mut req = agent.head(url);
+    if let Some(a) = auth {
+        req = req.header("Authorization", a);
+    }
+    let resp = req.call().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    suggested_name(&header(&resp, "content-disposition")?)
 }
 
 fn default_destination(url: &str) -> Result<PathBuf, String> {
@@ -360,9 +375,13 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         return Err("--sha256 must be 64 hexadecimal characters".to_owned());
     }
     let auth = basic_header(args.auth.as_deref(), args.auth_env.as_deref())?;
+    let agent = agent();
     let dest = match &args.output {
         Some(p) => p.clone(),
-        None => default_destination(&args.url)?,
+        None => match server_file_name(&agent, &args.url, auth.as_deref()) {
+            Some(name) => PathBuf::from(name),
+            None => default_destination(&args.url)?,
+        },
     };
     if dest.exists() && !args.force {
         return Err(format!(
@@ -372,7 +391,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
     }
 
     let d = Download {
-        agent: agent(),
+        agent,
         url: &args.url,
         part: sibling(&dest, ".part"),
         meta_path: sibling(&dest, ".part.meta"),

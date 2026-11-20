@@ -63,7 +63,7 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 
 | Option | Default | Meaning |
 | :--- | :--- | :--- |
-| `-o`, `--output FILE` | last part of the URL | Where to save |
+| `-o`, `--output FILE` | server-suggested name, else last part of the URL | Where to save |
 | `--resume`, `--no-resume` | resume | Continue a partial download, or start over |
 | `--sha256 HEX` | none | Verify the finished file |
 | `--retries N` | `5` | Failed attempts in a row before giving up |

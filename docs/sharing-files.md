@@ -31,7 +31,7 @@ The timer uses the monotonic clock, which on most systems does not advance while
 blaze get http://host:8000/big.iso
 ```
 
-The file is saved under the last part of the URL, here `big.iso`. Use `-o` to choose another name. While it downloads, BlazeServe writes to `big.iso.part`, then checks the size and renames it when the download is complete.
+The file is saved under the name the server suggests in its `Content-Disposition` header. A folder downloaded as a ZIP, for example `blaze get 'http://host:8000/__zip__?path=docs'`, arrives as `docs.zip`. If the server suggests nothing usable, the last part of the URL is used, here `big.iso`. Only the final part of a suggested name is kept, and names that could write elsewhere or name a device are ignored. Use `-o` to choose another name, which always wins. While it downloads, BlazeServe writes to `big.iso.part`, then checks the size and renames it when the download is complete.
 
 ### Resuming
 

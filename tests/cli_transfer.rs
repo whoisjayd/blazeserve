@@ -744,3 +744,74 @@ fn put_rejects_unusable_if_match_values() {
         assert_eq!(code(&out), 2, "{tag}: {}", stderr(&out));
     }
 }
+
+async fn blaze_in(dir: &Path, args: Vec<String>) -> Output {
+    let dir = dir.to_owned();
+    tokio::task::spawn_blocking(move || {
+        blaze()
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_names_a_zip_download_after_the_folder() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::create_dir(served.path().join("docs")).unwrap();
+    std::fs::write(served.path().join("docs").join("a.txt"), b"alpha").unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/__zip__?path=docs", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(out_dir.path(), vec!["get".into(), url]).await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stdout(&out).contains("docs.zip"), "{}", stdout(&out));
+    let saved = std::fs::read(out_dir.path().join("docs.zip")).unwrap();
+    assert!(saved.starts_with(b"PK"));
+    assert!(!out_dir.path().join("__zip__").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_output_flag_beats_the_server_suggested_name() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::create_dir(served.path().join("docs")).unwrap();
+    std::fs::write(served.path().join("docs").join("a.txt"), b"alpha").unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/__zip__?path=docs", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(
+        out_dir.path(),
+        vec!["get".into(), url, "-o".into(), "mine.zip".into()],
+    )
+    .await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(out_dir.path().join("mine.zip").exists());
+    assert!(!out_dir.path().join("docs.zip").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_without_a_suggested_name_uses_the_url_name() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("plain.txt"), b"plain").unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/plain.txt", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(out_dir.path(), vec!["get".into(), url]).await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(out_dir.path().join("plain.txt")).unwrap(),
+        b"plain"
+    );
+    server.shutdown().await;
+}
