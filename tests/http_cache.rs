@@ -193,6 +193,53 @@ server_test!(
     }
 );
 
+server_test!(cors_preflight_covers_the_upload_api, async {
+    let fx = start_with(|_, c| {
+        c.cors = true;
+        c.cors_origin = ORIGIN.into();
+    })
+    .await;
+    let r = request(
+        fx.addr,
+        "OPTIONS",
+        "/__upload__/a.bin",
+        &[
+            ("Origin", ORIGIN),
+            ("Access-Control-Request-Method", "DELETE"),
+        ],
+    );
+    assert_eq!(r.status, 204);
+    assert!(
+        r.tokens("access-control-allow-methods")
+            .contains(&"delete".to_owned())
+    );
+    let allowed = r.tokens("access-control-allow-headers");
+    for h in [
+        "content-range",
+        "if-match",
+        "if-range",
+        "if-none-match",
+        "content-digest",
+        "repr-digest",
+        "digest",
+        "x-content-sha256",
+    ] {
+        assert!(allowed.contains(&h.to_owned()), "{h}");
+    }
+    let exposed = r.tokens("access-control-expose-headers");
+    for h in [
+        "upload-offset",
+        "upload-length",
+        "upload-complete",
+        "location",
+        "content-digest",
+        "repr-digest",
+    ] {
+        assert!(exposed.contains(&h.to_owned()), "{h}");
+    }
+    fx.stop().await;
+});
+
 server_test!(cors_preflight_answers_204, async {
     let fx = start_with(|_, c| {
         c.cors = true;

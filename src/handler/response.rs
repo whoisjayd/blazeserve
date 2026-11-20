@@ -10,9 +10,9 @@ use super::scope::{RequestScope, Tracked};
 use crate::{AppState, Body, PeerInfo};
 
 pub(super) const PERMISSIONS_POLICY: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
-pub(super) const CORS_METHODS: &str = "GET, HEAD, OPTIONS, PUT, POST";
-pub(super) const CORS_ALLOW_HEADERS: &str = "Range, Content-Type, Authorization, X-Request-ID";
-pub(super) const CORS_EXPOSE_HEADERS: &str = "Accept-Ranges, Content-Length, Content-Range, ETag, Last-Modified, X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining";
+pub(super) const CORS_METHODS: &str = "GET, HEAD, OPTIONS, PUT, POST, DELETE";
+pub(super) const CORS_ALLOW_HEADERS: &str = "Range, Content-Type, Authorization, X-Request-ID, Content-Range, If-Match, If-None-Match, If-Range, Content-Digest, Repr-Digest, Digest, X-Content-SHA256";
+pub(super) const CORS_EXPOSE_HEADERS: &str = "Accept-Ranges, Content-Length, Content-Range, ETag, Last-Modified, X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining, Upload-Offset, Upload-Length, Upload-Complete, Location, Content-Digest, Repr-Digest";
 
 pub(super) fn hv(s: &str) -> HeaderValue {
     HeaderValue::from_str(s).unwrap_or_else(|_| HeaderValue::from_static(""))

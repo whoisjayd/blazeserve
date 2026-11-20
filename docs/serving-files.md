@@ -65,7 +65,7 @@ blaze serve ./site --cors                       # any website may fetch the file
 blaze serve ./site --cors --cors-origin https://example.com
 ```
 
-CORS is off by default.
+CORS is off by default. When it is on, websites may also use the upload API, including `DELETE` and resumable uploads with `Content-Range`, and can read `Upload-Offset`, `Upload-Complete` and `Location` from the responses.
 
 ## Control caching
 
