@@ -29,43 +29,37 @@ pub(super) enum PublishError {
     Exists,
     Stale,
     NotRegular,
+    Unsupported,
     Io(io::Error),
 }
 
 fn publish_create(base: &Path, staging: &Path, target: &Path) -> Result<(), PublishError> {
+    publish_create_with(base, staging, target, |s, t| std::fs::hard_link(s, t))
+}
+
+/// A hard link is the only no-replace publication that exposes the whole file at once.
+/// Without it the upload is refused, because filling the final name would let readers
+/// see partial bytes.
+fn publish_create_with(
+    base: &Path,
+    staging: &Path,
+    target: &Path,
+    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> Result<(), PublishError> {
     let _lock = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !security::is_safe_path(base, target) {
         return Err(PublishError::Io(security::unsafe_io(
             "publish path escapes the root",
         )));
     }
-    match std::fs::hard_link(staging, target) {
+    match link(staging, target) {
         Ok(()) => {
             let _ = std::fs::remove_file(staging);
             Ok(())
         }
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(PublishError::Exists),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Err(PublishError::Io(e)),
-        // Filesystems without hard links: reserve the name exclusively, then copy.
-        // Readers can observe the file while it is being filled.
-        Err(_) => {
-            let mut dst = match security::create_upload_file(base, target) {
-                Ok(f) => f,
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                    return Err(PublishError::Exists);
-                }
-                Err(e) => return Err(PublishError::Io(e)),
-            };
-            let copied =
-                std::fs::File::open(staging).and_then(|mut src| io::copy(&mut src, &mut dst));
-            if let Err(e) = copied {
-                drop(dst);
-                let _ = std::fs::remove_file(target);
-                return Err(PublishError::Io(e));
-            }
-            let _ = std::fs::remove_file(staging);
-            Ok(())
-        }
+        Err(_) => Err(PublishError::Unsupported),
     }
 }
 
@@ -117,6 +111,10 @@ pub(super) fn publish_failure(e: PublishError) -> Response<Body> {
             "If-Match precondition failed",
         ),
         PublishError::NotRegular => text(StatusCode::CONFLICT, "Target is not a regular file"),
+        PublishError::Unsupported => text(
+            StatusCode::NOT_IMPLEMENTED,
+            "Filesystem cannot publish uploads atomically",
+        ),
         PublishError::Io(e) => {
             let (status, msg) = io_status(&e);
             text(status, msg)
@@ -215,6 +213,36 @@ mod tests {
             Err(PublishError::Exists)
         ));
         assert_eq!(std::fs::read(&target).unwrap(), b"one");
+    }
+
+    #[test]
+    fn publish_create_refuses_without_hard_links_and_exposes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().canonicalize().unwrap();
+        let target = base.join("t");
+        let staging = base.join("s");
+        std::fs::write(&staging, b"staged").unwrap();
+        let r = publish_create_with(&base, &staging, &target, |_, _| {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        });
+        assert!(matches!(r, Err(PublishError::Unsupported)));
+        assert!(!target.exists());
+        assert_eq!(std::fs::read(&staging).unwrap(), b"staged");
+    }
+
+    #[test]
+    fn publish_create_without_hard_links_keeps_existing_destination() {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().canonicalize().unwrap();
+        let target = base.join("t");
+        let staging = base.join("s");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::write(&staging, b"new").unwrap();
+        let r = publish_create_with(&base, &staging, &target, |_, _| {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        });
+        assert!(matches!(r, Err(PublishError::Unsupported)));
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
     }
 
     #[test]

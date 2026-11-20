@@ -22,7 +22,7 @@ The address `/__upload__/big.iso` puts the file at `big.iso` in the served folde
 ## How uploads behave
 
 - **Nothing is overwritten.** If the file already exists, the server answers `409 Conflict`. To replace a file on purpose, send an `If-Match` header with the file's current `ETag`. If the tag is out of date, the server answers `412 Precondition Failed`, which means someone changed the file since you last looked.
-- **Files appear whole or not at all.** The upload is written to a temporary file next to its destination and moved into place only when everything checks out. If anything fails, the temporary file is deleted.
+- **Files appear whole or not at all.** The upload is written to a temporary file next to its destination and moved into place only when everything checks out. If anything fails, the temporary file is deleted. A new file is published with a hard link, so the destination filesystem must support them. If it does not, the upload is refused with `501` and nothing appears at the final name.
 - **Sizes and checksums are verified.** The server checks the length you declared. If you also send a checksum, the file is rejected when it does not match. `Content-Digest`, `Digest` and `X-Content-SHA256` are accepted, and `Repr-Digest` verifies a whole resumed file.
 - **Partial uploads can be resumed.** `GET` or `HEAD` on an upload address reports how many bytes the server has, in an `Upload-Offset` header. `DELETE` discards a partial upload. It never deletes a finished file.
 - **Files are private to the server's user.** On Linux and macOS they are created with permissions `0600`.
