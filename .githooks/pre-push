@@ -1,0 +1,8 @@
+#!/bin/sh
+# The same checks CI runs first. Keep this in step with .github/workflows/ci.yml.
+cargo fmt --all -- --check || {
+  echo "Formatting is off. Run: cargo fmt --all"
+  exit 1
+}
+cargo clippy --all-targets --locked -- -D warnings || exit 1
+cargo test --all-targets --locked || exit 1

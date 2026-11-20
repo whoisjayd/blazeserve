@@ -1,0 +1,6 @@
+#!/bin/sh
+# Fast check only, so it is not tempting to skip.
+cargo fmt --all -- --check || {
+  echo "Formatting is off. Run: cargo fmt --all"
+  exit 1
+}

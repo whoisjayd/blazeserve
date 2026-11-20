@@ -31,6 +31,14 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
 ```
 
+To run the format and lint checks automatically, enable the Git hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`pre-commit` runs `cargo fmt --all -- --check`. `pre-push` runs the three checks above. If you prefer [pre-commit](https://pre-commit.com/), `.pre-commit-config.yaml` runs the format and lint checks as well, so use one or the other.
+
 CI also requires 80 percent line coverage (`cargo llvm-cov`) and runs `cargo deny check`. To build a Python wheel locally, run `uvx maturin build --release --out dist`. To test the Python bindings, install that wheel in a clean virtual environment with `pytest` and run `python -m pytest tests_py`. The `python` Cargo feature is only for wheel builds, so ordinary `cargo` commands do not need it.
 
 ## How the code is organised
@@ -48,7 +56,7 @@ CI also requires 80 percent line coverage (`cargo llvm-cov`) and runs `cargo den
 | `deploy/` | Container, Kubernetes, systemd, proxy and monitoring files, and the telemetry relay |
 | `docs/` | The user guides |
 
-[AGENTS.md](AGENTS.md) has a more detailed map and the rules each part must keep.
+[docs/design.md](docs/design.md) follows a request through these parts. [AGENTS.md](AGENTS.md) has a more detailed map and the rules each part must keep.
 
 ## Writing code
 
@@ -60,7 +68,17 @@ CI also requires 80 percent line coverage (`cargo llvm-cov`) and runs `cargo den
 - Keep it portable: build paths from components, guard Unix-only code with `cfg`, and never skip a test for one operating system. You may skip a test only for a capability that is truly missing, and you should say why.
 - Comment only to explain a reason that is not obvious from the code.
 
-Tests that start a server bind port `0` on the loopback address through the shared helper. Do not use fixed ports or sleeps. A bug fix needs a test that fails without the fix.
+## Tests
+
+Unit tests sit in `#[cfg(test)]` modules next to the code. Files in `tests/` start a real server and talk to it over a socket. Each file has its own shared helper module, so reuse one before writing another:
+
+| Helper | Use it for |
+| :--- | :--- |
+| `tests/http_common/` | `start()` and `start_with(|root, config| ...)` start a server on a temporary folder and return a `Fixture` with `get`, `head`, `conn` and `stop()`. Used by the static file, range, cache, ZIP and conformance tests |
+| `tests/upload_support/` | `spawn` starts a server for upload tests, and `request` and `roundtrip` send raw requests |
+| `tests/cli_support/`, `tests/usage_support/`, `tests/conformance_support/` | The command line, the usage report and the generated conformance cases |
+
+Tests that start a server bind port `0` on the loopback address through these helpers. Do not use fixed ports or sleeps. A bug fix needs a test that fails without the fix.
 
 ## Pull requests
 
