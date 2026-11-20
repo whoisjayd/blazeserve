@@ -33,7 +33,7 @@ pub(super) async fn resumable(
         );
     }
     let resume = t.staging_path(Staging::Resume);
-    let Some(_active) = ActiveGuard::acquire(&resume) else {
+    let Some(_active) = ActiveGuard::acquire(state, &resume) else {
         return reject(StatusCode::CONFLICT, "Upload in progress");
     };
     if let Err(resp) = precheck(&t, &tags).await {
@@ -143,7 +143,7 @@ pub(super) async fn resumable(
         return text(StatusCode::UNPROCESSABLE_ENTITY, "Digest mismatch");
     }
     let replaced = tags.is_some();
-    match publish(&t, resume.clone(), tags).await {
+    match publish(state, &t, resume.clone(), tags).await {
         Ok(()) => success(&t, replaced, &whole),
         Err(e) => {
             // A complete staged file nobody can finish would make every retry a 409.

@@ -2,7 +2,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use bytes::Bytes;
@@ -10,11 +10,8 @@ use hyper::{Response, StatusCode};
 
 use super::response::{build, io_status, reject, text};
 use super::target::Target;
-use crate::Body;
 use crate::security;
-
-/// Serializes check-then-publish so two in-process writers cannot interleave.
-static COMMIT_LOCK: Mutex<()> = Mutex::new(());
+use crate::{AppState, Body};
 
 /// Validator for `If-Match`; also returned as `ETag` after a publish.
 pub fn etag_for_metadata(meta: &std::fs::Metadata) -> String {
@@ -33,20 +30,28 @@ pub(super) enum PublishError {
     Io(io::Error),
 }
 
-fn publish_create(base: &Path, staging: &Path, target: &Path) -> Result<(), PublishError> {
-    publish_create_with(base, staging, target, |s, t| std::fs::hard_link(s, t))
+fn publish_create(
+    commit: &Mutex<()>,
+    base: &Path,
+    staging: &Path,
+    target: &Path,
+) -> Result<(), PublishError> {
+    publish_create_with(commit, base, staging, target, |s, t| {
+        std::fs::hard_link(s, t)
+    })
 }
 
 /// A hard link is the only no-replace publication that exposes the whole file at once.
 /// Without it the upload is refused, because filling the final name would let readers
 /// see partial bytes.
 fn publish_create_with(
+    commit: &Mutex<()>,
     base: &Path,
     staging: &Path,
     target: &Path,
     link: impl FnOnce(&Path, &Path) -> io::Result<()>,
 ) -> Result<(), PublishError> {
-    let _lock = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = commit.lock().unwrap_or_else(|e| e.into_inner());
     if !security::is_safe_path(base, target) {
         return Err(PublishError::Io(security::unsafe_io(
             "publish path escapes the root",
@@ -64,12 +69,13 @@ fn publish_create_with(
 }
 
 fn publish_replace(
+    commit: &Mutex<()>,
     base: &Path,
     staging: &Path,
     target: &Path,
     etags: &[String],
 ) -> Result<(), PublishError> {
-    let _lock = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = commit.lock().unwrap_or_else(|e| e.into_inner());
     let meta = match std::fs::symlink_metadata(target) {
         Ok(m) => m,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(PublishError::Stale),
@@ -90,14 +96,16 @@ fn publish_replace(
 }
 
 pub(super) async fn publish(
+    state: &Arc<AppState>,
     t: &Target,
     staging: PathBuf,
     etags: Option<Vec<String>>,
 ) -> Result<(), PublishError> {
     let (base, target) = (t.base.clone(), t.path.clone());
+    let state = state.clone();
     let joined = tokio::task::spawn_blocking(move || match etags {
-        Some(tags) => publish_replace(&base, &staging, &target, &tags),
-        None => publish_create(&base, &staging, &target),
+        Some(tags) => publish_replace(&state.uploads.commit, &base, &staging, &target, &tags),
+        None => publish_create(&state.uploads.commit, &base, &staging, &target),
     })
     .await;
     joined.unwrap_or_else(|e| Err(PublishError::Io(io::Error::other(e))))
@@ -207,9 +215,9 @@ mod tests {
         let (s1, s2) = (base.join("s1"), base.join("s2"));
         std::fs::write(&s1, b"one").unwrap();
         std::fs::write(&s2, b"two").unwrap();
-        assert!(publish_create(&base, &s1, &target).is_ok());
+        assert!(publish_create(&Mutex::new(()), &base, &s1, &target).is_ok());
         assert!(matches!(
-            publish_create(&base, &s2, &target),
+            publish_create(&Mutex::new(()), &base, &s2, &target),
             Err(PublishError::Exists)
         ));
         assert_eq!(std::fs::read(&target).unwrap(), b"one");
@@ -222,7 +230,7 @@ mod tests {
         let target = base.join("t");
         let staging = base.join("s");
         std::fs::write(&staging, b"staged").unwrap();
-        let r = publish_create_with(&base, &staging, &target, |_, _| {
+        let r = publish_create_with(&Mutex::new(()), &base, &staging, &target, |_, _| {
             Err(io::Error::from(io::ErrorKind::Unsupported))
         });
         assert!(matches!(r, Err(PublishError::Unsupported)));
@@ -238,7 +246,7 @@ mod tests {
         let staging = base.join("s");
         std::fs::write(&target, b"old").unwrap();
         std::fs::write(&staging, b"new").unwrap();
-        let r = publish_create_with(&base, &staging, &target, |_, _| {
+        let r = publish_create_with(&Mutex::new(()), &base, &staging, &target, |_, _| {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         });
         assert!(matches!(r, Err(PublishError::Unsupported)));
@@ -254,12 +262,18 @@ mod tests {
         std::fs::write(&target, b"old").unwrap();
         std::fs::write(&staging, b"new").unwrap();
         assert!(matches!(
-            publish_replace(&base, &staging, &target, &["\"stale\"".into()]),
+            publish_replace(
+                &Mutex::new(()),
+                &base,
+                &staging,
+                &target,
+                &["\"stale\"".into()]
+            ),
             Err(PublishError::Stale)
         ));
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
         let current = etag_for_metadata(&std::fs::metadata(&target).unwrap());
-        assert!(publish_replace(&base, &staging, &target, &[current]).is_ok());
+        assert!(publish_replace(&Mutex::new(()), &base, &staging, &target, &[current]).is_ok());
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
     }
 }

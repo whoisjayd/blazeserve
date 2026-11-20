@@ -72,7 +72,7 @@ pub(super) async fn plain(
         return text(StatusCode::UNPROCESSABLE_ENTITY, "Digest mismatch");
     }
     let replaced = tags.is_some();
-    match publish(&t, staging, tags).await {
+    match publish(state, &t, staging, tags).await {
         Ok(()) => {
             guard.armed = false;
             success(&t, replaced, &digest)

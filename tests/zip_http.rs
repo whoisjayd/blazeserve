@@ -226,3 +226,37 @@ async fn large_file_round_trips_through_streaming_writer() {
     assert_eq!(r.status, 200);
     assert_eq!(read_zip(r.body), [("blob".to_owned(), data)]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn saturated_archive_slots_do_not_affect_another_server() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("big.bin"), vec![7u8; 32 * 1024 * 1024]).unwrap();
+    std::fs::write(dir.path().join("small.txt"), b"small").unwrap();
+    let a = spawn(dir.path(), |_| {}).await;
+    let b = spawn(dir.path(), |_| {}).await;
+
+    // A permit is taken before the response head is sent, and the unread 32 MiB archive
+    // keeps the producer blocked, so one received byte proves a slot is held.
+    let mut holders = Vec::new();
+    for _ in 0..32 {
+        let mut c = Conn::open(a.addr).await;
+        c.send(&get("/__zip__?path=big.bin")).await;
+        let mut first = [0u8; 1];
+        c.stream
+            .read_exact(&mut first)
+            .await
+            .expect("response head");
+        holders.push(c);
+    }
+    let refused = roundtrip(a.addr, &get("/__zip__?path=small.txt")).await;
+    assert_eq!(refused.status, 503);
+
+    let other = roundtrip(b.addr, &get("/__zip__?path=small.txt")).await;
+    assert_eq!(other.status, 200);
+
+    for mut c in holders {
+        let _ = c.stream.shutdown().await;
+    }
+}

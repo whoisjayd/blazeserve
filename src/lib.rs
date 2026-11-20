@@ -41,6 +41,8 @@ pub struct AppState {
     pub limiters: limiter::IpLimiterPool,
     pub telemetry: telemetry::Telemetry,
     pub hashes: handler::HashCache,
+    pub uploads: upload::UploadState,
+    pub zip_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -55,6 +57,8 @@ impl AppState {
             limiters: limiter::IpLimiterPool::new(4096),
             telemetry,
             hashes: handler::HashCache::new(),
+            uploads: upload::UploadState::default(),
+            zip_slots: zip_stream::new_slots(),
         })
     }
 }

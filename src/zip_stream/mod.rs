@@ -12,7 +12,7 @@ mod archive;
 mod crc32;
 mod writer;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -30,9 +30,9 @@ const CHANNEL_FRAMES: usize = 8;
 const MAX_CONCURRENT_ZIPS: usize = 32;
 const FILENAME_STAR: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.');
 
-fn slots() -> &'static Arc<Semaphore> {
-    static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
-    SLOTS.get_or_init(|| Arc::new(Semaphore::new(MAX_CONCURRENT_ZIPS)))
+/// One pool of archive slots per server.
+pub fn new_slots() -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(MAX_CONCURRENT_ZIPS))
 }
 
 fn plain(status: StatusCode, msg: &str) -> Response<Body> {
@@ -129,7 +129,7 @@ pub async fn handle_zip(state: &Arc<AppState>, query: Option<&str>, head: bool) 
         return builder.body(body).unwrap_or_else(|_| failed());
     }
 
-    let Ok(permit) = slots().clone().try_acquire_owned() else {
+    let Ok(permit) = state.zip_slots.clone().try_acquire_owned() else {
         let mut resp = plain(
             StatusCode::SERVICE_UNAVAILABLE,
             "Too many archives in progress",

@@ -799,3 +799,40 @@ async fn browser_retry_after_drop_is_reconciled_and_create_only() {
     assert_eq!(again.status, 409);
     assert_eq!(std::fs::read(dir.path().join("r.bin")).unwrap(), body);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_upload_is_not_visible_to_another_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = spawn(dir.path(), |_| {}).await;
+    let b = spawn(dir.path(), |_| {}).await;
+
+    let mut holder = Conn::open(a.addr).await;
+    let head = String::from_utf8(put(
+        "/__upload__/shared.bin",
+        &[("Content-Range", "bytes 0-9/20")],
+        b"01",
+    ))
+    .unwrap()
+    .replace("Content-Length: 2", "Content-Length: 10");
+    holder.send(head.as_bytes()).await;
+    wait_until("server A to stage the partial upload", || {
+        dir_names(dir.path())
+            .iter()
+            .any(|n| n.ends_with(".blaze-resume"))
+    })
+    .await;
+
+    let held = roundtrip(
+        a.addr,
+        &request("DELETE", "/__upload__/shared.bin", &[], b""),
+    )
+    .await;
+    assert_eq!(held.status, 409);
+
+    let other = roundtrip(
+        b.addr,
+        &request("DELETE", "/__upload__/shared.bin", &[], b""),
+    )
+    .await;
+    assert_ne!(other.status, 409);
+}

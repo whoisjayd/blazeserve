@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use http_body_util::BodyExt;
@@ -18,27 +18,41 @@ use crate::metrics::Metrics;
 use crate::security;
 use crate::{AppState, Body};
 
-fn active_set() -> &'static Mutex<HashSet<PathBuf>> {
-    static SET: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-    SET.get_or_init(|| Mutex::new(HashSet::new()))
+/// Upload bookkeeping owned by one server.
+#[derive(Debug, Default)]
+pub struct UploadState {
+    active: Mutex<HashSet<PathBuf>>,
+    /// Serializes check-then-publish so two in-process writers cannot interleave.
+    pub(super) commit: Mutex<()>,
 }
 
-pub(super) struct ActiveGuard(PathBuf);
+pub(super) struct ActiveGuard {
+    state: Arc<AppState>,
+    path: PathBuf,
+}
 
 impl ActiveGuard {
-    pub(super) fn acquire(path: &Path) -> Option<Self> {
-        let mut set = active_set().lock().unwrap_or_else(|e| e.into_inner());
-        set.insert(path.to_path_buf())
-            .then(|| Self(path.to_path_buf()))
+    pub(super) fn acquire(state: &Arc<AppState>, path: &Path) -> Option<Self> {
+        let mut set = state
+            .uploads
+            .active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set.insert(path.to_path_buf()).then(|| Self {
+            state: state.clone(),
+            path: path.to_path_buf(),
+        })
     }
 }
 
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
-        active_set()
+        self.state
+            .uploads
+            .active
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.0);
+            .remove(&self.path);
     }
 }
 

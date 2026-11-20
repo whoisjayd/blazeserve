@@ -43,6 +43,7 @@ use request::{LengthError, content_length, if_match, parse_content_range, reques
 use response::{build, io_status, reject, text};
 use resumable::resumable;
 use stream::ActiveGuard;
+pub use stream::UploadState;
 use target::{Staging, Target, parse_target};
 
 /// Entry point for `/__upload__/` requests. The caller authenticates first and decorates the response.
@@ -103,7 +104,7 @@ async fn status(t: &Target) -> Response<Body> {
 
 async fn abort(state: &Arc<AppState>, t: &Target) -> Response<Body> {
     let resume = t.staging_path(Staging::Resume);
-    let Some(_active) = ActiveGuard::acquire(&resume) else {
+    let Some(_active) = ActiveGuard::acquire(state, &resume) else {
         return text(StatusCode::CONFLICT, "Upload in progress");
     };
     match tokio::fs::symlink_metadata(&resume).await {
