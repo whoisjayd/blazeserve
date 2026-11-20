@@ -1,11 +1,14 @@
+import _thread
 import base64
 import hashlib
 import http.server
 import json
 import os
+import pathlib
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -158,3 +161,108 @@ def test_blaze_upgrade_check_through_main_and_module(release_origin, capfd):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["latest"] == "9.9.9"
+
+
+def test_every_command_is_reachable_and_typed():
+    """Fails when a command is added to the program but not to the package's type stubs."""
+    source = (pathlib.Path(blazeserve.__file__)).read_text(encoding="utf-8")
+    names = blazeserve.commands()
+    assert {"serve", "send", "get", "put", "status", "stop", "upgrade"} <= set(names)
+    for name in names:
+        assert callable(getattr(blazeserve, name)), name
+        assert name in dir(blazeserve), name
+        assert f"def {name}(" in source, f"add {name} to the TYPE_CHECKING block"
+    with pytest.raises(AttributeError):
+        blazeserve.no_such_command
+
+
+def test_options_become_a_command_line():
+    line = blazeserve.command_line(
+        "get",
+        "http://h/x",
+        connections=8,
+        extract=True,
+        output=pathlib.Path("a b.bin"),
+        resume=None,
+    )
+    assert line == ["get", "--connections", "8", "--extract", "--output", "a b.bin", "--", "http://h/x"]
+    assert blazeserve.command_line("serve", hide=["*.env", ".git"], listing=False) == [
+        "serve", "--hide", "*.env", "--hide", ".git", "--no-listing",
+    ]
+
+
+def test_mistaken_options_name_the_valid_ones():
+    with pytest.raises(TypeError, match="connections"):
+        blazeserve.command_line("get", "http://h/x", conections=8)
+    with pytest.raises(TypeError, match="unknown command"):
+        blazeserve.run("fetch")
+    with pytest.raises(TypeError, match="switch"):
+        blazeserve.command_line("get", "http://h/x", extract="yes")
+    with pytest.raises(TypeError, match="expected a string"):
+        blazeserve.command_line("get", "http://h/x", output=object())
+
+
+def test_get_downloads_with_keyword_options(site, tmp_path):
+    destination = tmp_path / "out.bin"
+    with blazeserve.Server(site) as server:
+        status = blazeserve.get(server.url + "big.bin", output=destination, connections=2)
+    assert status == 0
+    assert destination.read_bytes() == (site / "big.bin").read_bytes()
+
+
+def test_a_failed_command_returns_its_exit_code(site, tmp_path):
+    with blazeserve.Server(site, auth="ada:secret") as server:
+        status = blazeserve.get(server.url + "hello.txt", output=tmp_path / "x")
+    assert status == 5
+
+
+def test_server_takes_every_serve_option(site):
+    with blazeserve.Server(
+        site, cors=True, cors_origin="https://example.com", hide=["*.bin"], listing=False
+    ) as server:
+        _, headers, _ = fetch(server.url + "hello.txt")
+        assert headers["Access-Control-Allow-Origin"] == "https://example.com"
+        with pytest.raises(urllib.error.HTTPError) as hidden:
+            fetch(server.url + "big.bin")
+        assert hidden.value.code == 404
+        with pytest.raises(urllib.error.HTTPError) as listing:
+            fetch(server.url)
+        assert listing.value.code == 403
+    with pytest.raises(TypeError, match="no option 'colour'"):
+        blazeserve.Server(site, colour=True)
+
+
+def test_background_get_works_from_python(site, tmp_path, monkeypatch, capfd):
+    monkeypatch.setenv("BLAZE_STATE_DIR", str(tmp_path / "state"))
+    destination = tmp_path / "bg.bin"
+    with blazeserve.Server(site) as server:
+        assert blazeserve.get(server.url + "big.bin", output=destination, background=True) == 0
+        job = capfd.readouterr().out.strip()
+        assert job
+        deadline = time.monotonic() + 60
+        report = {}
+        while time.monotonic() < deadline:
+            assert blazeserve.status(job, json=True) == 0
+            report = json.loads(capfd.readouterr().out)
+            if "finished" in json.dumps(report) or destination.exists():
+                break
+            time.sleep(0.2)
+    assert destination.read_bytes() == (site / "big.bin").read_bytes()
+
+
+def test_ctrl_c_stops_a_running_download_and_keeps_resume_data(site, tmp_path):
+    destination = tmp_path / "slow.bin"
+    with blazeserve.Server(site) as server:
+        timer = threading.Timer(1.0, _thread.interrupt_main)
+        timer.start()
+        started = time.monotonic()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                blazeserve.get(
+                    server.url + "big.bin", output=destination, limit_rate="20K", connections=1
+                )
+        finally:
+            timer.cancel()
+        assert time.monotonic() - started < 20
+    assert not destination.exists()
+    assert (tmp_path / "slow.bin.part").exists()

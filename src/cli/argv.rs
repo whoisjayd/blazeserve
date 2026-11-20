@@ -48,7 +48,7 @@ fn dashed(name: &str) -> String {
 pub fn commands() -> Vec<(String, String)> {
     Cli::command()
         .get_subcommands()
-        .filter(|c| !c.is_hide_set())
+        .filter(|c| !c.is_hide_set() && c.get_name() != "help")
         .map(|c| {
             (
                 c.get_name().to_owned(),
