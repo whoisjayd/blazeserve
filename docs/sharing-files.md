@@ -96,4 +96,4 @@ blaze put ./big.iso http://host:8000/
 
 Given just a server address, `put` uploads under `/__upload__/` using the file's name. You can also give a full destination such as `http://host:8000/__upload__/backups/big.iso`.
 
-Uploads resume too. If the transfer breaks, run the same command and BlazeServe asks the server how much it already has, then sends the rest. Data goes up in chunks of 8 MB by default; change that with `--chunk-mb`.
+Uploads resume too. If the transfer breaks, run the same command and BlazeServe asks the server how much it already has, then sends the rest. Data goes up in chunks of 8 MB by default; change that with `--chunk-mb`. To leave bandwidth for other work, cap the upload speed with `--limit-rate`, for example `--limit-rate 2M`.

@@ -79,7 +79,10 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `--chunk-mb N` | `8` | Size of each request |
 | `--retries N` | `5` | Failed attempts in a row before giving up |
 | `--if-match ETAG` | none | Replace an existing file only if its current quoted `ETag` equals this value. `*` and weak tags are refused |
+| `--limit-rate RATE` | none | Cap on upload speed in bytes per second, with optional `K`, `M` or `G` (minimum `1K`), as for `get` |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
+
+`--limit-rate` limits the speed of the request body, for example `blaze put backup.tar http://host:8000 --limit-rate 2M`. Bytes sent again after a retry count against the limit. Bytes the server already holds from an earlier attempt are not sent and do not. It is not an exact cap on TLS and TCP overhead.
 
 Without `--if-match`, an existing file is never replaced. With it, every request carries the tag. A stale tag or a missing file exits with an error (HTTP `412`) and leaves the file alone. The client never fetches a newer tag and tries again.
 

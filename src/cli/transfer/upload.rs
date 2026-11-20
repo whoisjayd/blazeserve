@@ -5,6 +5,7 @@ use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, transient_error,
     transient_status,
 };
+use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::util::{Progress, backoff, existing_file, human_size};
 use base64::Engine as _;
@@ -14,6 +15,7 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use ureq::SendBody;
 
 const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
@@ -47,6 +49,12 @@ pub struct PutArgs {
     /// newer version. Without this option an existing file is never replaced.
     #[arg(long, value_name = "ETAG", value_parser = parse_etag)]
     pub if_match: Option<String>,
+    /// Cap upload body speed in bytes per second, e.g. 500K, 2M or 1.5M (minimum 1K)
+    ///
+    /// Counts request-body bytes, including any that are sent again after a retry. It is
+    /// not an exact cap on TLS and TCP overhead.
+    #[arg(long, value_name = "RATE", value_parser = parse_rate)]
+    pub limit_rate: Option<u64>,
 }
 
 /// A single strong entity tag. Weak tags and `*` cannot guard a replacement.
@@ -117,6 +125,7 @@ struct Upload<'a> {
     total: u64,
     repr_digest: String,
     if_match: Option<String>,
+    throttle: Option<Throttle>,
 }
 
 impl Upload<'_> {
@@ -185,7 +194,18 @@ impl Upload<'_> {
         if last {
             req = req.header("Repr-Digest", &self.repr_digest);
         }
-        let resp = match self.authorize(req).send(chunk) {
+        let sent = match &self.throttle {
+            Some(throttle) => {
+                let mut body = Paced {
+                    inner: chunk,
+                    throttle,
+                };
+                self.authorize(req.header("Content-Length", chunk.len().to_string()))
+                    .send(SendBody::from_reader(&mut body))
+            }
+            None => self.authorize(req).send(chunk),
+        };
+        let resp = match sent {
             Ok(r) => r,
             Err(e) if transient_error(&e) => {
                 return Ok(Sent::Retry {
@@ -229,6 +249,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         total,
         repr_digest: whole_file_digest(&args.file)?,
         if_match: args.if_match.clone(),
+        throttle: args.limit_rate.map(Throttle::new),
     };
 
     let mut file =

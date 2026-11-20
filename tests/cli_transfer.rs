@@ -516,6 +516,69 @@ fn get_rejects_invalid_limit_rates() {
     }
 }
 
+async fn limited_put(size: usize, staged: usize, extra: &[&str], limit: &str, min_secs: f64) {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(size);
+    if staged > 0 {
+        std::fs::write(served.path().join(".big.bin.blaze-resume"), &data[..staged]).unwrap();
+    }
+    let server = serve(served.path(), 8).await;
+    let src_dir = tempfile::tempdir().unwrap();
+    let src = src_dir.path().join("big.bin");
+    std::fs::write(&src, &data).unwrap();
+
+    let mut args = vec![
+        "put".into(),
+        s(&src),
+        format!("http://{}", server.local_addr()),
+    ];
+    args.extend(extra.iter().map(|a| (*a).to_owned()));
+    args.extend(["--limit-rate".into(), limit.into()]);
+
+    let started = std::time::Instant::now();
+    let out = blaze_async(args).await;
+    let elapsed = started.elapsed().as_secs_f64();
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(elapsed >= min_secs, "finished in {elapsed:.2}s");
+    assert_eq!(std::fs::read(served.path().join("big.bin")).unwrap(), data);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_limit_rate_paces_a_chunk_larger_than_the_allowance() {
+    // One 1 MiB request at 512 KiB/s needs two seconds, not a burst and a pause.
+    limited_put(MIB, 0, &["--chunk-mb", "1"], "512K", 1.8).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_limit_rate_counts_only_bytes_still_to_send_on_resume() {
+    // Half the file is already staged, so the remaining 512 KiB at 512 KiB/s needs one second.
+    limited_put(MIB, MIB / 2, &["--chunk-mb", "1"], "512K", 0.9).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_limit_rate_still_uploads_an_empty_file() {
+    limited_put(0, 0, &[], "1K", 0.0).await;
+}
+
+#[test]
+fn put_rejects_invalid_limit_rates() {
+    for rate in ["abc", "0", "100", "-5M"] {
+        let out = blaze()
+            .args([
+                "put",
+                "Cargo.toml",
+                "http://127.0.0.1:1",
+                "--limit-rate",
+                rate,
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 2, "{rate}: {}", stderr(&out));
+    }
+}
+
 fn etag(path: &Path) -> String {
     blazeserve::cache::etag_for(&std::fs::metadata(path).unwrap())
 }

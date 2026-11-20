@@ -70,10 +70,41 @@ impl Throttle {
     }
 }
 
+/// A request body that releases at most about a second of allowance per read and waits
+/// before handing each piece over, so bytes leave no faster than the cap.
+pub struct Paced<'a, R> {
+    pub inner: R,
+    pub throttle: &'a Throttle,
+}
+
+impl<R: std::io::Read> std::io::Read for Paced<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let take = self.throttle.chunk(buf.len());
+        let n = self.inner.read(&mut buf[..take])?;
+        self.throttle.throttle(n);
+        Ok(n)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::sync::Arc;
+
+    #[test]
+    fn paced_reads_stay_within_one_second_of_allowance() {
+        let t = Throttle::new(2048);
+        let data = vec![7u8; 4096];
+        let mut paced = Paced {
+            inner: &data[..],
+            throttle: &t,
+        };
+        let mut buf = [0u8; 4096];
+        assert_eq!(paced.read(&mut buf).unwrap(), 2048);
+        assert_eq!(paced.read(&mut buf).unwrap(), 2048);
+        assert_eq!(paced.read(&mut buf).unwrap(), 0);
+    }
 
     #[test]
     fn parses_suffixes_and_decimals() {
