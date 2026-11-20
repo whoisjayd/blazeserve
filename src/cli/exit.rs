@@ -23,14 +23,19 @@ pub(crate) fn record(code: u8) {
     let _ = CAUSE.compare_exchange(OTHER, code, Ordering::SeqCst, Ordering::SeqCst);
 }
 
+/// The code a write error stands for, if it has one.
+fn io_cause(e: &std::io::Error) -> Option<u8> {
+    (e.kind() == std::io::ErrorKind::StorageFull).then_some(NO_SPACE)
+}
+
 pub(crate) fn failure() -> u8 {
     CAUSE.load(Ordering::SeqCst)
 }
 
 /// Records a full disk when `e` says so.
 pub(crate) fn note_io(e: &std::io::Error) {
-    if e.kind() == std::io::ErrorKind::StorageFull {
-        record(NO_SPACE);
+    if let Some(code) = io_cause(e) {
+        record(code);
     }
 }
 
@@ -38,24 +43,22 @@ pub(crate) fn note_io(e: &std::io::Error) {
 mod tests {
     use super::*;
 
+    // The cause is a process-wide value, so these tests exercise the pure parts only; the
+    // exit codes themselves are checked end to end in tests/cli_transfer.rs.
     #[test]
-    fn first_cause_wins_and_reset_clears_it() {
-        reset();
-        assert_eq!(failure(), 1);
-        record(INTEGRITY);
-        record(AUTH);
-        assert_eq!(failure(), INTEGRITY);
-        reset();
-        assert_eq!(failure(), 1);
+    fn a_full_disk_is_recognised() {
+        assert_eq!(
+            io_cause(&std::io::Error::from(std::io::ErrorKind::StorageFull)),
+            Some(NO_SPACE)
+        );
+        assert_eq!(
+            io_cause(&std::io::Error::from(std::io::ErrorKind::NotFound)),
+            None
+        );
     }
 
     #[test]
-    fn a_full_disk_is_recognised() {
-        reset();
-        note_io(&std::io::Error::from(std::io::ErrorKind::NotFound));
-        assert_eq!(failure(), 1);
-        note_io(&std::io::Error::from(std::io::ErrorKind::StorageFull));
-        assert_eq!(failure(), NO_SPACE);
-        reset();
+    fn the_codes_are_distinct_and_stable() {
+        assert_eq!([NO_SPACE, INTEGRITY, AUTH], [3, 4, 5]);
     }
 }

@@ -144,8 +144,8 @@ fn expect_failure(hash_reply: Reply) -> (Output, tempfile::TempDir, Stub) {
     (out, out_dir, stub)
 }
 
-fn assert_refused(out: &Output, dir: &tempfile::TempDir, needle: &str) {
-    assert_eq!(code(out), 1, "{}", stderr(out));
+fn assert_refused(out: &Output, dir: &tempfile::TempDir, needle: &str, expected: i32) {
+    assert_eq!(code(out), expected, "{}", stderr(out));
     assert!(stderr(out).contains(needle), "{}", stderr(out));
     assert!(!stdout(out).contains("Saved"));
     no_leftovers(dir.path(), "f.bin");
@@ -260,7 +260,7 @@ async fn a_resumed_part_that_is_corrupt_fails_verification() {
     ])
     .await;
 
-    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert_eq!(code(&out), 4, "{}", stderr(&out));
     assert!(
         stderr(&out).contains("SHA-256 mismatch"),
         "{}",
@@ -325,7 +325,7 @@ async fn authenticates_discovery_without_leaking_the_password() {
         "server-sha256".into(),
     ])
     .await;
-    assert_eq!(code(&denied), 1);
+    assert_eq!(code(&denied), 5);
     assert!(stderr(&denied).contains("SHA-256"), "{}", stderr(&denied));
     for text in [stderr(&denied), stdout(&denied)] {
         assert!(!text.contains("wrong-pw") && !text.contains("s3cret-pw"));
@@ -371,37 +371,37 @@ fn hash_request_keeps_query_asks_for_identity_and_stays_quiet() {
 #[test]
 fn unsupported_endpoint_fails() {
     let (out, dir, _stub) = expect_failure((404, "text/plain", "nope".into()));
-    assert_refused(&out, &dir, "BlazeServe");
+    assert_refused(&out, &dir, "BlazeServe", 1);
 }
 
 #[test]
 fn non_json_reply_fails() {
     let (out, dir, _stub) = expect_failure((200, "text/html", "<html>".into()));
-    assert_refused(&out, &dir, "JSON");
+    assert_refused(&out, &dir, "JSON", 1);
 }
 
 #[test]
 fn malformed_digest_fails() {
     let (out, dir, _stub) = expect_failure(json("not-hex", 3));
-    assert_refused(&out, &dir, "hash reply");
+    assert_refused(&out, &dir, "hash reply", 1);
 }
 
 #[test]
 fn oversized_reply_fails() {
     let (out, dir, _stub) = expect_failure((200, "application/json", " ".repeat(64 * 1024)));
-    assert_refused(&out, &dir, "hash reply");
+    assert_refused(&out, &dir, "hash reply", 1);
 }
 
 #[test]
 fn unauthorized_discovery_fails() {
     let (out, dir, _stub) = expect_failure((401, "text/plain", "no".into()));
-    assert_refused(&out, &dir, "401");
+    assert_refused(&out, &dir, "401", 5);
 }
 
 #[test]
 fn size_change_fails() {
     let (out, dir, _stub) = expect_failure(json(ABC, 99));
-    assert_refused(&out, &dir, "size");
+    assert_refused(&out, &dir, "size", 4);
 }
 
 #[test]
@@ -423,7 +423,7 @@ fn hash_mismatch_fails_and_keeps_an_existing_destination() {
         .output()
         .unwrap();
 
-    assert_eq!(code(&out), 1);
+    assert_eq!(code(&out), 4);
     assert!(
         stderr(&out).contains("SHA-256 mismatch"),
         "{}",
