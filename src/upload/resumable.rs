@@ -32,17 +32,16 @@ pub(super) async fn resumable(
             "Content-Length does not match Content-Range",
         );
     }
-    if let Some(tags) = &tags {
-        if let Err(resp) = precheck(&t, &Some(tags.clone())).await {
-            return resp;
-        }
-    } else if let Err(resp) = precheck(&t, &None).await {
-        return resp;
-    }
     let resume = t.staging_path(Staging::Resume);
     let Some(_active) = ActiveGuard::acquire(&resume) else {
         return reject(StatusCode::CONFLICT, "Upload in progress");
     };
+    if let Err(resp) = precheck(&t, &tags).await {
+        // The destination appeared or the precondition failed, so this upload can no
+        // longer finish and its staged bytes would only make every retry a 409.
+        let _ = tokio::fs::remove_file(&resume).await;
+        return resp;
+    }
     let base = t.base.clone();
     let path = resume.clone();
     let opened = tokio::task::spawn_blocking(move || match std::fs::symlink_metadata(&path) {
@@ -134,15 +133,22 @@ pub(super) async fn resumable(
     };
     let whole = match whole {
         Ok(d) => d,
-        Err(e) => return finish_io(&e),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&resume).await;
+            return finish_io(&e);
+        }
     };
     if digests.repr.is_some_and(|d| d != whole) {
         let _ = tokio::fs::remove_file(&resume).await;
         return text(StatusCode::UNPROCESSABLE_ENTITY, "Digest mismatch");
     }
     let replaced = tags.is_some();
-    match publish(&t, resume, tags).await {
+    match publish(&t, resume.clone(), tags).await {
         Ok(()) => success(&t, replaced, &whole),
-        Err(e) => publish_failure(e),
+        Err(e) => {
+            // A complete staged file nobody can finish would make every retry a 409.
+            let _ = tokio::fs::remove_file(&resume).await;
+            publish_failure(e)
+        }
     }
 }

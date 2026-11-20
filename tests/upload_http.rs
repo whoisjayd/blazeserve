@@ -564,6 +564,38 @@ async fn resumable_digest_failures_roll_back_correctly() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refused_final_chunk_removes_the_staged_upload() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = spawn(dir.path(), |c| c.max_upload_bytes = 100).await;
+    let first = roundtrip(
+        srv.addr,
+        &put(
+            "/__upload__/late.bin",
+            &[("Content-Range", "bytes 0-3/8")],
+            b"abcd",
+        ),
+    )
+    .await;
+    assert_eq!(first.status, 202);
+    std::fs::write(dir.path().join("late.bin"), b"someone else").unwrap();
+    let last = roundtrip(
+        srv.addr,
+        &put(
+            "/__upload__/late.bin",
+            &[("Content-Range", "bytes 4-7/8")],
+            b"efgh",
+        ),
+    )
+    .await;
+    assert_eq!(last.status, 409);
+    assert_eq!(
+        std::fs::read(dir.path().join("late.bin")).unwrap(),
+        b"someone else"
+    );
+    assert!(no_staging_left(dir.path()), "{:?}", dir_names(dir.path()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn resumable_validation_and_abort() {
     let dir = tempfile::tempdir().unwrap();
     let srv = spawn(dir.path(), |c| c.max_upload_bytes = 100).await;
