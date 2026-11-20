@@ -12,11 +12,21 @@ use std::time::{Duration, Instant};
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(40);
 
-/// The worker's command line: ours without `--background`, plus the worker marker.
+/// The worker's command line: ours without `--background`, plus the worker marker. Anything
+/// after a `--` is a value, never an option, so the marker is placed before it.
 pub fn worker_args(args: impl IntoIterator<Item = OsString>, id: &str) -> Vec<OsString> {
-    let mut out: Vec<OsString> = args.into_iter().filter(|a| a != "--background").collect();
-    out.push("--background-worker".into());
-    out.push(id.into());
+    let mut out: Vec<OsString> = Vec::new();
+    let mut values_only = false;
+    for arg in args {
+        if arg == "--" {
+            values_only = true;
+        }
+        if values_only || arg != "--background" {
+            out.push(arg);
+        }
+    }
+    let at = out.iter().position(|a| a == "--").unwrap_or(out.len());
+    out.splice(at..at, ["--background-worker".into(), id.into()]);
     out
 }
 
@@ -193,6 +203,25 @@ mod tests {
                 "x.bin",
                 "--background-worker",
                 "0123abcd"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_marker_goes_before_a_separator_so_it_is_not_a_positional() {
+        let args = ["get", "--background", "-o", "x.bin", "--", "--odd-name"].map(OsString::from);
+        let out = worker_args(args, "0123abcd");
+        let out: Vec<_> = out.iter().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(
+            out,
+            [
+                "get",
+                "-o",
+                "x.bin",
+                "--background-worker",
+                "0123abcd",
+                "--",
+                "--odd-name"
             ]
         );
     }
