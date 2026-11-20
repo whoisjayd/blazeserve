@@ -23,6 +23,7 @@ COPY --from=builder /src/target/release/blaze /usr/local/bin/blaze
 COPY --from=builder --chown=10001:10001 /rootfs/data /data
 COPY --from=builder --chmod=1777 /rootfs/tmp /tmp
 
+ENV BLAZE_INSTALL_CHANNEL=docker
 USER 10001:10001
 WORKDIR /data
 EXPOSE 8000
