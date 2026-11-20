@@ -148,6 +148,17 @@ pub fn run_expiring(
     expires_after: Option<Duration>,
     on_bound: impl FnOnce(&ServerHandle),
 ) -> Result<StopReason, BoxError> {
+    run_until(config, expires_after, std::future::pending(), on_bound)
+}
+
+/// Like [`run_expiring`], and also shuts down gracefully when `stop` resolves, as it does
+/// for a request from `blaze stop`.
+pub fn run_until(
+    config: Config,
+    expires_after: Option<Duration>,
+    stop: impl Future<Output = ()>,
+    on_bound: impl FnOnce(&ServerHandle),
+) -> Result<StopReason, BoxError> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -164,7 +175,13 @@ pub fn run_expiring(
                 None => std::future::pending().await,
             }
         };
-        let reason = handle.wait_until(expiry, shutdown_signal()).await;
+        let interrupt = async {
+            tokio::select! {
+                () = shutdown_signal() => {}
+                () = stop => {}
+            }
+        };
+        let reason = handle.wait_until(expiry, interrupt).await;
         handle.shutdown().await;
         Ok::<StopReason, BoxError>(reason)
     });
