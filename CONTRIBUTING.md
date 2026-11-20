@@ -10,7 +10,7 @@ Thanks for helping. Bug reports, fixes, tests and better documentation are all w
 
 ## Set up
 
-Install Rust 1.88 or newer with [rustup](https://rustup.rs/). The `rust-toolchain.toml` file picks the stable toolchain with `clippy` and `rustfmt`. BlazeServe needs no system libraries on any supported platform.
+Install Rust 1.93 or newer with [rustup](https://rustup.rs/). The `rust-toolchain.toml` file picks the stable toolchain with `clippy` and `rustfmt`. BlazeServe needs no system libraries on any supported platform. A C compiler is needed to build, because the archive extraction library compiles a bundled copy of zstd.
 
 ```bash
 git clone https://github.com/whoisjayd/blazeserve

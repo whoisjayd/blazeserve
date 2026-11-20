@@ -2,7 +2,7 @@
 name = "blazeserve"
 version = "1.0.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.93"
 description = "High-performance HTTP file server and CLI with range requests, resumable transfers, caching, TLS, uploads, ZIP streaming, rate limiting, and Prometheus metrics."
 license = "MIT"
 repository = "https://github.com/whoisjayd/blazeserve"
@@ -55,10 +55,15 @@ anstyle = "1"
 qrcode = { version = "0.14.1", default-features = false }
 globset = { version = "0.4.21", default-features = false }
 
+# In-place archive extraction for `blaze get --extract`. It builds the bundled zstd C source
+# through `zip`, so building from source needs a C compiler; no system library is used.
+hatchzip-core = { version = "0.1.10", optional = true }
+
 [features]
-default = ["otel"]
+default = ["otel", "extract"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:async-trait"]
 python = ["dep:pyo3"]
+extract = ["dep:hatchzip-core"]
 
 [dev-dependencies]
 tempfile = "3"

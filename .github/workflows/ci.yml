@@ -58,7 +58,7 @@ jobs:
         toolchain: [stable]
         include:
           - os: ubuntu-latest
-            toolchain: "1.88"
+            toolchain: "1.93"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust

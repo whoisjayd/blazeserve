@@ -13,7 +13,7 @@ Pick whichever method suits you.
 | Download | Get an archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases) and check it against the `SHA256SUMS` file |
 | Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 
-Builds exist for Linux (x86_64 and aarch64, with glibc or musl), Windows x86_64, and macOS (Intel and Apple silicon). To build from source you need Rust 1.88 or newer.
+Builds exist for Linux (x86_64 and aarch64, with glibc or musl), Windows x86_64, and macOS (Intel and Apple silicon). To build from source you need Rust 1.93 or newer.
 
 Check that it works:
 
