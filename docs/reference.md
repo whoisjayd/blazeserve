@@ -93,7 +93,7 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | :--- | :--- | :--- |
 | `/<path>` | GET, HEAD | Files and folder listings. Send `Accept: application/json` for a JSON listing. `?download=1` makes browsers save the file |
 | `/<path>?hash` | GET, HEAD | SHA-256 of a file as JSON (`path`, `size`, `sha256`) plus a `Repr-Digest` header. Folders answer `400`. Results are cached per path, size and modification time, and at most four files are hashed at once |
-| `/__upload__/<path>` | PUT, POST, GET, HEAD, DELETE | Only when uploads are on. GET and HEAD report `Upload-Offset` for a partial upload. DELETE discards a partial upload, never a finished file |
+| `/__upload__/<path>` | PUT, POST, GET, HEAD, DELETE | Only when uploads are on. GET and HEAD report `Upload-Offset` for a partial upload. A finished file answers with `Upload-Complete: ?1` and its size in `Upload-Offset`, and an unknown name answers `404`; the folder page uses this to check an upload after a dropped connection. DELETE discards a partial upload, never a finished file. See [Uploads](uploads.md#upload-from-the-browser) for the page's cancel and retry controls |
 | `/__zip__?path=<path>` | GET, HEAD | A ZIP made on the fly. The connection closes afterwards |
 | `/__health__` | GET, HEAD | Status, version, uptime |
 | `/__live__` | GET, HEAD | Is the process alive? |

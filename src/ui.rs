@@ -173,7 +173,8 @@ pub fn render_directory_index(rel_path: &str, entries: &[Entry], allow_upload: b
                 "<p>Drop files to upload to <code>{}</code></p>",
                 "<button type=\"button\" class=\"btn\" id=\"pick\">Choose files</button>",
                 "<input type=\"file\" id=\"picker\" multiple hidden>",
-                "<ul class=\"uploads\" id=\"uploads\" aria-live=\"polite\"></ul></section>\n",
+                "<ul class=\"uploads\" id=\"uploads\"></ul>",
+                "<p class=\"sr-only\" id=\"upload-status\" role=\"status\" aria-live=\"polite\"></p></section>\n",
             ),
             escape(&current_url),
             display_esc

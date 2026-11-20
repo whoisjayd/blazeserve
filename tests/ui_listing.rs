@@ -146,3 +146,10 @@ fn unicode_names_survive_unchanged_in_text() {
     let html = render_directory_index("", &[file("\u{1F4C4}\u{65E5}\u{672C}.txt", 1)], false);
     assert!(html.contains("<span class=\"name\">\u{1F4C4}\u{65E5}\u{672C}.txt</span>"));
 }
+
+#[test]
+fn upload_box_has_a_status_region_for_announcements() {
+    let html = render_directory_index("", &[], true);
+    assert!(html.contains("id=\"upload-status\" role=\"status\" aria-live=\"polite\""));
+    assert!(!render_directory_index("", &[], false).contains("id=\"upload-status\""));
+}

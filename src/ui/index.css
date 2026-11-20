@@ -404,7 +404,7 @@ tr[hidden] {
 
 .uploads li {
   display: grid;
-  grid-template-columns: 1fr auto 96px;
+  grid-template-columns: minmax(0, 1fr) auto 96px auto;
   align-items: center;
   gap: 12px;
   min-height: 32px;
@@ -412,8 +412,40 @@ tr[hidden] {
   font: 400 13px/20px var(--mono);
 }
 
+.uploads .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .uploads .state {
   color: var(--text-2);
+}
+
+.uploads .actions {
+  display: flex;
+  gap: 8px;
+  min-width: 48px;
+}
+
+.uploads button.link {
+  min-height: 32px;
+  padding: 0 8px;
+  background: none;
+  color: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.uploads button.link:hover {
+  text-decoration: underline;
+}
+
+.uploads li.cancelled .state,
+.uploads li.uncertain .state {
+  color: var(--text);
 }
 
 .uploads li.failed .state {
@@ -483,6 +515,16 @@ footer {
 
   .drop {
     grid-template-columns: 1fr;
+  }
+
+  .uploads li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 4px 0;
+  }
+
+  .uploads li progress {
+    grid-column: 1;
+    width: 100%;
   }
 }
 

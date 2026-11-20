@@ -732,3 +732,38 @@ async fn default_config_refuses_every_upload_request() {
     assert!(dir_names(dir.path()).is_empty());
     assert_eq!(srv.state.metrics.stats().bytes_received, 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_retry_after_drop_is_reconciled_and_create_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = spawn(dir.path(), |_| {}).await;
+    {
+        let mut c = Conn::open(srv.addr).await;
+        let head = request(
+            "PUT",
+            "/__upload__/r.bin",
+            &[("Content-Length", "100")],
+            b"",
+        );
+        c.send(&head).await;
+        c.send(b"partial").await;
+        c.stream.shutdown().await.unwrap();
+    }
+    wait_until("dropped upload cleanup", || {
+        dir_names(dir.path()).is_empty()
+    })
+    .await;
+    let probe = roundtrip(srv.addr, &request("HEAD", "/__upload__/r.bin", &[], b"")).await;
+    assert_eq!(probe.status, 404);
+
+    let body = b"complete".to_vec();
+    let retry = roundtrip(srv.addr, &put("/__upload__/r.bin", &[], &body)).await;
+    assert_eq!(retry.status, 201);
+    let probe = roundtrip(srv.addr, &request("HEAD", "/__upload__/r.bin", &[], b"")).await;
+    assert_eq!(probe.header("upload-complete"), Some("?1"));
+    assert_eq!(probe.header("upload-offset"), Some("8"));
+
+    let again = roundtrip(srv.addr, &put("/__upload__/r.bin", &[], b"other")).await;
+    assert_eq!(again.status, 409);
+    assert_eq!(std::fs::read(dir.path().join("r.bin")).unwrap(), body);
+}

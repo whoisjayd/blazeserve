@@ -94,10 +94,10 @@
   var base = drop.dataset.base;
   var picker = document.getElementById("picker");
   var list = document.getElementById("uploads");
-  var queue = [];
+  var live = document.getElementById("upload-status");
+  var items = [];
   var running = false;
-  var done = 0;
-  var failed = 0;
+  var attention = false;
 
   function reason(status) {
     if (status === 409) return "Already exists";
@@ -108,66 +108,185 @@
     return "Failed (" + status + ")";
   }
 
-  function send(file, finish) {
+  function show(item, cls, text, retry) {
+    var idle = cls !== "queued" && cls !== "sending";
+    item.li.className = cls;
+    item.state.textContent = text;
+    item.cancel.hidden = idle;
+    item.retry.hidden = !retry;
+    if (idle) live.textContent = item.file.name + ": " + text;
+  }
+
+  function settle(item, cls, text, retry) {
+    if (item.settled) return false;
+    item.settled = true;
+    if (cls !== "done") attention = true;
+    show(item, cls, text, retry);
+    return true;
+  }
+
+  function advance(item) {
+    if (item.advanced) return;
+    item.advanced = true;
+    next();
+  }
+
+  function target(item) {
+    return base + encodeURIComponent(item.file.name);
+  }
+
+  // A dropped connection or a late cancel leaves the outcome unknown, so ask the
+  // server rather than guess. An existing file is never reported as our upload.
+  function reconcile(item, cls, text) {
+    var unknown = "Unknown outcome, check the folder";
+    fetch(target(item), { method: "HEAD", credentials: "same-origin", cache: "no-store" })
+      .then(function (r) {
+        if (r.status === 404) return show(item, cls, text, cls === "failed");
+        if (!r.ok) return show(item, "uncertain", unknown, false);
+        if (r.headers.get("Upload-Complete") !== "?1") {
+          return show(item, "uncertain", "Partial upload left on the server", false);
+        }
+        var same = Number(r.headers.get("Upload-Offset")) === item.file.size;
+        show(
+          item,
+          "uncertain",
+          same
+            ? "A file of this size is already on the server, not confirmed as yours"
+            : "A different file with this name is already on the server",
+          false
+        );
+      })
+      .catch(function () {
+        show(item, "uncertain", unknown, false);
+      });
+  }
+
+  function send(item) {
+    var xhr = new XMLHttpRequest();
+    item.xhr = xhr;
+    item.sent = false;
+    item.settled = false;
+    item.advanced = false;
+    item.bar.value = 0;
+    show(item, "sending", "Sending", false);
+    xhr.open("PUT", target(item));
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) item.bar.value = e.loaded / e.total;
+    };
+    xhr.upload.onload = function () {
+      item.sent = true;
+      if (!item.settled) item.state.textContent = "Waiting for server";
+    };
+    xhr.onload = function () {
+      if (xhr.status === 201) {
+        if (settle(item, "done", "Uploaded", false)) item.bar.value = 1;
+      } else {
+        settle(item, "failed", reason(xhr.status), xhr.status !== 409);
+      }
+      advance(item);
+    };
+    xhr.onerror = function () {
+      if (settle(item, "failed", "Network error", false)) {
+        item.state.textContent = "Network error, checking the server";
+        reconcile(item, "failed", "Network error");
+      }
+      advance(item);
+    };
+    xhr.onabort = function () {
+      if (settle(item, "cancelled", "Cancelled", false) && item.sent) {
+        item.state.textContent = "Cancelled, checking the server";
+        reconcile(item, "cancelled", "Cancelled");
+      }
+      advance(item);
+    };
+    xhr.send(item.file);
+  }
+
+  function next() {
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].li.className === "queued") {
+        send(items[i]);
+        return;
+      }
+    }
+    running = false;
+    var clean = items.every(function (it) {
+      return it.li.className === "done";
+    });
+    if (clean && !attention && items.length > 0) window.location.reload();
+  }
+
+  function pump() {
+    if (running) return;
+    running = true;
+    next();
+  }
+
+  function makeButton(text, name) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "link";
+    b.textContent = text;
+    b.setAttribute("aria-label", text + " " + name);
+    return b;
+  }
+
+  function add(file) {
     var li = document.createElement("li");
     var name = document.createElement("span");
     var state = document.createElement("span");
     var bar = document.createElement("progress");
+    var actions = document.createElement("span");
+    var item = {
+      file: file,
+      li: li,
+      state: state,
+      bar: bar,
+      cancel: makeButton("Cancel", file.name),
+      retry: makeButton("Retry", file.name),
+      xhr: null,
+      sent: false,
+      settled: false,
+      advanced: false,
+    };
     name.textContent = file.name;
+    name.className = "name";
     state.className = "state";
-    state.textContent = "Uploading";
     bar.max = 1;
     bar.value = 0;
+    bar.setAttribute("aria-label", "Progress for " + file.name);
+    actions.className = "actions";
+    actions.appendChild(item.cancel);
+    actions.appendChild(item.retry);
     li.appendChild(name);
     li.appendChild(state);
     li.appendChild(bar);
+    li.appendChild(actions);
     list.appendChild(li);
+    items.push(item);
+    show(item, "queued", "Queued", false);
 
-    var xhr = new XMLHttpRequest();
-    xhr.open("PUT", base + encodeURIComponent(file.name));
-    xhr.upload.onprogress = function (e) {
-      if (e.lengthComputable) bar.value = e.loaded / e.total;
-    };
-    xhr.onload = function () {
-      if (xhr.status === 201) {
-        li.className = "done";
-        state.textContent = "Uploaded";
-        bar.value = 1;
-        done++;
-      } else {
-        li.className = "failed";
-        state.textContent = reason(xhr.status);
-        failed++;
+    item.cancel.addEventListener("click", function () {
+      if (li.className === "queued") {
+        settle(item, "cancelled", "Cancelled", false);
+        item.advanced = true;
+      } else if (li.className === "sending" && item.xhr) {
+        item.xhr.abort();
       }
-      finish();
-    };
-    xhr.onerror = function () {
-      li.className = "failed";
-      state.textContent = "Network error";
-      failed++;
-      finish();
-    };
-    xhr.send(file);
-  }
-
-  function next() {
-    var file = queue.shift();
-    if (!file) {
-      running = false;
-      if (failed === 0 && done > 0) window.location.reload();
-      return;
-    }
-    send(file, next);
+    });
+    item.retry.addEventListener("click", function () {
+      if (li.className !== "failed") return;
+      item.settled = false;
+      item.advanced = false;
+      show(item, "queued", "Queued", false);
+      item.cancel.focus();
+      pump();
+    });
   }
 
   function enqueue(files) {
-    for (var i = 0; i < files.length; i++) queue.push(files[i]);
-    if (!running && queue.length > 0) {
-      running = true;
-      done = 0;
-      failed = 0;
-      next();
-    }
+    for (var i = 0; i < files.length; i++) add(files[i]);
+    pump();
   }
 
   document.getElementById("pick").addEventListener("click", function () {

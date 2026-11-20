@@ -28,6 +28,18 @@ The address `/__upload__/big.iso` puts the file at `big.iso` in the served folde
 - **Files are private to the server's user.** On Linux and macOS they are created with permissions `0600`.
 - **Rejected uploads close the connection.** This prevents the unread body of a refused upload from being mistaken for the next request.
 
+## Upload from the browser
+
+When uploads are on, the folder page has a box where you can drop files or choose them. Files are sent one at a time, each as a single request.
+
+- **Cancel** removes a queued file without sending anything, or stops the file being sent. The next file then starts.
+- **Retry** appears after a failure and sends the file again when you press it. It is never automatic. A name that already exists is not retried, because uploads never overwrite.
+- A file shows **Sending** and then **Waiting for server**. It only becomes **Uploaded** once the server confirms it. Reaching the end of the progress bar is not confirmation.
+- If the connection drops, or you cancel just as the file finishes, the page asks the server what it has. If a file with that name is already there it says so as **not confirmed as yours**, instead of reporting success.
+- The page reloads when everything uploaded cleanly. If anything failed, was cancelled or is uncertain, it stays put so you can read the results.
+
+The browser does not resume a partial upload, and the page keeps selected files only until you reload it. Use `blaze put` to resume large files.
+
 ## Upload with plain HTTP
 
 You can use any HTTP client. The paths and verbs are listed in the [reference](reference.md#endpoints). A simple upload looks like this:
