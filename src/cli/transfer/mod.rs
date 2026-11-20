@@ -1,5 +1,6 @@
 //! Resumable `blaze get` downloads and chunked `blaze put` uploads.
 
+mod discover;
 mod download;
 #[cfg(feature = "extract")]
 mod extract;

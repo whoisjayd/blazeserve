@@ -90,6 +90,16 @@ blaze checksum ./big.iso
 
 A server can also tell you the checksum of a file it holds. Add `?hash` to the file's address, for example `http://host:8000/big.iso?hash`. The reply is a small piece of JSON with the size and SHA-256.
 
+To have `blaze get` fetch that checksum and check the download for you, ask for it explicitly:
+
+```bash
+blaze get http://host:8000/big.iso --verify server-sha256
+```
+
+This only works against a BlazeServe server, and only when you ask for it. Before downloading, `blaze get` requests the file's address with `?hash` added (any query you already have, such as a signed link, is kept and never printed). After the download, and before the file is saved under its final name, it compares the size and SHA-256. If the server has no checksum to give, answers badly, refuses your password, or the result does not match, the command fails with a nonzero exit code and nothing is saved. A partial download is deleted on a mismatch, and a file that already existed (with `--force`) is left alone. This works the same for single-stream, parallel, resumed and empty downloads. `--verify` cannot be combined with `--sha256`.
+
+Two things to know. The server hashes the whole file first, so a large file that has not been hashed before makes the download start later; the server remembers the result while the file is unchanged, so the next request is quick. And a checksum from the same server only shows that you received what that server holds. It does not prove who published the file, and a server that serves altered content can serve a matching checksum. When the checksum comes from somewhere you trust separately, use `--sha256` instead.
+
 ### Passwords and retries
 
 For a server that asks for a password, prefer an environment variable so the password does not show up in your shell history or process list:

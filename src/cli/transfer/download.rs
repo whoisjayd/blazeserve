@@ -1,6 +1,7 @@
 //! Resumable `blaze get`: sidecar metadata, range handling and verified finish.
 
 use super::READ_BUF;
+use super::discover::{self, ServerDigest};
 use super::filename::suggested_name;
 use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
@@ -57,6 +58,12 @@ fn parse_connections(text: &str) -> Result<u16, String> {
     }
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+pub enum VerifyMode {
+    /// Ask the server for the file's SHA-256 with `?hash` before downloading
+    ServerSha256,
+}
+
 #[derive(Args, Debug)]
 pub struct GetArgs {
     /// URL to download
@@ -73,6 +80,9 @@ pub struct GetArgs {
     /// Expected SHA-256 of the finished file
     #[arg(long, value_name = "HEX")]
     pub sha256: Option<String>,
+    /// Take the expected SHA-256 from the server and fail if it cannot be verified
+    #[arg(long, value_enum, value_name = "MODE", conflicts_with = "sha256")]
+    pub verify: Option<VerifyMode>,
     /// Load USER:PASS from an environment variable
     #[arg(long, value_name = "ENVVAR")]
     pub auth_env: Option<String>,
@@ -392,8 +402,14 @@ impl Download<'_> {
 }
 
 /// Verifies and publishes the download, then extracts it when asked.
-fn complete(d: &Download<'_>, dest: &Path, args: &GetArgs) -> Result<u8, String> {
-    let code = finish_download(d, dest, args.sha256.as_deref())?;
+fn complete(
+    d: &Download<'_>,
+    dest: &Path,
+    args: &GetArgs,
+    server: Option<&ServerDigest>,
+) -> Result<u8, String> {
+    let expected = server.map_or(args.sha256.as_deref(), |s| Some(s.sha256.as_str()));
+    let code = finish_download(d, dest, expected, server.map(|s| s.size))?;
     if code == 0 && args.extract {
         extract_archive(dest, args)
             .map_err(|e| format!("downloaded {}, but extraction failed: {e}", dest.display()))?;
@@ -415,7 +431,21 @@ fn extract_archive(_dest: &Path, _args: &GetArgs) -> Result<(), String> {
     Err("this build of blaze was made without extraction support".to_owned())
 }
 
-fn finish_download(d: &Download<'_>, dest: &Path, sha256: Option<&str>) -> Result<u8, String> {
+fn finish_download(
+    d: &Download<'_>,
+    dest: &Path,
+    sha256: Option<&str>,
+    size: Option<u64>,
+) -> Result<u8, String> {
+    if let Some(expected) = size
+        && d.part_len() != expected
+    {
+        let actual = d.part_len();
+        d.reset();
+        return Err(format!(
+            "size mismatch: the server hashed {expected} bytes but the download has {actual}; the file may have changed"
+        ));
+    }
     if let Some(expected) = sha256 {
         let actual = sha256_file(&d.part).map_err(|e| format!("cannot hash download: {e}"))?;
         if !actual.eq_ignore_ascii_case(expected) {
@@ -461,6 +491,14 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         ));
     }
 
+    let server_digest = match args.verify {
+        Some(VerifyMode::ServerSha256) => {
+            announce("Verifying", "asking the server for the file's SHA-256");
+            Some(discover::discover(&args.url, auth.as_deref())?)
+        }
+        None => None,
+    };
+
     let d = Download {
         agent,
         url: &args.url,
@@ -484,14 +522,14 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         );
     }
     if args.connections > 1 && segmented::run(&d, usize::from(args.connections), args.retries)? {
-        return complete(&d, &dest, &args);
+        return complete(&d, &dest, &args, server_digest.as_ref());
     }
 
     let mut fails = 0u32;
     let mut restarts = 0u32;
     loop {
         match d.step()? {
-            Step::Complete => return complete(&d, &dest, &args),
+            Step::Complete => return complete(&d, &dest, &args, server_digest.as_ref()),
             Step::Restart => {
                 restarts += 1;
                 if restarts > MAX_RESTARTS {

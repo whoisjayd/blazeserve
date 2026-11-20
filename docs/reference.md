@@ -66,6 +66,7 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `-o`, `--output FILE` | server-suggested name, else last part of the URL | Where to save |
 | `--resume`, `--no-resume` | resume | Continue a partial download, or start over |
 | `--sha256 HEX` | none | Verify the finished file |
+| `--verify server-sha256` | off | Ask the BlazeServe server for the file's SHA-256 (`?hash`) and verify against it; fails if unavailable or different. Cannot be combined with `--sha256` |
 | `--retries N` | `5` | Failed attempts in a row before giving up |
 | `--force` | off | Replace an existing file |
 | `-c`, `--connections N` | `4` | Parallel connections, 1 to 128, or `max` for 128 |
