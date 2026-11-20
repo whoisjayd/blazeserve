@@ -85,13 +85,15 @@ enum Command {
   blaze serve ./site --port 9000 --no-listing
   blaze serve ./data --auth-env BLAZE_AUTH --max-upload-mb 512
   blaze serve ./site --hide '*.env' --hide .git
-  blaze serve ./site --qr")]
+  blaze serve ./site --qr
+  blaze serve ./site --background   # then use blaze status and blaze stop")]
     Serve(serve::ServeArgs),
     /// Quick share a single file
     #[command(after_help = "Examples:
   blaze send ./big.iso
   blaze send ./big.iso --qr
-  blaze send ./big.iso --expires-after 20m")]
+  blaze send ./big.iso --expires-after 20m
+  blaze send ./big.iso --background")]
     Send(serve::SendArgs),
     /// SHA256 for files
     Checksum(ChecksumArgs),
@@ -230,8 +232,14 @@ fn version(args: VersionArgs) -> Result<u8, String> {
 
 fn dispatch(command: Command) -> Result<u8, String> {
     match command {
-        Command::Serve(a) => serve::serve(a),
-        Command::Send(a) => serve::send(a),
+        Command::Serve(a) => {
+            let bg = a.common.bg.clone();
+            jobs::run(jobs::Kind::Serve, &bg, move || serve::serve(a))
+        }
+        Command::Send(a) => {
+            let bg = a.common.bg.clone();
+            jobs::run(jobs::Kind::Send, &bg, move || serve::send(a))
+        }
         Command::Checksum(a) => checksum(a),
         Command::Version(a) => version(a),
         Command::Doctor(a) => doctor::run(a),

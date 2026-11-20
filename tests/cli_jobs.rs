@@ -507,6 +507,181 @@ async fn credentials_and_signed_queries_never_reach_the_registry_or_log() {
     server.shutdown().await;
 }
 
+/// A port that was free a moment ago; `blaze serve` has no port 0.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn http_get(port: u16, path: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok()?;
+    write!(
+        s,
+        "GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
+    let mut out = String::new();
+    s.read_to_string(&mut out).ok()?;
+    Some(out)
+}
+
+fn serve_args<'a>(path: &'a str, port: &'a str) -> Vec<&'a str> {
+    vec!["serve", path, "--host", "127.0.0.1", "--port", port]
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn background_serve_is_reachable_listed_as_a_server_and_stops_gracefully() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("hello.txt"), b"hello").unwrap();
+    let port = free_port();
+    let env = Env::new();
+
+    let id = env
+        .launch(&serve_args(&s(dir.path()), &port.to_string()))
+        .await;
+    // The launcher returns only once the socket is bound, so this connects at once.
+    let reply = http_get(port, "/hello.txt").expect("server should already be listening");
+    assert!(
+        reply.starts_with("HTTP/1.1 200") && reply.ends_with("hello"),
+        "{reply}"
+    );
+
+    let job = env.job(&id).await;
+    assert_eq!(job["kind"], "serve");
+    assert_eq!(job["state"], "running");
+    assert_eq!(job["listen"], format!("http://127.0.0.1:{port}"));
+    assert!(job["bytes_total"].is_null() && job["phase"].is_null());
+    assert!(job["uptime_seconds"].is_number());
+    let text = stdout(&env.run(&["status"]).await);
+    assert!(
+        text.contains(&format!("listening on http://127.0.0.1:{port}")),
+        "{text}"
+    );
+    assert!(!text.contains("ETA"), "{text}");
+
+    let out = env.stop(&id).await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let said = stdout(&out);
+    assert!(
+        said.contains("stopped") && said.contains("graceful shutdown completed"),
+        "{said}"
+    );
+    assert_eq!(env.job(&id).await["state"], "stopped");
+    assert!(
+        http_get(port, "/").is_none(),
+        "the listener should be closed"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn background_send_serves_one_file_under_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.pdf");
+    std::fs::write(&file, b"pdf bytes").unwrap();
+    let port = free_port();
+    let env = Env::new();
+
+    let id = env
+        .launch(&[
+            "send",
+            &s(&file),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
+        .await;
+    let job = env.job(&id).await;
+    assert_eq!(job["kind"], "send");
+    assert_eq!(job["label"], "report.pdf");
+    assert!(
+        http_get(port, "/report.pdf")
+            .unwrap()
+            .ends_with("pdf bytes")
+    );
+    assert_eq!(code(&env.stop(&id).await), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_port_conflict_is_returned_to_the_launcher() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::new();
+
+    let (path, port) = (s(dir.path()), port.to_string());
+    let mut args = serve_args(&path, &port);
+    args.push("--background");
+    let out = env.run(&args).await;
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(stderr(&out).contains("bind"), "{}", stderr(&out));
+    assert!(stdout(&out).trim().is_empty());
+    let all = env.run(&["status", "--all", "--json"]).await;
+    let v: Value = serde_json::from_str(&stdout(&all)).unwrap();
+    assert_eq!(v["jobs"].as_array().unwrap().len(), 0);
+    drop(taken);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_missing_password_variable_stops_a_server_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::new();
+    let out = env
+        .run(&[
+            "serve",
+            &s(dir.path()),
+            "--auth-env",
+            "BLAZE_TEST_SURELY_UNSET_VAR",
+            "--background",
+        ])
+        .await;
+    assert_eq!(code(&out), 1);
+    assert!(
+        stderr(&out).contains("missing or empty"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transfers_and_servers_run_side_by_side_and_are_told_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("slow.bin"), pattern(2 * MIB)).unwrap();
+    let port = free_port();
+    let env = Env::new();
+    let server = env
+        .launch(&serve_args(&s(dir.path()), &port.to_string()))
+        .await;
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("slow.bin");
+    let url = format!("http://127.0.0.1:{port}/slow.bin");
+    let get = env
+        .launch(&["get", &url, "-o", &s(&dest), "--limit-rate", "128K"])
+        .await;
+    env.wait_until(&get, "progress", |j| {
+        j["state"] == "running" && j["bytes_done"].as_u64().unwrap_or(0) > 0
+    })
+    .await;
+
+    let out = env.run(&["status", "--json"]).await;
+    let v: Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let jobs = v["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 2);
+    let kinds: Vec<_> = jobs.iter().map(|j| j["kind"].as_str().unwrap()).collect();
+    assert!(
+        kinds.contains(&"serve") && kinds.contains(&"get"),
+        "{kinds:?}"
+    );
+
+    assert_eq!(code(&env.stop(&get).await), 0);
+    assert_eq!(code(&env.stop(&server).await), 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_launcher_exits_while_the_worker_keeps_running() {
     let served = tempfile::tempdir().unwrap();

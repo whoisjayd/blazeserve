@@ -1,10 +1,12 @@
 # Background jobs
 
-Run a download or an upload in the background, then check on it or stop it from any terminal.
+Run a download, an upload or a server in the background, then check on it or stop it from any terminal.
 
 ```console
 blaze get https://example.com/archive.tar -o archive.tar --background
 blaze put backup.tar http://localhost:8000 --background
+blaze serve ./shared --background
+blaze send ./report.pdf --background
 ```
 
 Each command prints a job ID, such as `3f9a01bc`, and returns. The work continues after you close the terminal.
@@ -21,13 +23,15 @@ blaze stop 3f9a01bc       # show the job and ask before stopping it
 
 `--background` checks your options first. If the command cannot start, you get the error and a nonzero exit code, and no job is created. That covers a bad option, a missing password variable and a file that cannot be read.
 
-A successful launch means the job has started. A network failure, a rejected upload or a checksum mismatch after that point is the job's result. Look for it with `blaze status ID`.
+`serve` and `send` print their job ID only after the server has bound its port. A port that is already in use, or a bad certificate, is reported to you with a nonzero exit code.
+
+For `get` and `put`, a successful launch means the job has started. A network failure, a rejected upload or a checksum mismatch after that point is the job's result. Look for it with `blaze status ID`.
 
 Relative paths are resolved from the folder where you ran the command, so you can run `status` and `stop` from anywhere. A background job never asks questions.
 
 ## What `blaze status` shows
 
-Each job has an ID, a type (`get`, `put`,), a process ID, a state, a start time and the time of its last update.
+Each job has an ID, a type (`get`, `put`, `serve` or `send`), a process ID, a state, a start time and the time of its last update.
 
 | Field | Meaning |
 | :--- | :--- |
@@ -37,6 +41,8 @@ Each job has an ID, a type (`get`, `put`,), a process ID, a state, a start time 
 
 Names are shown without their folders, and a remote address shows only the scheme, host and port. A parallel download is one job. Bytes you already had from an earlier attempt count towards completion but not towards the speed, and retried bytes are never counted twice.
 
+A server job shows what it serves, the address it listens on and how long it has been up. It does not list the people connected to it. For that, use [Monitoring](monitoring.md).
+
 `blaze status` shows active jobs. `--all` adds finished ones that are still kept, and `blaze status ID` shows any kept job, including its final result and the location of its log.
 
 ## Stopping a job
@@ -44,6 +50,7 @@ Names are shown without their folders, and a remote address shows only the schem
 `blaze stop ID` shows the job and its progress, then asks for confirmation. Without a terminal, or in a script, add `--yes`.
 
 - A transfer closes its files and connections and ends as `interrupted`. The partial file and its resume data stay, so running the same `blaze get` or `blaze put` again carries on.
+- A server shuts down gracefully, finishing the requests in flight, and ends as `stopped`.
 - A job that does not wind down within 10 seconds records its result and ends anyway.
 - Stopping a job that already finished reports how it ended and changes nothing.
 

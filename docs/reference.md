@@ -62,6 +62,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--backlog N` | `8192` | Waiting-connection queue size |
 | `--log-json`, `--no-log-json` | from `BLAZE_LOG_JSON` | JSON log lines |
 | `--otlp-endpoint URL` | from `OTEL_EXPORTER_OTLP_ENDPOINT` | Send traces and metrics here |
+| `--background` | off | Run as a [background job](background-jobs.md) and print its job ID. Also for `send` |
 | `--qr` | off | Print a QR code of the network address |
 | `--open` | off | Open a browser |
 | `-v`, `--verbose` | off | Show tuning details at startup |

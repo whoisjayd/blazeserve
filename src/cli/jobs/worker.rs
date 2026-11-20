@@ -14,6 +14,10 @@ const WRITE_EVERY: Duration = Duration::from_secs(1);
 /// records the outcome itself and exits.
 pub const GRACE: Duration = Duration::from_secs(10);
 
+pub fn is_worker() -> bool {
+    WORKER.get().is_some()
+}
+
 struct Worker {
     store: Store,
     id: String,

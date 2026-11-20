@@ -62,6 +62,16 @@ pub fn ready(info: impl FnOnce() -> Info) {
     worker::ready(info);
 }
 
+/// Resolves when `blaze stop` asks this worker to stop; never resolves in the foreground.
+pub async fn stop_requested() {
+    if !worker::is_worker() {
+        return std::future::pending().await;
+    }
+    while !tracker::cancelled() {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 pub fn status(args: StatusArgs) -> Result<u8, String> {
     status::run(args)
 }

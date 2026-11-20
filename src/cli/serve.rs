@@ -83,6 +83,8 @@ pub struct Common {
     /// Export traces and metrics over OTLP/HTTP to this collector (env OTEL_EXPORTER_OTLP_ENDPOINT)
     #[arg(long, value_name = "URL")]
     pub otlp_endpoint: Option<String>,
+    #[command(flatten)]
+    pub bg: super::jobs::BackgroundArgs,
 }
 
 #[derive(Args, Debug)]
@@ -477,21 +479,45 @@ fn run_config(
     let live_allowed = !verbose && !json_logs && !otlp;
     let live: std::sync::Arc<std::sync::Mutex<Option<live::Live>>> = Default::default();
     let live_in = live.clone();
-    let reason = crate::server::run_expiring(cfg, expires_after, move |handle| {
-        let expiry = expires_after.map(|d| (d, SystemTime::now() + d));
-        print_status(&banner(&banner_cfg, verbose, qr, expiry), json_logs);
-        if live_allowed && let Ok(mut g) = live_in.lock() {
-            *g = live::Live::start(handle.state().clone());
-        }
-        if let Some(session) = usage::begin_from_process(command, features)
-            && let Ok(mut g) = slot_in.lock()
-        {
-            *g = Some((session, handle.state().clone()));
-        }
-        if open {
-            open_browser(&url);
-        }
-    })
+    let reason = crate::server::run_until(
+        cfg,
+        expires_after,
+        super::jobs::stop_requested(),
+        move |handle| {
+            super::jobs::ready(|| super::jobs::Info {
+                label: banner_cfg
+                    .single
+                    .as_deref()
+                    .unwrap_or(&banner_cfg.base)
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+                url: None,
+                direction: None,
+                listen: Some(format!(
+                    "{}://{}",
+                    if banner_cfg.tls.is_some() {
+                        "https"
+                    } else {
+                        "http"
+                    },
+                    handle.local_addr()
+                )),
+            });
+            let expiry = expires_after.map(|d| (d, SystemTime::now() + d));
+            print_status(&banner(&banner_cfg, verbose, qr, expiry), json_logs);
+            if live_allowed && let Ok(mut g) = live_in.lock() {
+                *g = live::Live::start(handle.state().clone());
+            }
+            if let Some(session) = usage::begin_from_process(command, features)
+                && let Ok(mut g) = slot_in.lock()
+            {
+                *g = Some((session, handle.state().clone()));
+            }
+            if open {
+                open_browser(&url);
+            }
+        },
+    )
     .map_err(|e| e.to_string());
     if let Some(line) = live.lock().ok().and_then(|mut g| g.take()) {
         line.finish();
