@@ -43,6 +43,16 @@ server_test!(hash_returns_the_sha256_of_the_file, async {
     fx.stop().await;
 });
 
+server_test!(hash_covers_the_file_not_its_precompressed_sibling, async {
+    let fx = start().await;
+    let resp = fx.get_with("/plain.txt?hash", &[("Accept-Encoding", "br, gzip")]);
+    assert_eq!(resp.status, 200);
+    let doc = resp.json();
+    assert_eq!(doc["size"], b"Precompressed plain content".len());
+    assert_eq!(doc["sha256"], hex(b"Precompressed plain content"));
+    fx.stop().await;
+});
+
 server_test!(hash_on_head_has_headers_and_no_body, async {
     let fx = start().await;
     let get = fx.get("/hello.txt?hash");
