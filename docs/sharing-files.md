@@ -86,6 +86,10 @@ On Windows PowerShell, set it with `$env:BLAZE_AUTH = "alice:s3cret"`.
 
 `--retries` sets how many failed attempts in a row are allowed before giving up. The default is 5, with a pause that grows between attempts.
 
+If a server answers `429` or `503` with a `Retry-After` header, `get` and `put` wait at least that long before the next attempt, whether the header gives seconds or an HTTP date. A date that has already passed, or a value that is not valid, is ignored and the usual pause applies. The wait is never shorter than the usual pause, and a small random extra is added so parallel downloads do not return together. All connections of one download pause together. Other statuses ignore the header.
+
+A server may ask for at most 5 minutes. If it asks for more, the transfer stops with an error saying so rather than retrying early. These pauses are not counted against a time limit, because `get` and `put` have none. `--retries 0` still never retries.
+
 ## Upload a file
 
 Uploading needs a server that has uploads switched on. See [Uploads](uploads.md) for how to set that up.

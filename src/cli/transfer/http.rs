@@ -118,6 +118,17 @@ pub(super) fn http_failure(code: u16, upload: bool) -> String {
     format!("server returned HTTP {code}: {hint}")
 }
 
+/// The server's requested pause, honoured only for `429` and `503` as RFC 9110 intends.
+pub(super) fn retry_hint(
+    resp: &ureq::http::Response<ureq::Body>,
+    code: u16,
+) -> Option<std::time::Duration> {
+    if !matches!(code, 429 | 503) {
+        return None;
+    }
+    super::retry::parse_retry_after(&header(resp, "retry-after")?, std::time::SystemTime::now())
+}
+
 pub(super) fn header(resp: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
     resp.headers()
         .get(name)

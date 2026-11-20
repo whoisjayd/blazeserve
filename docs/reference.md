@@ -72,6 +72,8 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `--limit-rate RATE` | none | Total speed cap in bytes per second, with optional `K`, `M` or `G` |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
 
+`get` and `put` honour `Retry-After` on `429` and `503` (seconds or HTTP date), up to 5 minutes. See [Passwords and retries](sharing-files.md#passwords-and-retries).
+
 ## `blaze put` options
 
 | Option | Default | Meaning |

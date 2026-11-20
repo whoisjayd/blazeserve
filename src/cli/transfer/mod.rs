@@ -2,6 +2,7 @@
 
 mod download;
 mod http;
+mod retry;
 mod segmented;
 mod throttle;
 mod upload;

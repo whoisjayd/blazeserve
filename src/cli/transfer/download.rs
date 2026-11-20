@@ -2,13 +2,14 @@
 
 use super::READ_BUF;
 use super::http::{
-    agent, basic_header, describe_error, header, http_failure, http_url, transient_error,
-    transient_status,
+    agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
+    transient_error, transient_status,
 };
+use super::retry::{jitter, plan_wait, retry_note};
 use super::segmented::{self, SegMeta};
 use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
-use crate::cli::util::{Progress, backoff, human_size, sha256_file};
+use crate::cli::util::{Progress, human_size, sha256_file};
 use clap::Args;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -130,7 +131,11 @@ fn parse_unsatisfied_total(v: &str) -> Option<u64> {
 enum Step {
     Complete,
     Restart,
-    Transient { msg: String, progressed: bool },
+    Transient {
+        msg: String,
+        progressed: bool,
+        retry_after: Option<Duration>,
+    },
 }
 
 pub(super) struct Download<'a> {
@@ -211,6 +216,7 @@ impl Download<'_> {
                 return Ok(Step::Transient {
                     msg: describe_error(&e),
                     progressed: false,
+                    retry_after: None,
                 });
             }
             Err(e) => return Err(describe_error(&e)),
@@ -233,6 +239,7 @@ impl Download<'_> {
                 return Ok(Step::Transient {
                     msg: format!("server returned HTTP {code}"),
                     progressed: false,
+                    retry_after: retry_hint(&resp, code),
                 });
             }
             code => return Err(http_failure(code, false)),
@@ -295,6 +302,7 @@ impl Download<'_> {
                     return Ok(Step::Transient {
                         msg: e.to_string(),
                         progressed: got > 0,
+                        retry_after: None,
                     });
                 }
             }
@@ -310,6 +318,7 @@ impl Download<'_> {
                     human_size(t)
                 ),
                 progressed: got > 0,
+                retry_after: None,
             }),
             Some(t) if have > t => {
                 self.reset();
@@ -390,7 +399,11 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
                     return Err("server keeps changing the file; giving up".to_owned());
                 }
             }
-            Step::Transient { msg, progressed } => {
+            Step::Transient {
+                msg,
+                progressed,
+                retry_after,
+            } => {
                 fails = if progressed { 1 } else { fails + 1 };
                 if fails > args.retries {
                     return Err(format!(
@@ -398,13 +411,13 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
                         args.retries
                     ));
                 }
-                let wait = backoff(fails);
+                let wait = plan_wait(fails, retry_after, jitter())
+                    .map_err(|why| format!("download failed: {msg}; {why}"))?;
                 announce(
                     "Retrying",
                     &format!(
-                        "in {}s (attempt {fails} of {}): {msg}",
-                        wait.as_secs().max(1),
-                        args.retries
+                        "{}: {msg}",
+                        retry_note(wait, retry_after, fails, args.retries)
                     ),
                 );
                 std::thread::sleep(wait);

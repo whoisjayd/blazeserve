@@ -2,12 +2,13 @@
 
 use super::READ_BUF;
 use super::http::{
-    agent, basic_header, describe_error, header, http_failure, http_url, transient_error,
-    transient_status,
+    agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
+    transient_error, transient_status,
 };
+use super::retry::{jitter, plan_wait, retry_note};
 use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
-use crate::cli::util::{Progress, backoff, existing_file, human_size};
+use crate::cli::util::{Progress, existing_file, human_size};
 use base64::Engine as _;
 use clap::Args;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -15,6 +16,7 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use ureq::SendBody;
 
 const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
@@ -112,10 +114,17 @@ fn whole_file_digest(path: &Path) -> Result<String, String> {
     ))
 }
 
+/// An offset, or a transient failure with the server's `Retry-After` if it sent one.
+type Probed = Result<u64, (String, Option<Duration>)>;
+
 enum Sent {
     Done,
     Advanced(u64),
-    Retry { msg: String, resync: bool },
+    Retry {
+        msg: String,
+        resync: bool,
+        retry_after: Option<Duration>,
+    },
 }
 
 struct Upload<'a> {
@@ -138,10 +147,10 @@ impl Upload<'_> {
 
     /// `staged_is_ours` says this run already sent a chunk, so a staged partial can only be
     /// its own. A replacement never adopts a staged partial it cannot identify.
-    fn remote_offset(&self, staged_is_ours: bool) -> Result<Result<u64, String>, String> {
+    fn remote_offset(&self, staged_is_ours: bool) -> Result<Probed, String> {
         let resp = match self.authorize(self.agent.head(self.url)).call() {
             Ok(r) => r,
-            Err(e) if transient_error(&e) => return Ok(Err(describe_error(&e))),
+            Err(e) if transient_error(&e) => return Ok(Err((describe_error(&e), None))),
             Err(e) => return Err(describe_error(&e)),
         };
         if self.if_match.is_some() {
@@ -157,7 +166,10 @@ impl Upload<'_> {
                             .to_owned(),
                     ),
                 },
-                code if transient_status(code) => Ok(Err(format!("server returned HTTP {code}"))),
+                code if transient_status(code) => Ok(Err((
+                    format!("server returned HTTP {code}"),
+                    retry_hint(&resp, code),
+                ))),
                 code => Err(http_failure(code, true)),
             };
         }
@@ -167,7 +179,10 @@ impl Upload<'_> {
                 Some(n) => Ok(Ok(n)),
                 None => Err("destination already exists on the server".to_owned()),
             },
-            code if transient_status(code) => Ok(Err(format!("server returned HTTP {code}"))),
+            code if transient_status(code) => Ok(Err((
+                format!("server returned HTTP {code}"),
+                retry_hint(&resp, code),
+            ))),
             code => Err(http_failure(code, true)),
         }
     }
@@ -211,6 +226,7 @@ impl Upload<'_> {
                 return Ok(Sent::Retry {
                     msg: describe_error(&e),
                     resync: true,
+                    retry_after: None,
                 });
             }
             Err(e) => return Err(describe_error(&e)),
@@ -226,10 +242,12 @@ impl Upload<'_> {
             409 | 416 => Ok(Sent::Retry {
                 msg: "server offset changed".to_owned(),
                 resync: true,
+                retry_after: None,
             }),
             code if transient_status(code) => Ok(Sent::Retry {
                 msg: format!("server returned HTTP {code}"),
                 resync: true,
+                retry_after: retry_hint(&resp, code),
             }),
             code => Err(http_failure(code, true)),
         }
@@ -266,15 +284,9 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         if need_sync {
             match up.remote_offset(sent_any)? {
                 Ok(n) => offset = n.min(total),
-                Err(msg) => {
+                Err((msg, retry_after)) => {
                     fails += 1;
-                    if fails > args.retries {
-                        return Err(format!(
-                            "upload failed after {} retries: {msg}",
-                            args.retries
-                        ));
-                    }
-                    std::thread::sleep(backoff(fails));
+                    pause(fails, args.retries, &msg, retry_after)?;
                     continue;
                 }
             }
@@ -304,27 +316,33 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
                 offset = next.min(total);
                 progress.update(offset);
             }
-            Sent::Retry { msg, resync } => {
+            Sent::Retry {
+                msg,
+                resync,
+                retry_after,
+            } => {
                 fails += 1;
-                if fails > args.retries {
-                    return Err(format!(
-                        "upload failed after {} retries: {msg}",
-                        args.retries
-                    ));
-                }
-                announce(
-                    "Retrying",
-                    &format!(
-                        "in {}s (attempt {fails} of {}): {msg}",
-                        backoff(fails).as_secs().max(1),
-                        args.retries
-                    ),
-                );
-                std::thread::sleep(backoff(fails));
+                pause(fails, args.retries, &msg, retry_after)?;
                 need_sync = resync;
             }
         }
     }
+}
+
+/// Fails once the retries are spent or the server asks for more time than is accepted,
+/// otherwise announces and sits out the wait.
+fn pause(fails: u32, retries: u32, msg: &str, retry_after: Option<Duration>) -> Result<(), String> {
+    if fails > retries {
+        return Err(format!("upload failed after {retries} retries: {msg}"));
+    }
+    let wait = plan_wait(fails, retry_after, jitter())
+        .map_err(|why| format!("upload failed: {msg}; {why}"))?;
+    announce(
+        "Retrying",
+        &format!("{}: {msg}", retry_note(wait, retry_after, fails, retries)),
+    );
+    std::thread::sleep(wait);
+    Ok(())
 }
 
 #[cfg(test)]

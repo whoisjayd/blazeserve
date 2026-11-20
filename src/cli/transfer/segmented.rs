@@ -4,7 +4,10 @@ use super::READ_BUF;
 use super::download::{
     Download, MAX_RESTARTS, Meta, parse_content_range, rename_with_retry, sibling,
 };
-use super::http::{describe_error, header, http_failure, transient_error, transient_status};
+use super::http::{
+    describe_error, header, http_failure, retry_hint, transient_error, transient_status,
+};
+use super::retry::{jitter, plan_wait, retry_note};
 use crate::cli::ansi::announce;
 use crate::cli::util::{Progress, backoff, human_size};
 use serde::{Deserialize, Serialize};
@@ -163,6 +166,7 @@ enum SegError {
     Transient {
         msg: String,
         progressed: bool,
+        retry_after: Option<Duration>,
     },
     Fatal(String),
 }
@@ -179,9 +183,34 @@ struct Shared<'a> {
     done: Mutex<(BTreeSet<u64>, Instant)>,
     progress: Progress,
     retries: u32,
+    /// No worker starts a request before this instant. Set by a server-directed wait.
+    cooldown: Mutex<Option<Instant>>,
 }
 
 impl Shared<'_> {
+    fn extend_cooldown(&self, until: Instant) {
+        let mut guard = self
+            .cooldown
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.is_none_or(|c| c < until) {
+            *guard = Some(until);
+        }
+    }
+
+    /// Holds the worker back while the shared cooldown runs, then adds its own jitter so
+    /// the workers do not resume in one burst.
+    fn await_cooldown(&self) {
+        let until = *self
+            .cooldown
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(until) = until.filter(|u| *u > Instant::now()) {
+            self.sleep(until.saturating_duration_since(Instant::now()));
+            self.sleep(jitter());
+        }
+    }
+
     fn complete(&self, index: u64) {
         let Ok(mut guard) = self.done.lock() else {
             return;
@@ -228,6 +257,7 @@ impl Shared<'_> {
                 return Err(SegError::Transient {
                     msg: describe_error(&e),
                     progressed: false,
+                    retry_after: None,
                 });
             }
             Err(e) => return Err(SegError::Fatal(describe_error(&e))),
@@ -239,6 +269,7 @@ impl Shared<'_> {
                 return Err(SegError::Transient {
                     msg: format!("server returned HTTP {code}"),
                     progressed: false,
+                    retry_after: retry_hint(&resp, code),
                 });
             }
             code => return Err(SegError::Fatal(http_failure(code, false))),
@@ -274,6 +305,7 @@ impl Shared<'_> {
                     return Err(SegError::Transient {
                         msg: e.to_string(),
                         progressed: counted > 0,
+                        retry_after: None,
                     });
                 }
             }
@@ -290,6 +322,7 @@ impl Shared<'_> {
                     human_size(end - start + 1)
                 ),
                 progressed: counted > 0,
+                retry_after: None,
             });
         }
         Ok(())
@@ -298,6 +331,10 @@ impl Shared<'_> {
     fn fetch_with_retries(&self, index: u64) {
         let mut fails = 0u32;
         loop {
+            self.await_cooldown();
+            if self.stopped() {
+                return;
+            }
             match self.fetch(index) {
                 Ok(()) => return self.complete(index),
                 Err(SegError::Changed) => {
@@ -312,7 +349,11 @@ impl Shared<'_> {
                     }
                     return;
                 }
-                Err(SegError::Transient { msg, progressed }) => {
+                Err(SegError::Transient {
+                    msg,
+                    progressed,
+                    retry_after,
+                }) => {
                     fails = if progressed { 1 } else { fails + 1 };
                     if fails > self.retries {
                         return self.fail(format!(
@@ -320,7 +361,18 @@ impl Shared<'_> {
                             self.retries
                         ));
                     }
-                    self.sleep(backoff(fails));
+                    let wait = match plan_wait(fails, retry_after, jitter()) {
+                        Ok(w) => w,
+                        Err(why) => return self.fail(format!("download failed: {msg}; {why}")),
+                    };
+                    if let Some(h) = retry_after {
+                        announce(
+                            "Retrying",
+                            &format!("{}: {msg}", retry_note(wait, Some(h), fails, self.retries)),
+                        );
+                        self.extend_cooldown(Instant::now() + backoff(fails).max(h));
+                    }
+                    self.sleep(wait);
                     if self.stopped() {
                         return;
                     }
@@ -415,6 +467,7 @@ fn attempt(
         done: Mutex::new((done, Instant::now())),
         progress: Progress::new(Some(probe.total), base),
         retries,
+        cooldown: Mutex::new(None),
         pending,
     };
     std::thread::scope(|scope| {
