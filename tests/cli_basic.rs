@@ -94,6 +94,87 @@ fn doctor_json_reports_checks() {
     assert_eq!(base["outcome"], "pass");
 }
 
+fn doctor_port_check(args: &[&str]) -> (i32, serde_json::Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut full = vec!["doctor", dir.path().to_str().unwrap(), "--json"];
+    full.extend_from_slice(args);
+    let out = run(&full);
+    let v = serde_json::from_str(&stdout(&out)).unwrap();
+    (code(&out), v)
+}
+
+fn port_check(v: &serde_json::Value) -> &serde_json::Value {
+    v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "port_binding")
+        .unwrap()
+}
+
+#[test]
+fn doctor_defaults_to_loopback_and_names_the_address() {
+    let (status, v) = doctor_port_check(&["-p", "0"]);
+    assert_eq!(status, 0);
+    assert_eq!(v["host"], "127.0.0.1");
+    let details = port_check(&v)["details"].as_str().unwrap();
+    assert!(details.contains("127.0.0.1:"), "{details}");
+    assert!(details.contains("not a reservation"), "{details}");
+}
+
+#[test]
+fn doctor_checks_the_wildcard_host_it_was_given() {
+    let (status, v) = doctor_port_check(&["--host", "0.0.0.0", "-p", "0"]);
+    assert_eq!(status, 0);
+    assert_eq!(v["host"], "0.0.0.0");
+    let details = port_check(&v)["details"].as_str().unwrap();
+    assert!(details.contains("0.0.0.0:"), "{details}");
+}
+
+#[test]
+fn doctor_reports_ipv6_only_when_it_can_bind() {
+    let ipv6 = std::net::TcpListener::bind(("::1", 0)).is_ok();
+    let (status, v) = doctor_port_check(&["--host", "::1", "-p", "0"]);
+    assert_eq!(status == 0, ipv6, "{v}");
+    assert_eq!(
+        port_check(&v)["outcome"],
+        if ipv6 { "pass" } else { "fail" }
+    );
+    if ipv6 {
+        let details = port_check(&v)["details"].as_str().unwrap();
+        assert!(details.contains("[::1]:"), "{details}");
+    }
+}
+
+#[test]
+fn doctor_fails_on_an_occupied_matching_address() {
+    let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = held.local_addr().unwrap().port().to_string();
+    let (status, v) = doctor_port_check(&["--host", "127.0.0.1", "-p", &port]);
+    assert_eq!(status, 1);
+    assert_eq!(v["success"], false);
+    let check = port_check(&v);
+    assert_eq!(check["outcome"], "fail");
+    assert!(check["details"].as_str().unwrap().contains("127.0.0.1:"));
+    drop(held);
+}
+
+#[test]
+fn doctor_fails_for_an_address_not_on_this_machine() {
+    let (status, v) = doctor_port_check(&["--host", "192.0.2.1", "-p", "0"]);
+    assert_eq!(status, 1);
+    assert_eq!(port_check(&v)["outcome"], "fail");
+    let details = port_check(&v)["details"].as_str().unwrap();
+    assert!(details.contains("192.0.2.1"), "{details}");
+}
+
+#[test]
+fn doctor_fails_for_an_unresolvable_host() {
+    let (status, v) = doctor_port_check(&["--host", "no-such-host.invalid", "-p", "0"]);
+    assert_eq!(status, 1);
+    assert_eq!(port_check(&v)["outcome"], "fail");
+}
+
 #[test]
 fn doctor_fails_for_missing_directory() {
     let dir = tempfile::tempdir().unwrap();

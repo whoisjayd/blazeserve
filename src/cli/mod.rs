@@ -97,6 +97,11 @@ enum Command {
     #[command(after_help = "Examples:
   blaze doctor
   blaze doctor ./site --port 9000 --json
+  blaze doctor ./site --host 0.0.0.0 --port 9000   Matches: blaze serve ./site --host 0.0.0.0 --port 9000
+  blaze doctor ./site --host ::1 --port 9000
+
+By default the probe binds 127.0.0.1. Use --host to test the address you will serve on.
+It binds and releases the port at once, so it is a point-in-time check, not a reservation.
 
 The path is the directory you intend to serve; there is no 'serve' keyword.")]
     Doctor(doctor::DoctorArgs),

@@ -141,7 +141,7 @@ sudo ./deploy/linux-tuning/tuning.sh --apply
 
 ```console
 blaze doctor /srv/files --port 8000
-blaze doctor /srv/files --json
+blaze doctor /srv/files --host 0.0.0.0 --port 8000 --json
 ```
 
-`doctor` checks the folder, whether the port can be bound, async I/O support, TLS readiness and the open file limit. With `--json` it exits with a non-zero code on failure, which makes it easy to use in scripts.
+`doctor` checks the folder, whether the port can be bound on the `--host` address (default `127.0.0.1`; the probe is released at once and is not a reservation), async I/O support, TLS readiness and the open file limit. With `--json` it exits with a non-zero code on failure, which makes it easy to use in scripts.

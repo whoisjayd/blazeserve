@@ -2,7 +2,7 @@ use super::ansi::Style;
 use super::util::display_path;
 use clap::Args;
 use serde::Serialize;
-use std::net::TcpListener;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 #[derive(Args, Debug)]
@@ -10,6 +10,9 @@ pub struct DoctorArgs {
     /// Directory to check
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    /// Bind address to check, as `blaze serve --host` takes it (IPv4/IPv6 literal or name)
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
     /// Port to check availability
     #[arg(short, long, default_value_t = 8000, value_parser = clap::value_parser!(u16))]
     pub port: u16,
@@ -60,18 +63,32 @@ fn port_hint(port: u16) -> String {
     }
 }
 
-fn port_binding(port: u16) -> Check {
-    match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(_) if port == 0 => check("port_binding", "pass", "An ephemeral port can be bound"),
-        Ok(_) => check(
-            "port_binding",
-            "pass",
-            format!("Port {port} is free to bind"),
-        ),
+fn port_binding(host: &str, port: u16) -> Check {
+    match crate::server::probe_bind(host, port) {
+        Ok(addr) => {
+            let named = host.trim_matches(['[', ']']).parse::<IpAddr>().is_err();
+            let scope = if named {
+                " Only this resolved address was checked."
+            } else {
+                ""
+            };
+            let note = format!(
+                "Bound and released {addr}.{scope} This is a point-in-time check, not a reservation."
+            );
+            let lead = if port == 0 {
+                "An ephemeral port can be bound.".to_owned()
+            } else {
+                format!("Port {port} is free to bind.")
+            };
+            check("port_binding", "pass", format!("{lead} {note}"))
+        }
         Err(e) => check(
             "port_binding",
             "fail",
-            format!("Port {port} could not be bound: {e}. {}", port_hint(port)),
+            format!(
+                "Port {port} could not be bound on host {host}: {e}. {}",
+                port_hint(port)
+            ),
         ),
     }
 }
@@ -152,6 +169,7 @@ fn file_descriptor_limit() -> Check {
 #[derive(Serialize)]
 struct Report<'a> {
     path: &'a str,
+    host: &'a str,
     port: u16,
     success: bool,
     checks: &'a [Check],
@@ -161,7 +179,7 @@ pub fn run(args: DoctorArgs) -> Result<u8, String> {
     let abs = std::path::absolute(&args.path).unwrap_or_else(|_| args.path.clone());
     let checks = vec![
         base_path(&abs),
-        port_binding(args.port),
+        port_binding(&args.host, args.port),
         async_io(),
         tls_ready(),
         file_descriptor_limit(),
@@ -172,6 +190,7 @@ pub fn run(args: DoctorArgs) -> Result<u8, String> {
     if args.json {
         let report = Report {
             path: &path,
+            host: &args.host,
             port: args.port,
             success,
             checks: &checks,

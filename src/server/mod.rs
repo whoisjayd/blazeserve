@@ -65,6 +65,20 @@ impl Drop for ServerHandle {
     }
 }
 
+/// Binds and immediately releases the address `start` would pick for `host` and `port`.
+/// Returns the address that was actually tested. The result is a point-in-time answer.
+pub fn probe_bind(host: &str, port: u16) -> Result<SocketAddr, BoxError> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async {
+        let addr = bind::resolve_bind_addr(host, port).await?;
+        let listener = bind::bind_listener(addr, &Config::default())
+            .map_err(|e| BoxError::from(format!("cannot bind {addr}: {e}")))?;
+        Ok(listener.local_addr()?)
+    })
+}
+
 /// Binding is complete when this returns, so callers may connect immediately.
 pub async fn start(config: Config) -> Result<ServerHandle, BoxError> {
     config.validate()?;

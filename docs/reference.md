@@ -84,8 +84,15 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 
 | Command | Options |
 | :--- | :--- |
-| `blaze doctor` | `-p/--port` (default 8000), `--json` |
+| `blaze doctor` | `--host` (default 127.0.0.1), `-p/--port` (default 8000), `--json` |
 | `blaze benchmark` | `--url`, `--size-mb`, `--json`, `--runs`, `--warmup`, `--workload`, `--output`, `--seed`; `benchmark compare A B` |
+
+`doctor --host` takes the same values as `serve --host` and binds the address `serve` would pick, then releases it at once. Text and JSON name the address that was tested. If a name resolves to several addresses, only the one `serve` would choose is checked. The result is a point-in-time check, not a reservation, and says nothing about firewalls or remote reachability. The JSON report has an additive `host` field with the value you passed.
+
+```console
+blaze doctor ./shared --host ::1 --port 8000 --json
+blaze serve ./shared --host ::1 --port 8000
+```
 
 ## Endpoints
 
