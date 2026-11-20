@@ -4,6 +4,7 @@
 mod ansi;
 mod bench;
 mod doctor;
+mod live;
 mod serve;
 mod telemetry;
 mod transfer;

@@ -17,7 +17,7 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze completions SHELL` | Print a shell completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 | `blaze version` | Version and platform. Add `--json` for scripts |
 
-The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean.
+The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose`, `--log-json` or OpenTelemetry export, which write their own lines.
 
 ## Exit codes
 

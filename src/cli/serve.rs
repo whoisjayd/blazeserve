@@ -1,4 +1,5 @@
 use super::ansi::{self, Style};
+use super::live;
 use super::util::{
     canonical, display_path, env_truthy, existing_file, existing_path, lan_ip, open_browser,
 };
@@ -461,9 +462,17 @@ fn run_config(
     let features = usage::Features::from_config(&cfg, otlp);
     let slot: UsageSlot = UsageSlot::default();
     let slot_in = slot.clone();
+    // Verbose and JSON runs print a line per request, and OTLP errors go to stderr, so an
+    // in-place status line would fight them.
+    let live_allowed = !verbose && !json_logs && !otlp;
+    let live: std::sync::Arc<std::sync::Mutex<Option<live::Live>>> = Default::default();
+    let live_in = live.clone();
     let reason = crate::server::run_expiring(cfg, expires_after, move |handle| {
         let expiry = expires_after.map(|d| (d, SystemTime::now() + d));
         print_status(&banner(&banner_cfg, verbose, qr, expiry), json_logs);
+        if live_allowed && let Ok(mut g) = live_in.lock() {
+            *g = live::Live::start(handle.state().clone());
+        }
         if let Some(session) = usage::begin_from_process(command, features)
             && let Ok(mut g) = slot_in.lock()
         {
@@ -473,7 +482,11 @@ fn run_config(
             open_browser(&url);
         }
     })
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string());
+    if let Some(line) = live.lock().ok().and_then(|mut g| g.take()) {
+        line.finish();
+    }
+    let reason = reason?;
     let taken = slot.lock().ok().and_then(|mut g| g.take());
     if let Some((session, state)) = taken {
         let s = state.metrics.stats();
