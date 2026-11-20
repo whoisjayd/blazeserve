@@ -160,6 +160,7 @@ fn verify(job: &hatchzip_core::engine::Job, archive: &Path) -> Result<(), String
         bar.finish(0);
     }
     result.map_err(|e| {
+        crate::cli::exit::record(crate::cli::exit::INTEGRITY);
         format!(
             "the archive is damaged, so nothing was extracted and the download was kept: {}",
             failure(e)
@@ -178,6 +179,7 @@ fn ensure_fits(
     if plan.fits {
         return Ok(());
     }
+    crate::cli::exit::record(crate::cli::exit::NO_SPACE);
     let short = (plan.needed + plan.keep_free).saturating_sub(plan.free);
     let mut message = format!(
         "not enough free disk space to extract: {} more is needed ({} available, {} required plus {} kept free). Free some space or lower --keep-free",

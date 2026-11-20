@@ -4,8 +4,8 @@ use super::READ_BUF;
 use super::discover::{self, ServerDigest};
 use super::filename::suggested_name;
 use super::http::{
-    agent, basic_header, describe_error, describe_io, header, http_failure, http_url, retry_hint,
-    transient_error, transient_status,
+    agent, basic_header, cannot_write, describe_error, describe_io, header, http_failure, http_url,
+    retry_hint, transient_error, transient_status, write_failure,
 };
 use super::limits::{self, TimeoutArgs};
 use super::retry::{jitter, plan_wait, retry_note};
@@ -355,7 +355,7 @@ impl Download<'_> {
                 .truncate(true)
                 .open(&self.part)
         }
-        .map_err(|e| format!("cannot write {}: {e}", self.part.display()))?;
+        .map_err(|e| cannot_write(&self.part, &e))?;
 
         if resume_from > 0 {
             announce("Resuming", &format!("at {}", human_size(resume_from)));
@@ -373,8 +373,7 @@ impl Download<'_> {
                         progress.finish(have);
                         return Err(why);
                     }
-                    file.write_all(&buf[..n])
-                        .map_err(|e| format!("write failed: {e}"))?;
+                    file.write_all(&buf[..n]).map_err(|e| write_failure(&e))?;
                     have += n as u64;
                     got += n as u64;
                     progress.update(have);
@@ -391,7 +390,7 @@ impl Download<'_> {
             }
         }
         progress.finish(have);
-        file.sync_data().map_err(|e| format!("write failed: {e}"))?;
+        file.sync_data().map_err(|e| write_failure(&e))?;
 
         match total {
             Some(t) if have < t => Ok(Step::Transient {
@@ -454,6 +453,7 @@ fn finish_download(
     {
         let actual = d.part_len();
         d.reset();
+        crate::cli::exit::record(crate::cli::exit::INTEGRITY);
         return Err(format!(
             "size mismatch: the server hashed {expected} bytes but the download has {actual}; the file may have changed"
         ));
@@ -468,6 +468,7 @@ fn finish_download(
         })?;
         if !actual.eq_ignore_ascii_case(expected) {
             d.reset();
+            crate::cli::exit::record(crate::cli::exit::INTEGRITY);
             return Err(format!(
                 "SHA-256 mismatch: expected {expected}, got {actual}"
             ));

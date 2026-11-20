@@ -150,7 +150,7 @@ async fn get_verifies_sha256_and_discards_bad_downloads() {
         "0".repeat(64),
     ])
     .await;
-    assert_eq!(code(&fail), 1);
+    assert_eq!(code(&fail), 4, "integrity failure");
     assert!(stderr(&fail).contains("SHA-256 mismatch"));
     assert!(!bad.exists());
     assert!(!out_dir.path().join("bad.txt.part").exists());
@@ -219,7 +219,7 @@ async fn get_sends_basic_auth_from_the_environment() {
     let dest = out_dir.path().join("secret.txt");
 
     let denied = blaze_async(vec!["get".into(), url.clone(), "-o".into(), s(&dest)]).await;
-    assert_eq!(code(&denied), 1);
+    assert_eq!(code(&denied), 5, "authentication refused");
     assert!(stderr(&denied).contains("HTTP 401"));
 
     let (dest2, url2) = (dest.clone(), url.clone());
@@ -976,12 +976,50 @@ async fn get_extract_refuses_a_damaged_archive_and_keeps_the_download() {
     )
     .await;
 
-    assert_ne!(code(&out), 0);
+    assert_eq!(code(&out), 4, "a damaged archive is an integrity failure");
     assert!(stderr(&out).contains("damaged"), "{}", stderr(&out));
     assert_eq!(
         std::fs::read(out_dir.path().join("broken.zip")).unwrap(),
         bytes
     );
     assert!(!out_dir.path().join("broken").join("data.bin").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_extract_without_enough_free_space_exits_3_and_changes_nothing() {
+    let served = tempfile::tempdir().unwrap();
+    make_zip(
+        &served.path().join("big.zip"),
+        &[("f.bin", pattern(50_000))],
+    );
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.zip", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    // No disk has this much free, so the plan cannot fit.
+    let out = blaze_in(
+        out_dir.path(),
+        vec![
+            "get".into(),
+            url,
+            "--extract".into(),
+            "--keep-free".into(),
+            "100000G".into(),
+        ],
+    )
+    .await;
+
+    assert_eq!(code(&out), 3, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("not enough free disk space"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        out_dir.path().join("big.zip").exists(),
+        "the download is kept"
+    );
+    assert!(!out_dir.path().join("big").exists(), "nothing is extracted");
     server.shutdown().await;
 }

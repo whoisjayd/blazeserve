@@ -26,6 +26,11 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | 0 | Success |
 | 1 | Something failed while running |
 | 2 | The command was used incorrectly |
+| 3 | Not enough free disk space, before or while writing (`get`) |
+| 4 | Integrity failure: a SHA-256, size or archive check did not pass, or the server rejected an upload's checksum (`get`, `put`) |
+| 5 | The server refused the credentials, HTTP 401 or 403 (`get`, `put`) |
+
+Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password apart from a network problem, which stays at 1. When several things go wrong, the first cause found decides the code.
 
 ## `blaze serve` options
 

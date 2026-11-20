@@ -111,6 +111,11 @@ pub(super) fn transient_status(code: u16) -> bool {
 
 /// A refusal the user can act on, never just a bare status code.
 pub(super) fn http_failure(code: u16, upload: bool) -> String {
+    match code {
+        401 | 403 => crate::cli::exit::record(crate::cli::exit::AUTH),
+        422 => crate::cli::exit::record(crate::cli::exit::INTEGRITY),
+        _ => {}
+    }
     let hint = match code {
         400 => "the server rejected the request as malformed",
         401 => "authentication is required; pass --auth USER:PASS or --auth-env VAR",
@@ -131,6 +136,7 @@ pub(super) fn http_failure(code: u16, upload: bool) -> String {
             "the --if-match ETag is stale or the destination is missing; nothing was replaced, so read the current ETag and decide again"
         }
         413 => "the server says the upload is too large",
+        422 => "the content did not match the checksum sent with it",
         _ => "the server refused the request",
     };
     format!("server returned HTTP {code}: {hint}")
@@ -145,6 +151,18 @@ pub(super) fn retry_hint(
         return None;
     }
     super::retry::parse_retry_after(&header(resp, "retry-after")?, std::time::SystemTime::now())
+}
+
+/// A write error, noting a full disk for the exit code.
+pub(super) fn write_failure(e: &std::io::Error) -> String {
+    crate::cli::exit::note_io(e);
+    format!("write failed: {e}")
+}
+
+/// Like [`write_failure`] for a failure to open or size a file.
+pub(super) fn cannot_write(path: &std::path::Path, e: &std::io::Error) -> String {
+    crate::cli::exit::note_io(e);
+    format!("cannot write {}: {e}", path.display())
 }
 
 pub(super) fn header(resp: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {

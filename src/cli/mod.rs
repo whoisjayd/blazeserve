@@ -4,6 +4,7 @@
 mod ansi;
 mod bench;
 mod doctor;
+mod exit;
 mod live;
 mod serve;
 mod telemetry;
@@ -230,7 +231,8 @@ fn dispatch(command: Command) -> Result<u8, String> {
 }
 
 /// Parse arguments, run the command, and map the outcome to an exit code:
-/// 0 success, 1 runtime failure, 2 usage error (reported by clap).
+/// 0 success, 1 runtime failure, 2 usage error (reported by clap), 3 not enough disk space,
+/// 4 integrity failure and 5 authentication refused (see `exit`).
 pub fn main() -> ExitCode {
     ExitCode::from(run(Cli::parse()))
 }
@@ -253,11 +255,12 @@ where
 
 fn run(cli: Cli) -> u8 {
     cli.color.apply();
+    exit::reset();
     match dispatch(cli.command) {
         Ok(code) => code,
         Err(message) => {
             anstream::eprintln!("{} {message}", Style::stderr().red("error:"));
-            1
+            exit::failure()
         }
     }
 }

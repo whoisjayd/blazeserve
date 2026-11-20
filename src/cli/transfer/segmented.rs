@@ -5,8 +5,8 @@ use super::download::{
     Download, MAX_RESTARTS, Meta, parse_content_range, rename_with_retry, sibling,
 };
 use super::http::{
-    describe_error, describe_io, header, http_failure, retry_hint, transient_error,
-    transient_status,
+    cannot_write, describe_error, describe_io, header, http_failure, retry_hint, transient_error,
+    transient_status, write_failure,
 };
 use super::limits;
 use super::retry::{jitter, plan_wait, retry_note};
@@ -301,7 +301,7 @@ impl Shared<'_> {
                     }
                     if let Err(e) = write_at(&self.file, &buf[..n], pos) {
                         self.progress.dec(counted);
-                        return Err(SegError::Fatal(format!("write failed: {e}")));
+                        return Err(SegError::Fatal(write_failure(&e)));
                     }
                     pos += n as u64;
                     counted += n as u64;
@@ -446,7 +446,7 @@ fn attempt(
         d.reset();
         BTreeSet::new()
     });
-    let write_err = |e: std::io::Error| format!("cannot write {}: {e}", d.part.display());
+    let write_err = |e: std::io::Error| cannot_write(&d.part, &e);
     let file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -522,7 +522,7 @@ fn attempt(
             msg: failure.unwrap_or_else(|| "download interrupted".to_owned()),
         });
     }
-    file.sync_data().map_err(|e| format!("write failed: {e}"))?;
+    file.sync_data().map_err(|e| write_failure(&e))?;
     drop(file);
     if d.part_len() != probe.total {
         return Err(format!(
