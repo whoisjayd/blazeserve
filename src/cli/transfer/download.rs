@@ -111,6 +111,9 @@ pub struct GetArgs {
     /// With --extract, keep the archive instead of consuming it
     #[arg(long, requires = "extract")]
     pub keep_archive: bool,
+    /// With --extract, skip the check of the whole archive that runs before it is consumed
+    #[arg(long, requires = "extract")]
+    pub no_verify_first: bool,
     /// With --extract, free space to leave untouched, e.g. 500M or 2G [default: 1G]
     #[arg(long, value_name = "SIZE", requires = "extract", value_parser = parse_free_space)]
     pub keep_free: Option<u64>,
@@ -421,6 +424,7 @@ fn complete(
 fn extract_archive(dest: &Path, args: &GetArgs) -> Result<(), String> {
     let options = super::extract::Options {
         keep_archive: args.keep_archive,
+        verify_first: !args.no_verify_first,
         keep_free: args.keep_free.unwrap_or(1 << 30),
     };
     super::extract::extract(dest, &options).map(|_| ())

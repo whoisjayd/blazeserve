@@ -950,3 +950,38 @@ async fn get_extract_reports_a_file_that_is_not_an_archive() {
     assert!(out_dir.path().join("notes.txt").exists());
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_extract_refuses_a_damaged_archive_and_keeps_the_download() {
+    let served = tempfile::tempdir().unwrap();
+    let archive = served.path().join("broken.zip");
+    make_zip(&archive, &[("data.bin", pattern(200_000))]);
+    let mut bytes = std::fs::read(&archive).unwrap();
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 0xff;
+    std::fs::write(&archive, &bytes).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/broken.zip", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(
+        out_dir.path(),
+        vec![
+            "get".into(),
+            url,
+            "--extract".into(),
+            "--keep-free".into(),
+            "0".into(),
+        ],
+    )
+    .await;
+
+    assert_ne!(code(&out), 0);
+    assert!(stderr(&out).contains("damaged"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(out_dir.path().join("broken.zip")).unwrap(),
+        bytes
+    );
+    assert!(!out_dir.path().join("broken").join("data.bin").exists());
+    server.shutdown().await;
+}

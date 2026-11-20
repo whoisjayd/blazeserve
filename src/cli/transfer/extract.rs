@@ -22,6 +22,9 @@ static NEVER: AtomicBool = AtomicBool::new(false);
 pub(super) struct Options {
     /// Leave the archive in place instead of consuming it as files come out.
     pub keep_archive: bool,
+    /// Read and check the whole archive before consuming it, so a damaged download is never
+    /// destroyed. Not needed when the archive is kept.
+    pub verify_first: bool,
     /// Free space that must remain untouched, in bytes.
     pub keep_free: u64,
 }
@@ -74,6 +77,9 @@ pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, String>
                 ));
             }
             ensure_fits(&job, &out, false, opts.keep_free, opts.keep_archive)?;
+            if opts.verify_first && !opts.keep_archive {
+                verify(&job, archive)?;
+            }
             let journal =
                 session::begin(&job, &paths, out, opts.keep_archive, None).map_err(failure)?;
             (job, journal)
@@ -136,6 +142,29 @@ pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, String>
             Err("extraction paused; run the same command again to resume".to_owned())
         }
     }
+}
+
+/// Reads every unit and lets the decoders check their checksums. Writes nothing.
+fn verify(job: &hatchzip_core::engine::Job, archive: &Path) -> Result<(), String> {
+    let name = archive
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let bar = Arc::new(Progress::titled(
+        &format!("▣ checking {name}"),
+        Some(job.remaining_size()),
+        0,
+    ));
+    let on_bytes = bar.clone();
+    let result = job.verify(&move |n| on_bytes.inc(n));
+    if let Some(mut bar) = Arc::into_inner(bar) {
+        bar.finish(0);
+    }
+    result.map_err(|e| {
+        format!(
+            "the archive is damaged, so nothing was extracted and the download was kept: {}",
+            failure(e)
+        )
+    })
 }
 
 fn ensure_fits(

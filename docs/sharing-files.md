@@ -47,7 +47,7 @@ Use `--no-resume` to always start from the beginning, and `--force` to replace a
 blaze get http://host:8000/game.zip --extract
 ```
 
-When the download has been checked and renamed, the archive is unpacked into a folder named after it, next to it. The archive is consumed as its files come out, so you only need free space for about the extracted size instead of the archive and its contents together. BlazeServe checks that it fits before it changes anything, and keeps `--keep-free` untouched throughout. Add `--keep-archive` if you want the archive afterwards; that needs room for both.
+When the download has been checked and renamed, the archive is unpacked into a folder named after it, next to it. The archive is consumed as its files come out, so you only need free space for about the extracted size instead of the archive and its contents together. BlazeServe checks that it fits before it changes anything, and keeps `--keep-free` untouched throughout. It also reads the whole archive and checks every file's checksum first, so a damaged download is refused while it is still intact. `--no-verify-first` skips that pass on very large archives. Add `--keep-archive` if you want the archive afterwards; that needs room for both.
 
 If the extraction is interrupted, run the same command again and it resumes. Extraction is powered by [HatchZip](https://github.com/xevrion/hatchzip)'s engine. Encrypted archives are not supported here; use HatchZip itself for those.
 
