@@ -32,6 +32,7 @@ Share a folder or a single file in one command, and pick up interrupted download
 BlazeServe is one program for Linux, Windows and macOS, with nothing else to install. Use it to hand a file to a colleague, or put it behind a proxy to host build artifacts, datasets or a download mirror. Memory use stays small however large the file is.
 
 - Downloads and uploads resume where they stopped, and a download can use several connections to go faster.
+- `blaze get --extract` unpacks an archive in place as it is consumed, so a big download needs little more than its extracted size.
 - Visitors cannot leave the folder you share, and uploads stay off until you turn them on.
 - A missing password setting stops the server instead of leaving it open.
 - HTTPS, HTTP/2, speed limits, health checks, Prometheus metrics and JSON logs are built in.
@@ -58,7 +59,7 @@ Open `http://localhost:8000` to browse the folder, with search and sorting. Pres
 | Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 | Download | An archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases), checked against `SHA256SUMS` |
 
-Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and Apple silicon). Building from source needs Rust 1.88 or newer.
+Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and Apple silicon). Building from source needs Rust 1.93 or newer.
 
 </details>
 

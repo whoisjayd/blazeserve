@@ -842,3 +842,111 @@ async fn get_accepts_more_than_sixteen_connections_and_max() {
     }
     server.shutdown().await;
 }
+
+fn make_zip(path: &Path, files: &[(&str, Vec<u8>)]) {
+    use std::io::Write;
+    let file = std::fs::File::create(path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, data) in files {
+        zip.start_file(*name, options).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_extract_unpacks_in_place_and_consumes_the_archive() {
+    let served = tempfile::tempdir().unwrap();
+    let one = pattern(300_000);
+    let two = pattern(70_001);
+    make_zip(
+        &served.path().join("bundle.zip"),
+        &[("a/one.bin", one.clone()), ("two.bin", two.clone())],
+    );
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/bundle.zip", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(
+        out_dir.path(),
+        vec![
+            "get".into(),
+            url,
+            "--extract".into(),
+            "--keep-free".into(),
+            "0".into(),
+        ],
+    )
+    .await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let folder = out_dir.path().join("bundle");
+    assert_eq!(
+        std::fs::read(folder.join("a").join("one.bin")).unwrap(),
+        one
+    );
+    assert_eq!(std::fs::read(folder.join("two.bin")).unwrap(), two);
+    assert!(
+        !out_dir.path().join("bundle.zip").exists(),
+        "the archive should be consumed"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_extract_keep_archive_leaves_the_download_in_place() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(120_000);
+    make_zip(&served.path().join("keep.zip"), &[("f.bin", data.clone())]);
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/keep.zip", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(
+        out_dir.path(),
+        vec![
+            "get".into(),
+            url,
+            "--extract".into(),
+            "--keep-archive".into(),
+            "--keep-free".into(),
+            "0".into(),
+        ],
+    )
+    .await;
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(out_dir.path().join("keep").join("f.bin")).unwrap(),
+        data
+    );
+    assert!(out_dir.path().join("keep.zip").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_extract_reports_a_file_that_is_not_an_archive() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(
+        served.path().join("notes.txt"),
+        b"just text, not an archive",
+    )
+    .unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/notes.txt", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_in(out_dir.path(), vec!["get".into(), url, "--extract".into()]).await;
+
+    assert_ne!(code(&out), 0);
+    assert!(
+        stderr(&out).contains("extraction failed"),
+        "{}",
+        stderr(&out)
+    );
+    // The download itself is kept.
+    assert!(out_dir.path().join("notes.txt").exists());
+    server.shutdown().await;
+}

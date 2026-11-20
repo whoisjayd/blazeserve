@@ -22,6 +22,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) const MAX_RESTARTS: u32 = 3;
+/// Accepts a byte count with an optional `K`, `M` or `G` suffix (powers of 1024). Zero is allowed.
+fn parse_free_space(raw: &str) -> Result<u64, String> {
+    let text = raw.trim();
+    let (digits, unit) = match text.char_indices().last() {
+        Some((i, 'k' | 'K')) => (&text[..i], 1u64 << 10),
+        Some((i, 'm' | 'M')) => (&text[..i], 1 << 20),
+        Some((i, 'g' | 'G')) => (&text[..i], 1 << 30),
+        _ => (text, 1),
+    };
+    let value: f64 = digits.parse().map_err(|_| {
+        format!("invalid size '{raw}'; use bytes with an optional K, M or G, such as 500M or 2G")
+    })?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(format!("invalid size '{raw}'"));
+    }
+    Ok((value * unit as f64) as u64)
+}
+
 /// Each connection is a thread and a socket, and many servers refuse more than a handful.
 const MAX_CONNECTIONS: u16 = 128;
 /// Above this, say that the server may object.
@@ -73,6 +91,19 @@ pub struct GetArgs {
     /// Cap total download speed in bytes per second, e.g. 500K, 2M or 1.5M (minimum 1K)
     #[arg(long, value_name = "RATE", value_parser = parse_rate)]
     pub limit_rate: Option<u64>,
+    /// After the download, extract the archive in place, so about the extracted size is enough free space
+    ///
+    /// Works on zip, 7z and tar archives. The archive is consumed as its files come out;
+    /// the files go to a folder named after it. An interrupted extraction resumes when you
+    /// run the same command again.
+    #[arg(long)]
+    pub extract: bool,
+    /// With --extract, keep the archive instead of consuming it
+    #[arg(long, requires = "extract")]
+    pub keep_archive: bool,
+    /// With --extract, free space to leave untouched, e.g. 500M or 2G [default: 1G]
+    #[arg(long, value_name = "SIZE", requires = "extract", value_parser = parse_free_space)]
+    pub keep_free: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -360,6 +391,30 @@ impl Download<'_> {
     }
 }
 
+/// Verifies and publishes the download, then extracts it when asked.
+fn complete(d: &Download<'_>, dest: &Path, args: &GetArgs) -> Result<u8, String> {
+    let code = finish_download(d, dest, args.sha256.as_deref())?;
+    if code == 0 && args.extract {
+        extract_archive(dest, args)
+            .map_err(|e| format!("downloaded {}, but extraction failed: {e}", dest.display()))?;
+    }
+    Ok(code)
+}
+
+#[cfg(feature = "extract")]
+fn extract_archive(dest: &Path, args: &GetArgs) -> Result<(), String> {
+    let options = super::extract::Options {
+        keep_archive: args.keep_archive,
+        keep_free: args.keep_free.unwrap_or(1 << 30),
+    };
+    super::extract::extract(dest, &options).map(|_| ())
+}
+
+#[cfg(not(feature = "extract"))]
+fn extract_archive(_dest: &Path, _args: &GetArgs) -> Result<(), String> {
+    Err("this build of blaze was made without extraction support".to_owned())
+}
+
 fn finish_download(d: &Download<'_>, dest: &Path, sha256: Option<&str>) -> Result<u8, String> {
     if let Some(expected) = sha256 {
         let actual = sha256_file(&d.part).map_err(|e| format!("cannot hash download: {e}"))?;
@@ -429,14 +484,14 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         );
     }
     if args.connections > 1 && segmented::run(&d, usize::from(args.connections), args.retries)? {
-        return finish_download(&d, &dest, args.sha256.as_deref());
+        return complete(&d, &dest, &args);
     }
 
     let mut fails = 0u32;
     let mut restarts = 0u32;
     loop {
         match d.step()? {
-            Step::Complete => return finish_download(&d, &dest, args.sha256.as_deref()),
+            Step::Complete => return complete(&d, &dest, &args),
             Step::Restart => {
                 restarts += 1;
                 if restarts > MAX_RESTARTS {
@@ -473,6 +528,16 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_space_accepts_suffixes_and_zero() {
+        assert_eq!(parse_free_space("0").unwrap(), 0);
+        assert_eq!(parse_free_space("500M").unwrap(), 500 << 20);
+        assert_eq!(parse_free_space("2g").unwrap(), 2 << 30);
+        assert_eq!(parse_free_space("1.5K").unwrap(), 1536);
+        assert!(parse_free_space("lots").is_err());
+        assert!(parse_free_space("-1G").is_err());
+    }
 
     #[test]
     fn destination_from_url() {

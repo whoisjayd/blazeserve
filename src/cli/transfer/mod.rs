@@ -1,6 +1,8 @@
 //! Resumable `blaze get` downloads and chunked `blaze put` uploads.
 
 mod download;
+#[cfg(feature = "extract")]
+mod extract;
 mod filename;
 mod http;
 mod retry;

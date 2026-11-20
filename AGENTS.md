@@ -26,7 +26,7 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | :--- | :--- |
 | `src/lib.rs` | The module list, `VERSION`, `AppState`, `PeerInfo` and `Body` |
 | `src/config.rs` | Typed settings and their validation, the single source of truth for every entry point |
-| `src/cli/`, `src/main.rs` | Commands, help text, progress output and input checks. `cli::main_from` runs the CLI for embedders. `cli/transfer/` holds resumable `get` (one stream in `download`, parallel segments in `segmented`) and `put`. `cli/bench/` holds the benchmark harness |
+| `src/cli/`, `src/main.rs` | Commands, help text, progress output and input checks. `cli::main_from` runs the CLI for embedders. `cli/transfer/` holds resumable `get` (one stream in `download`, parallel segments in `segmented`) and `put`. `filename` reads the server-suggested name, `retry` the `Retry-After` policy, `extract` the in-place extraction through `hatchzip-core`; `cli/live.rs` draws the status line under `serve` and `send`. `cli/bench/` holds the benchmark harness |
 | `src/server/` | `bind` and `tls` set up the listener, `accept` applies admission control, `connection` and `idle` serve one connection, `prefixed` sniffs the HTTP/2 preface, `budget` limits how fast one HTTP/2 connection opens streams, `proxy` works out the trusted client identity, and `mod.rs` owns start and shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP behaviour: ranges, validators, status routes, CORS, authentication, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
 | `src/upload/`, `src/zip_stream/` | Uploads (`request`, `target`, `stream`, `publish`, `plain`, `resumable`) and streaming ZIPs (`writer`, `crc32`, `archive`) |
@@ -120,7 +120,7 @@ CI also enforces 80 percent line coverage with `cargo llvm-cov`, runs `cargo den
 ## Conventions
 
 - Windows, Linux and macOS are all first-class. Use `std::path`, never split paths by hand, and never assume separators, drive letters, case sensitivity, symlink support or POSIX permissions. Guard Unix-only code with `cfg`, tolerate unsupported socket options, and keep `TCP_QUICKACK` Linux-only.
-- The crate has no system-library dependencies and TLS uses rustls. A new dependency must build on all three platforms without system libraries. Prefer the standard library or an existing dependency.
+- The crate has no system-library dependencies and TLS uses rustls. A new dependency must build on all three platforms without system libraries. `hatchzip-core` (feature `extract`, on by default) builds a bundled zstd C source through `zip`, so building from source needs a C compiler; do not add other dependencies that need one. Prefer the standard library or an existing dependency.
 - Commit `Cargo.toml` and `Cargo.lock` together and never edit the lock by hand. Run `cargo deny check` after dependency changes, and review action, Docker base and pre-commit pins as separate supply-chain changes.
 - Do not replace a transfer path without measurements on the affected platforms.
 - Keep proxy buffering off for streaming: Nginx request and response buffering off, Caddy `flush_interval -1`.

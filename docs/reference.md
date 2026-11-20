@@ -70,6 +70,9 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `--force` | off | Replace an existing file |
 | `-c`, `--connections N` | `4` | Parallel connections, 1 to 128, or `max` for 128 |
 | `--limit-rate RATE` | none | Total speed cap in bytes per second, with optional `K`, `M` or `G` |
+| `--extract` | off | After the download, extract the archive in place (zip, 7z, tar, `.tar.gz`, `.tar.bz2`, `.tar.xz`) |
+| `--keep-archive` | off | With `--extract`, keep the archive instead of consuming it as files come out |
+| `--keep-free SIZE` | `1G` | With `--extract`, free space to leave untouched, with optional `K`, `M` or `G` |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
 
 `get` and `put` honour `Retry-After` on `429` and `503` (seconds or HTTP date), up to 5 minutes. See [Passwords and retries](sharing-files.md#passwords-and-retries).
