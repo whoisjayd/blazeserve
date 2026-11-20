@@ -2,6 +2,7 @@
 //! validates it before any socket is bound.
 
 mod ansi;
+pub mod argv;
 mod bench;
 mod doctor;
 mod exit;
@@ -259,6 +260,25 @@ fn dispatch(command: Command) -> Result<u8, String> {
     }
 }
 
+/// Asks the command running in this process to stop at its next safe point. Used by the Python
+/// package when the user presses Ctrl+C.
+pub fn request_stop() {
+    jobs::request_stop();
+}
+
+/// The `serve` settings for `args` (everything after the program name), validated exactly as
+/// the command line validates them.
+pub fn serve_config_from(args: &[String]) -> Result<crate::config::Config, String> {
+    let full = std::iter::once("blaze".to_owned()).chain(args.iter().cloned());
+    match Cli::try_parse_from(full)
+        .map_err(|e| e.to_string())?
+        .command
+    {
+        Command::Serve(a) => serve::serve_config(&a),
+        _ => Err("expected a serve command line".to_owned()),
+    }
+}
+
 /// Parse arguments, run the command, and map the outcome to an exit code:
 /// 0 success, 1 runtime failure, 2 usage error (reported by clap), 3 not enough disk space,
 /// 4 integrity failure and 5 authentication refused (see `exit`).
@@ -274,6 +294,8 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
+    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    jobs::set_embedded_args(args.iter().skip(1).cloned().collect());
     match Cli::try_parse_from(args) {
         Ok(cli) => run(cli),
         Err(e) => {
@@ -286,6 +308,7 @@ where
 fn run(cli: Cli) -> u8 {
     cli.color.apply();
     exit::reset();
+    jobs::clear_stop();
     match dispatch(cli.command) {
         Ok(code) => code,
         Err(message) => {

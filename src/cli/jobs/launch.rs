@@ -21,11 +21,11 @@ pub fn worker_args(args: impl IntoIterator<Item = OsString>, id: &str) -> Vec<Os
 }
 
 fn spawn_detached(args: &[OsString], log: &File) -> Result<Child, String> {
-    let program = std::env::current_exe()
-        .map_err(|e| format!("cannot find the blaze executable to start a worker: {e}"))?;
+    let (program, prefix) = super::worker_program()?;
     let build = || -> std::io::Result<Command> {
         let mut c = Command::new(&program);
-        c.args(args)
+        c.args(&prefix)
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log.try_clone()?));
@@ -115,15 +115,10 @@ fn stop_inheriting_std_handles() {
 fn stop_inheriting_std_handles() {}
 
 pub fn launch(kind: Kind) -> Result<u8, String> {
-    if !super::is_standalone() {
-        return Err(
-            "--background needs the standalone blaze program, not an embedded call".to_owned(),
-        );
-    }
     let store = Store::open()?;
     store.sweep(now());
     let (id, log) = store.reserve()?;
-    let args = worker_args(std::env::args_os().skip(1), &id);
+    let args = worker_args(super::invocation_args(), &id);
     stop_inheriting_std_handles();
     let mut child = match spawn_detached(&args, &log) {
         Ok(c) => c,

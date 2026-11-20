@@ -87,6 +87,10 @@ pub fn request_cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+pub fn clear_cancel() {
+    CANCEL.store(false, Ordering::SeqCst);
+}
+
 pub fn cancelled() -> bool {
     CANCEL.load(Ordering::Relaxed)
 }
