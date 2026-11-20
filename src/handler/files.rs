@@ -39,8 +39,8 @@ pub(super) async fn static_response(
     };
     let headers = req.headers();
     let wants_hash = query_param(req.uri().query(), "hash").is_some();
-    let encodings = (!wants_hash && !headers.contains_key(header::RANGE))
-        .then(|| accepted_encodings(headers));
+    let encodings =
+        (!wants_hash && !headers.contains_key(header::RANGE)).then(|| accepted_encodings(headers));
     let display_path = format!("/{}", components.join("/"));
     let task_state = Arc::clone(state);
     let resolved =
