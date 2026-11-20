@@ -37,6 +37,13 @@ blazeserve.sha256("big.iso")                      # checksum of a file
 blazeserve.main(["get", "http://host:8000/big.iso"])   # run any blaze command, returns the exit status
 ```
 
+```python
+blazeserve.upgrade()                          # check only; returns a dict
+blazeserve.upgrade(check=False, yes=True)     # upgrade with pip
+```
+
+`upgrade()` returns the fields of `blaze upgrade --check --json` plus `status` and `message`, for example `{"current": "1.0.0", "latest": "1.1.0", "update_available": True, ...}`. It never asks a question, so an upgrade needs `yes=True`, and it raises `blazeserve.BlazeError` on failure. `python -m blazeserve upgrade` and the `blaze` command do the same as `blaze upgrade`, and run pip with the Python that started them. Upgrading a package that is in use can fail on Windows because the files are locked; close other programs that use it, or run `python -m pip install --upgrade blazeserve` from a fresh shell.
+
 `serve_forever()` blocks until you press `Ctrl+C`, and `close()` stops a server without a `with` block. Resumable downloads and uploads are available through `blazeserve.main` and show progress as the command does.
 
 ## Rust

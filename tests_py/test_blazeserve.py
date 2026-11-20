@@ -1,6 +1,11 @@
 import base64
 import hashlib
+import http.server
 import json
+import os
+import subprocess
+import sys
+import threading
 import urllib.error
 import urllib.request
 
@@ -83,3 +88,73 @@ def test_main_runs_the_cli(capfd):
     assert blazeserve.main(["version", "--json"]) == 0
     assert json.loads(capfd.readouterr().out)["version"] == blazeserve.__version__
     assert blazeserve.main(["serve", "--port", "0"]) == 2
+
+
+@pytest.fixture
+def release_origin(monkeypatch):
+    """A loopback stand-in for the release server that reports version 9.9.9."""
+    requests = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if self.path == "/api/releases/latest":
+                body = b'{"tag_name": "v9.9.9", "draft": false, "prerelease": false}'
+                self.send_response(200)
+            else:
+                body = b"not found"
+                self.send_response(404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    origin = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=origin.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{origin.server_port}"
+    monkeypatch.setenv("BLAZE_UPGRADE_API", base + "/api")
+    monkeypatch.setenv("BLAZE_UPGRADE_DOWNLOADS", base + "/dl")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    try:
+        yield requests
+    finally:
+        origin.shutdown()
+        origin.server_close()
+        thread.join()
+
+
+def test_upgrade_check_returns_a_report(release_origin):
+    report = blazeserve.upgrade(check=True)
+    assert report["current"] == blazeserve.__version__
+    assert report["latest"] == "9.9.9"
+    assert report["update_available"] is True
+    assert report["channel"] == "pip"
+    assert release_origin == ["/api/releases/latest"]
+
+
+def test_upgrade_without_yes_is_refused_before_any_request(release_origin):
+    with pytest.raises(blazeserve.BlazeError, match="--yes"):
+        blazeserve.upgrade(check=False)
+    assert release_origin == []
+
+
+def test_upgrade_sets_the_interpreter_only_while_it_runs(release_origin, monkeypatch):
+    monkeypatch.delenv("BLAZE_PYTHON", raising=False)
+    blazeserve.upgrade(check=True)
+    assert "BLAZE_PYTHON" not in os.environ
+
+
+def test_blaze_upgrade_check_through_main_and_module(release_origin, capfd):
+    assert blazeserve.main(["upgrade", "--check", "--json"]) == 0
+    assert json.loads(capfd.readouterr().out)["update_available"] is True
+    result = subprocess.run(
+        [sys.executable, "-m", "blazeserve", "upgrade", "--check", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["latest"] == "9.9.9"

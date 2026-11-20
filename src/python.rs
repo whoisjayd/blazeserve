@@ -192,12 +192,20 @@ fn cli_main(py: Python<'_>, argv: Option<Vec<String>>) -> i32 {
     i32::from(py.detach(|| crate::cli::main_from(args)))
 }
 
+/// Check for, or install, a newer release. Returns the result as JSON text.
+#[pyfunction]
+#[pyo3(signature = (check = true, version = None, yes = false))]
+fn upgrade(py: Python<'_>, check: bool, version: Option<String>, yes: bool) -> PyResult<String> {
+    py.detach(|| crate::cli::upgrade_api(check, version, yes))
+        .map_err(fail)
+}
+
 #[pymodule]
 mod _native {
     use pyo3::prelude::*;
 
     #[pymodule_export]
-    use super::{BlazeError, Server, cli_main, sha256};
+    use super::{BlazeError, Server, cli_main, sha256, upgrade};
 
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
