@@ -185,6 +185,16 @@ The release workflow needs its manual version or `v*` tag to equal `Cargo.toml` 
 - Commits and pull requests carry no tool attribution, disclosure statement or `Co-Authored-By` line. Describe the change, the compatibility impact and the linked issues.
 - Pull requests that are generated and opened autonomously by someone outside the maintainer team are not accepted.
 
+## Traps already fallen into
+
+- A hidden entry, a staging name (`security::is_reserved_name`) and a missing file must look the same on every route, including `/__upload__/`, `?hash` and ZIPs. Checking one route is not enough.
+- Every failure path of an upload removes its staging file, including a refused precheck and a failed publish. A leftover full-size staging file turns every retry into a `409`.
+- A `?hash` or similar answer is about the file asked for. Never negotiate a precompressed sibling for it.
+- `try_send` on a bounded channel drops the item when the consumer is slow. An error that must reach the client uses `blocking_send`.
+- Notices printed while a progress dashboard is on screen go through `ansi::announce`, which draws above it. A bare `eprintln!` tears the redraw.
+- Cargo features are additive. A dependency cannot switch off a default feature another crate in the tree turns on, so check `cargo tree` before claiming a build is free of C code.
+- Windows briefly holds new files open for security software, so a rename right after a write can fail; use `rename_with_retry`.
+
 ## Handoff
 
 Report the following, without claiming more certainty than you have:
