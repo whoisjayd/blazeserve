@@ -36,4 +36,4 @@ File names and paths, host names, IP addresses, ports, URLs, passwords, the valu
 
 ## Where it goes
 
-Reports go to a small relay that checks them against a strict list of allowed fields and forwards them to a metrics backend. It never stores the sender's address. Its code is in [deploy/telemetry-relay](../deploy/telemetry-relay/README.md). Release builds only send reports if a relay address was built in. A build without one never sends anything.
+Reports go to a small relay that checks them against a strict list of allowed fields and forwards them to a metrics backend. It never stores the sender's address. Its code is in [deploy/telemetry-relay](../deploy/telemetry-relay/README.md), which also documents the [dashboard](../deploy/telemetry-relay/README.md#dashboard) built on the forwarded records. Release builds only send reports if a relay address was built in. A build without one never sends anything.

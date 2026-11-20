@@ -235,7 +235,9 @@ jobs:
           set -Eeuo pipefail
           docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check config /etc/prometheus/prometheus.yml
           docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check rules /etc/prometheus/alerts.yml
-          docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python -m json.tool /work/deploy/monitoring/grafana-dashboard.json > /dev/null
+          for dashboard in grafana-dashboard.json grafana-usage-dashboard.json; do
+            docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python -m json.tool "/work/deploy/monitoring/$dashboard" > /dev/null
+          done
       - name: Validate reverse-proxy configuration
         run: |
           set -Eeuo pipefail

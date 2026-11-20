@@ -100,11 +100,12 @@ This is only safe if visitors cannot reach BlazeServe directly, so bind it to th
 
 ## Monitoring
 
-`monitoring/` has a Prometheus scrape config, alert rules and a Grafana dashboard. Prometheus reads `/__metrics__`, and the metrics are listed in the [monitoring guide](../docs/monitoring.md#metrics). Keep that address off untrusted networks.
+`monitoring/` has a Prometheus scrape config, alert rules and two Grafana dashboards: one for the `blazeserve_*` runtime metrics, and one for the anonymous usage reports that the telemetry relay forwards to Loki. Prometheus reads `/__metrics__`, and the metrics are listed in the [monitoring guide](../docs/monitoring.md#metrics). Keep that address off untrusted networks.
 
 - **Alerts** in `alerts.yml`: `BlazeServeInstanceDown`, `BlazeServeHighErrorRate`, `BlazeServeHighActiveRequests` and `BlazeServeConnectionsRejected`.
 - **Scrape target:** `prometheus.yml` points at `blazeserve.default.svc.cluster.local:80`, the Service from `k8s/service.yaml`. Use `127.0.0.1:8000` for the systemd unit, or `blazeserve:8000` when Prometheus shares the Compose network. Give Prometheus both `prometheus.yml` and `alerts.yml`.
-- **Dashboard:** in Grafana choose Dashboards, then New, then Import, load `monitoring/grafana-dashboard.json`, and pick the Prometheus data source that uses this scrape config.
+- **Runtime dashboard:** in Grafana choose Dashboards, then New, then Import, load `monitoring/grafana-dashboard.json`, and pick the Prometheus data source that uses this scrape config.
+- **Usage dashboard:** load `monitoring/grafana-usage-dashboard.json` the same way and pick the Loki data source that receives the relay's logs. It reads `{service_name="blazeserve-usage"}` and covers reports over time, versions, platforms, feature adoption and session outcomes. The [relay guide](telemetry-relay/README.md#dashboard) lists the queries and the meaning of each field.
 
 Traces and metrics can also be exported with OpenTelemetry, described in the [monitoring guide](../docs/monitoring.md#opentelemetry). Those metrics use the `http.server.*` names and are separate from the `blazeserve_*` series the dashboard and alerts use.
 

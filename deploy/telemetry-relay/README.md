@@ -18,6 +18,27 @@ One OpenTelemetry log record per report, sent to `/v1/logs`. Each record has the
 
 Logs are used because a Worker with no memory between requests cannot keep the running totals that cumulative counters need, and Grafana Cloud does not accept delta counters. In Grafana, query the Loki data source, for example `sum by (os) (count_over_time({service_name="blazeserve-usage"}[24h]))`. The access token needs the `logs:write` scope.
 
+## Dashboard
+
+`../monitoring/grafana-usage-dashboard.json` is a Grafana dashboard for these records. Import it under Dashboards, then pick the Loki data source that receives the OTLP logs. It reads the `service_name="blazeserve-usage"` stream, so no other setup is needed.
+
+Start reports describe the configuration; stop reports describe the session. Use start events for platform, version and feature questions, and stop events for uptime, requests, bytes and errors. There is no install ID, so each record is a session, not a person.
+
+| Panel | Query |
+| :--- | :--- |
+| Reports over time | `sum by (event) (count_over_time({service_name="blazeserve-usage"} \| keep service_name, event [$__interval]))` |
+| Operating systems | `sum by (os) (count_over_time({service_name="blazeserve-usage"} \| event="start" \| keep service_name, os [$__range]))` |
+| Versions | `sum by (version) (count_over_time({service_name="blazeserve-usage"} \| event="start" \| keep service_name, version [$__range]))` |
+| Install channels | `sum by (install_channel) (count_over_time({service_name="blazeserve-usage"} \| event="start" \| keep service_name, install_channel [$__range]))` |
+| Feature adoption | `sum(count_over_time({service_name="blazeserve-usage"} \| event="start" \| feature_tls="true" \| keep service_name [$__range])) / sum(count_over_time({service_name="blazeserve-usage"} \| event="start" \| keep service_name [$__range])) * 100` |
+| Error share | `sum(count_over_time({service_name="blazeserve-usage"} \| event="stop" \| had_errors="true" \| keep service_name [$__range])) / sum(count_over_time({service_name="blazeserve-usage"} \| event="stop" \| keep service_name [$__range])) * 100` |
+| Uptime buckets | `sum by (uptime_bucket) (count_over_time({service_name="blazeserve-usage"} \| event="stop" \| keep service_name, uptime_bucket [$__range]))` |
+| Recent reports | `{service_name="blazeserve-usage"}` |
+
+Attribute values are strings, including booleans, so keep the quotes in `had_errors="true"` and `feature_tls="true"`. `|= "event=start"` filters the log body and matches nothing; use the label filter `| event="start"`. For metric queries, `| keep service_name, os` (or the label the panel groups by) trims the structured metadata before aggregation.
+
+The dashboard defaults to 7 days, inside the Grafana Cloud Free 14-day log retention. Widen it only if your plan keeps logs longer.
+
 ## Deploy it
 
 You need a Cloudflare account and Node.js.
