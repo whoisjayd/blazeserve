@@ -9,7 +9,7 @@ use super::http::{
 };
 use super::retry::{jitter, plan_wait, retry_note};
 use crate::cli::ansi::announce;
-use crate::cli::util::{Progress, backoff, human_size};
+use crate::cli::util::{Progress, backoff, human_size, transfer_title};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
@@ -465,7 +465,7 @@ fn attempt(
         changed: AtomicBool::new(false),
         error: Mutex::new(None),
         done: Mutex::new((done, Instant::now())),
-        progress: Progress::new(Some(probe.total), base),
+        progress: Progress::titled(&transfer_title("↓", &d.part), Some(probe.total), base),
         retries,
         cooldown: Mutex::new(None),
         pending,

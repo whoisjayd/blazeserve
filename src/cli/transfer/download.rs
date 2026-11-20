@@ -10,7 +10,7 @@ use super::retry::{jitter, plan_wait, retry_note};
 use super::segmented::{self, SegMeta};
 use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
-use crate::cli::util::{Progress, human_size, sha256_file};
+use crate::cli::util::{Progress, human_size, sha256_file, transfer_title};
 use clap::Args;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -296,7 +296,7 @@ impl Download<'_> {
         if resume_from > 0 {
             announce("Resuming", &format!("at {}", human_size(resume_from)));
         }
-        let mut progress = Progress::new(total, resume_from);
+        let mut progress = Progress::titled(&transfer_title("↓", &self.part), total, resume_from);
         let mut reader = resp.into_body().into_reader();
         let mut buf = vec![0u8; READ_BUF];
         let mut have = resume_from;

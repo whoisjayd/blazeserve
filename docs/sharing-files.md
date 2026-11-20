@@ -33,6 +33,8 @@ blaze get http://host:8000/big.iso
 
 The file is saved under the name the server suggests in its `Content-Disposition` header. A folder downloaded as a ZIP, for example `blaze get 'http://host:8000/__zip__?path=docs'`, arrives as `docs.zip`. If the server suggests nothing usable, the last part of the URL is used, here `big.iso`. Only the final part of a suggested name is kept, and names that could write elsewhere or name a device are ignored. Use `-o` to choose another name, which always wins. While it downloads, BlazeServe writes to `big.iso.part`, then checks the size and renames it when the download is complete.
 
+In a terminal, `get` and `put` draw a small live block with the file name, a progress bar with sizes, and the speed, time remaining and time elapsed. Nothing is drawn when the output is piped.
+
 ### Resuming
 
 If the download is interrupted by a dropped connection, a closed laptop or a crash, run the same command again. BlazeServe asks the server for the rest of the file and appends it. It also confirms that the file on the server has not changed in the meantime. If it has, the download starts again from the beginning so you never end up with a mix of two versions.

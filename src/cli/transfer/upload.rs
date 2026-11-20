@@ -8,7 +8,7 @@ use super::http::{
 use super::retry::{jitter, plan_wait, retry_note};
 use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
-use crate::cli::util::{Progress, existing_file, human_size};
+use crate::cli::util::{Progress, existing_file, human_size, transfer_title};
 use base64::Engine as _;
 use clap::Args;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -278,7 +278,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
     let mut fails = 0u32;
     let mut need_sync = true;
     let mut sent_any = false;
-    let mut progress = Progress::new(Some(total), 0);
+    let mut progress = Progress::titled(&transfer_title("↑", &args.file), Some(total), 0);
 
     loop {
         if need_sync {

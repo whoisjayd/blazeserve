@@ -109,28 +109,59 @@ pub fn backoff(fails: u32) -> Duration {
         .min(Duration::from_secs(8))
 }
 
+/// `↓ name` or `↑ name` for the dashboard title; a `.part` suffix is not shown.
+pub fn transfer_title(arrow: &str, path: &std::path::Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!("{arrow} {}", name.strip_suffix(".part").unwrap_or(&name))
+}
+
 /// Transfer progress on stderr. It draws only on a terminal and stays silent when piped,
 /// so logs never fill with redraws.
 pub struct Progress {
     bar: ProgressBar,
 }
 
+const BAR_LINE: &str = "{bar:40.green/dim} {percent:>3}%  {binary_bytes:>9} / {binary_total_bytes}";
+const STATS_LINE: &str = "{binary_bytes_per_sec:>11}  ·  ETA {eta}  ·  {elapsed_precise} elapsed";
+
+fn progress_template(titled: bool, known_total: bool) -> String {
+    let head = if titled { "  {prefix:.bold}\n" } else { "" };
+    if !known_total {
+        return format!(
+            "{head}  {{spinner}} {{binary_bytes}}  {{binary_bytes_per_sec}}  ·  {{elapsed_precise}} elapsed"
+        );
+    }
+    if titled {
+        format!("{head}  {BAR_LINE}\n  {STATS_LINE}")
+    } else {
+        format!("  {BAR_LINE}  {{binary_bytes_per_sec:>11}}  ETA {{eta}}")
+    }
+}
+
 impl Progress {
     pub fn new(total: Option<u64>, base: u64) -> Self {
+        Self::build(None, total, base)
+    }
+
+    /// A small dashboard: a title, the bar with sizes, then speed, ETA and elapsed time.
+    pub fn titled(title: &str, total: Option<u64>, base: u64) -> Self {
+        Self::build(Some(title), total, base)
+    }
+
+    fn build(title: Option<&str>, total: Option<u64>, base: u64) -> Self {
         let target = ProgressDrawTarget::stderr_with_hz(20);
-        let bar = match total.filter(|t| *t > 0) {
-            Some(total) => ProgressBar::with_draw_target(Some(total), target).with_style(
-                ProgressStyle::with_template(
-                    "  {bar:28.green/dim} {percent:>3}%  {binary_bytes:>9} / {binary_total_bytes}  {binary_bytes_per_sec:>11}  ETA {eta}",
-                )
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("━╸─"),
-            ),
-            None => ProgressBar::with_draw_target(None, target).with_style(
-                ProgressStyle::with_template("  {spinner} {binary_bytes}  {binary_bytes_per_sec}")
-                    .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-            ),
-        };
+        let total = total.filter(|t| *t > 0);
+        let template = progress_template(title.is_some(), total.is_some());
+        let style = ProgressStyle::with_template(&template)
+            .unwrap_or_else(|_| ProgressStyle::default_bar())
+            .progress_chars("━╸─");
+        let bar = ProgressBar::with_draw_target(total, target).with_style(style);
+        if let Some(title) = title {
+            bar.set_prefix(title.to_owned());
+        }
         bar.set_position(base);
         Self { bar }
     }
@@ -164,6 +195,28 @@ mod tests {
         assert_eq!(human_size(1024), "1.00 KiB");
         assert_eq!(human_size(1536), "1.50 KiB");
         assert_eq!(human_size(1024 * 1024 * 1024), "1.00 GiB");
+    }
+
+    #[test]
+    fn every_progress_template_parses() {
+        for titled in [false, true] {
+            for known in [false, true] {
+                assert!(
+                    ProgressStyle::with_template(&progress_template(titled, known)).is_ok(),
+                    "titled={titled} known={known}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn title_drops_the_part_suffix() {
+        let p = std::path::Path::new("dir/big.iso.part");
+        assert_eq!(transfer_title("↓", p), "↓ big.iso");
+        assert_eq!(
+            transfer_title("↑", std::path::Path::new("a.txt")),
+            "↑ a.txt"
+        );
     }
 
     #[test]
