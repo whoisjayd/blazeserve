@@ -22,6 +22,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) const MAX_RESTARTS: u32 = 3;
+/// Each connection is a thread and a socket, and many servers refuse more than a handful.
+const MAX_CONNECTIONS: u16 = 128;
+/// Above this, say that the server may object.
+const POLITE_CONNECTIONS: u16 = 16;
+
+fn parse_connections(text: &str) -> Result<u16, String> {
+    if text.eq_ignore_ascii_case("max") {
+        return Ok(MAX_CONNECTIONS);
+    }
+    match text.parse::<u16>() {
+        Ok(n) if (1..=MAX_CONNECTIONS).contains(&n) => Ok(n),
+        _ => Err(format!(
+            "`{text}` is not a number from 1 to {MAX_CONNECTIONS}, or `max`"
+        )),
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct GetArgs {
@@ -51,9 +67,9 @@ pub struct GetArgs {
     /// Replace an existing destination file
     #[arg(long)]
     pub force: bool,
-    /// Parallel connections for large files (1 downloads in a single stream)
-    #[arg(short = 'c', long, value_name = "N", default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=16))]
-    pub connections: u8,
+    /// Parallel connections for large files: 1 to 128 or `max` (1 downloads in a single stream)
+    #[arg(short = 'c', long, value_name = "N", default_value_t = 4, value_parser = parse_connections)]
+    pub connections: u16,
     /// Cap total download speed in bytes per second, e.g. 500K, 2M or 1.5M (minimum 1K)
     #[arg(long, value_name = "RATE", value_parser = parse_rate)]
     pub limit_rate: Option<u64>,
@@ -403,6 +419,15 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         d.reset();
     }
 
+    if args.connections > POLITE_CONNECTIONS {
+        announce(
+            "Note",
+            &format!(
+                "{} connections; some servers limit or block parallel downloads",
+                args.connections
+            ),
+        );
+    }
     if args.connections > 1 && segmented::run(&d, usize::from(args.connections), args.retries)? {
         return finish_download(&d, &dest, args.sha256.as_deref());
     }

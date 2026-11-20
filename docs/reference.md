@@ -68,7 +68,7 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `--sha256 HEX` | none | Verify the finished file |
 | `--retries N` | `5` | Failed attempts in a row before giving up |
 | `--force` | off | Replace an existing file |
-| `-c`, `--connections N` | `4` | Parallel connections, 1 to 16 |
+| `-c`, `--connections N` | `4` | Parallel connections, 1 to 128, or `max` for 128 |
 | `--limit-rate RATE` | none | Total speed cap in bytes per second, with optional `K`, `M` or `G` |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
 

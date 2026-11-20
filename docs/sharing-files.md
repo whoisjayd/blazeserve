@@ -43,11 +43,14 @@ Use `--no-resume` to always start from the beginning, and `--force` to replace a
 
 ### Making it faster
 
-Large files are downloaded over several connections at once. The default is 4, and you can ask for up to 16:
+Large files are downloaded over several connections at once. The default is 4, and you can ask for anything from 1 to 128, or `max`:
 
 ```bash
 blaze get http://host:8000/big.iso -c 8
+blaze get http://host:8000/big.iso -c max
 ```
+
+More connections only help when one stream cannot fill your link, which is typical on a very fast line to a distant server. Each connection costs a thread and a socket, and some servers throttle or block clients that open many, so BlazeServe prints a note above 16. The live display shows how many connections are in use.
 
 This applies to files of at least 8 MiB, from servers that support byte ranges and give the file a stable identity. If the server cannot do that, BlazeServe quietly falls back to a single stream. If a multi-connection download is interrupted, the next run skips the parts that already finished. Use `-c 1` to force a single stream.
 

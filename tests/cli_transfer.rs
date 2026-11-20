@@ -460,8 +460,8 @@ async fn get_falls_back_when_the_origin_advertises_ranges_but_ignores_them() {
 }
 
 #[test]
-fn get_rejects_connection_counts_outside_1_to_16() {
-    for n in ["0", "17"] {
+fn get_rejects_connection_counts_outside_1_to_128() {
+    for n in ["0", "129", "-1", "lots"] {
         let out = blaze()
             .args(["get", "http://127.0.0.1:1/x", "--connections", n])
             .output()
@@ -813,5 +813,32 @@ async fn get_without_a_suggested_name_uses_the_url_name() {
         std::fs::read(out_dir.path().join("plain.txt")).unwrap(),
         b"plain"
     );
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_accepts_more_than_sixteen_connections_and_max() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(24 * MIB + 5);
+    std::fs::write(served.path().join("big.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    for (n, shown) in [("32", "32 connections"), ("max", "128 connections")] {
+        let out_dir = tempfile::tempdir().unwrap();
+        let dest = out_dir.path().join("big.bin");
+        let out = blaze_async(vec![
+            "get".into(),
+            url.clone(),
+            "-c".into(),
+            n.into(),
+            "-o".into(),
+            s(&dest),
+        ])
+        .await;
+        assert_eq!(code(&out), 0, "{n}: {}", stderr(&out));
+        assert!(stderr(&out).contains(shown), "{n}: {}", stderr(&out));
+        assert_eq!(std::fs::read(&dest).unwrap(), data, "{n}");
+    }
     server.shutdown().await;
 }

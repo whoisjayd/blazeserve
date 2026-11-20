@@ -465,7 +465,11 @@ fn attempt(
         changed: AtomicBool::new(false),
         error: Mutex::new(None),
         done: Mutex::new((done, Instant::now())),
-        progress: Progress::titled(&transfer_title("↓", &d.part), Some(probe.total), base),
+        progress: Progress::titled(
+            &format!("{}  ·  {workers} connections", transfer_title("↓", &d.part)),
+            Some(probe.total),
+            base,
+        ),
         retries,
         cooldown: Mutex::new(None),
         pending,
