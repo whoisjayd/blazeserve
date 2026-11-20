@@ -36,7 +36,7 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `--single FILE` | none | Serve exactly this file |
 | `--no-listing` | listing on | Turn off the folder listing |
 | `--index NAME` | `index.html`, `index.htm` | Extra index file names; repeatable |
-| `--hide GLOB` | none | Hide matching entries from listings and ZIPs, and answer `404` for them; repeatable |
+| `--hide GLOB` | none | Hide matching entries from listings and ZIPs, and answer `404` for them, including under `/__upload__/`; repeatable |
 | `--precompress`, `--no-precompress` | on | Send `.br` and `.gz` copies when safe; never for range requests |
 | `--no-cache` | off | Tell browsers not to cache |
 | `--cors`, `--no-cors`, `--cors-origin` | off, `*` | Allow other websites, and which |

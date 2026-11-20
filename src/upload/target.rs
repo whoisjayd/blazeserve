@@ -7,13 +7,12 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_perc
 use sha2::{Digest, Sha256};
 
 use super::response::reject;
-use crate::security::{self, ResolveError};
+use crate::security::{
+    self, PART_MARK, RESUME_PREFIX, RESUME_SUFFIX, ResolveError, is_reserved_name,
+};
 use crate::{AppState, Body};
 
 const PREFIX: &str = "/__upload__/";
-const PART_MARK: &str = ".blaze-part-";
-const RESUME_SUFFIX: &str = ".blaze-resume";
-const RESUME_PREFIX: &str = ".blaze-resume-";
 const MAX_STAGED_NAME: usize = 180;
 const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
@@ -78,13 +77,6 @@ pub(super) enum Staging {
     Resume,
 }
 
-pub fn is_reserved_name(name: &str) -> bool {
-    name.contains(PART_MARK)
-        || name.ends_with(RESUME_SUFFIX)
-        || name.starts_with(PART_MARK)
-        || name.starts_with(RESUME_PREFIX)
-}
-
 #[allow(clippy::result_large_err)]
 pub(super) fn parse_target(state: &AppState, req_path: &str) -> Result<Target, Response<Body>> {
     let raw = req_path
@@ -118,6 +110,10 @@ pub(super) fn parse_target(state: &AppState, req_path: &str) -> Result<Target, R
         .unwrap_or_default();
     if is_reserved_name(&name) {
         return Err(reject(StatusCode::BAD_REQUEST, "Reserved file name"));
+    }
+    // Same answer as a missing file, so a hidden entry cannot be probed or created.
+    if state.config.hide.hides_path(&base, &path) {
+        return Err(reject(StatusCode::NOT_FOUND, "Not found"));
     }
     Ok(Target { base, path, rel })
 }

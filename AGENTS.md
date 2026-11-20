@@ -30,7 +30,7 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | `src/server/` | `bind` and `tls` set up the listener, `accept` applies admission control, `connection` and `idle` serve one connection, `prefixed` sniffs the HTTP/2 preface, `budget` limits how fast one HTTP/2 connection opens streams, `proxy` works out the trusted client identity, and `mod.rs` owns start and shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP behaviour: ranges, validators, status routes, CORS, authentication, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
 | `src/upload/`, `src/zip_stream/` | Uploads (`request`, `target`, `stream`, `publish`, `plain`, `resumable`) and streaming ZIPs (`writer`, `crc32`, `archive`) |
-| `src/security.rs` | Canonical path containment, race-resistant file creation, request IDs |
+| `src/security.rs` | Canonical path containment, race-resistant file creation, reserved staging names, request IDs |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/ui.rs` | Throttling, counters, logs, the directory listing page |
 | `src/telemetry/`, `src/usage/` | OpenTelemetry export (`settings`, `transport`, `exporter`) and the anonymous usage report (`payload`, `gate`, `settings`, `session`) |
 | `src/python.rs`, `python/blazeserve/`, `tests_py/` | PyO3 bindings (feature `python`), the thin Python package with its type stubs, and the pytest suite run against the built wheel |
@@ -74,6 +74,7 @@ Authentication, TLS and filesystem safety:
 - The TLS certificate and key belong together. Reject an incomplete pair before binding, require TLS 1.2 or newer, and close the listener if TLS setup fails.
 - Every read, upload and ZIP candidate must stay under the canonical root, checked component by component. `..`, sibling prefixes, symlinked parents, junctions and cross-drive Windows paths fail closed. Percent-decode a path exactly once.
 - Uploads never overwrite. They are created exclusively (mode `0600` on Unix), staged beside the destination, verified, and published without replacing anything. Replacement needs a matching `If-Match`. Staging files are removed on any failure, and an early rejection closes the connection so an unread body is never parsed as the next request.
+- A hidden entry is indistinguishable from a missing one on every route, including `/__upload__/`. Upload staging names (`security::is_reserved_name`) are never served, listed or zipped.
 - Escape displayed file names and percent-encode path components in listings. Never put raw names into HTML, URLs or scripts.
 - Keep `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` and `Permissions-Policy`. Send HSTS only on a TLS connection.
 - Accept `X-Request-ID` only when it is 1 to 64 characters and alphanumeric once hyphens are removed. Otherwise generate 12 hex characters. Always echo the result.

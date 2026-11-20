@@ -48,7 +48,9 @@ You can use any HTTP client. The paths and verbs are listed in the [reference](r
 curl -u alice:s3cret -T ./notes.txt http://host:8000/__upload__/notes.txt
 ```
 
-Uploads are not affected by `--hide`.
+Names matched by `--hide` are off limits to uploads too. `/__upload__/` answers `404` for them, exactly as for a file that does not exist, so a hidden file cannot be probed or created.
+
+While a file is arriving it is staged under a reserved name beside its destination, such as `.notes.txt.blaze-part-<id>` or `.big.iso.blaze-resume`. Those names are never served, listed or added to a ZIP, and you cannot upload to them.
 
 ## Containers and Kubernetes
 

@@ -69,7 +69,9 @@ fn collect_files(base: &Path, root: &Path, hide: &Hide) -> Vec<PathBuf> {
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries.into_iter().rev() {
             let path = entry.path();
-            if hide.hides_path(base, &path) {
+            if security::is_reserved_name(&entry.file_name().to_string_lossy())
+                || hide.hides_path(base, &path)
+            {
                 continue;
             }
             let Ok(ft) = entry.file_type() else { continue };

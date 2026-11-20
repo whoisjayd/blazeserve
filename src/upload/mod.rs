@@ -34,8 +34,8 @@ use hyper::{Method, Request, Response, StatusCode};
 
 use crate::{AppState, Body, PeerInfo};
 
+pub use crate::security::is_reserved_name;
 pub use publish::etag_for_metadata;
-pub use target::is_reserved_name;
 
 use plain::plain;
 use publish::precheck;

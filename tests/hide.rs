@@ -115,6 +115,49 @@ async fn zip_excludes_hidden_entries() {
     fx.stop().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hidden_entries_look_missing_through_the_upload_route() {
+    let fx = start_with(|root, config| {
+        tree(root, config);
+        config.max_upload_bytes = 1000;
+    })
+    .await;
+    let empty = [("Content-Length", "0")];
+    for path in [
+        "/__upload__/prod.env",
+        "/__upload__/new.env",
+        "/__upload__/secrets/k.txt",
+    ] {
+        assert_eq!(fx.head(path, &[]).status, 404, "head {path}");
+        assert_eq!(
+            request(fx.addr, "PUT", path, &empty).status,
+            404,
+            "put {path}"
+        );
+    }
+    assert_eq!(std::fs::read(fx.path("prod.env")).unwrap(), b"TOKEN=1");
+    assert!(!fx.path("new.env").exists());
+    fx.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upload_staging_files_are_neither_served_nor_zipped() {
+    let fx = start_with(|root, _| {
+        std::fs::write(root.join("kept.txt"), b"ok").unwrap();
+        std::fs::write(root.join(".big.iso.blaze-resume"), b"partial").unwrap();
+        std::fs::write(root.join(".f.txt.blaze-part-abc"), b"partial").unwrap();
+    })
+    .await;
+    for path in ["/.big.iso.blaze-resume", "/.f.txt.blaze-part-abc"] {
+        assert_eq!(fx.get(path).status, 404, "{path}");
+        assert_eq!(fx.head(path, &[]).status, 404, "head {path}");
+    }
+    let names = zip_names(&fx.get("/__zip__?path=.").body);
+    assert!(names.iter().any(|n| n == "kept.txt"), "{names:?}");
+    assert!(!names.iter().any(|n| n.contains("blaze-")), "{names:?}");
+    fx.stop().await;
+}
+
 #[test]
 fn invalid_pattern_is_a_config_error() {
     assert!(Hide::new(&["[oops"]).is_err());

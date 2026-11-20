@@ -10,6 +10,18 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub const PART_MARK: &str = ".blaze-part-";
+pub const RESUME_SUFFIX: &str = ".blaze-resume";
+pub const RESUME_PREFIX: &str = ".blaze-resume-";
+
+/// Names of in-progress upload staging files. They are never served, listed or zipped.
+pub fn is_reserved_name(name: &str) -> bool {
+    name.contains(PART_MARK)
+        || name.ends_with(RESUME_SUFFIX)
+        || name.starts_with(PART_MARK)
+        || name.starts_with(RESUME_PREFIX)
+}
+
 /// Marker error carried inside an [`io::Error`] when a path would escape the root.
 #[derive(Debug)]
 pub struct UnsafePath(pub &'static str);

@@ -27,7 +27,7 @@ If a file has a compressed copy next to it (`app.js.gz` or `app.js.br`), BlazeSe
 blaze serve ./site --hide '*.env' --hide .git --hide 'secrets/**'
 ```
 
-Hidden entries disappear from listings and ZIP downloads, and asking for one directly gives a `404`. A pattern without a slash matches that name anywhere in the tree, such as `.git` or `*.env`. A pattern with a slash starts at the folder you are serving. Matching ignores upper and lower case on Windows and macOS, and respects it on Linux.
+Hidden entries disappear from listings and ZIP downloads, and asking for one directly gives a `404`. Uploads cannot reach them either. A pattern without a slash matches that name anywhere in the tree, such as `.git` or `*.env`. A pattern with a slash starts at the folder you are serving. Matching ignores upper and lower case on Windows and macOS, and respects it on Linux.
 
 ## Require a password
 

@@ -139,7 +139,7 @@ pub(super) fn resolve(
     components: &[String],
     encodings: Option<Encodings>,
 ) -> Resolved {
-    if cfg.hide.matches(components) {
+    if cfg.hide.matches(components) || components.iter().any(|c| security::is_reserved_name(c)) {
         return Resolved::NotFound;
     }
     let mut path = match &cfg.single {
