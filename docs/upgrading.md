@@ -1,4 +1,22 @@
-# Upgrading from 0.x
+# Upgrading
+
+Run `blaze upgrade` to move to a newer version; see [Getting started](getting-started.md#keep-it-up-to-date).
+
+## From 1.0 to 1.1
+
+Nothing needs changing for most setups. These behaviours are different:
+
+- **Uploads need hard links.** A new file is published with a hard link so a reader never sees a partial file. On a filesystem that cannot make them, such as some network shares and FAT drives, an upload is now refused with `501` instead of being copied in place.
+- **`--hide` covers uploads.** A hidden name answers `404` under `/__upload__/` as well, and in-progress upload files (`.name.blaze-part-...`) are never served, listed or zipped.
+- **`blaze get` names the file.** Without `-o`, it uses the name the server suggests in `Content-Disposition`, so a ZIP of a folder is saved as `folder.zip` instead of `__zip__`.
+- **More exit codes.** `get` and `put` exit with `3` for a full disk, `4` for a failed integrity check and `5` for refused credentials, where they used to exit with `1`. A script that tested for exactly `1` should test for non-zero. See [exit codes](reference.md#exit-codes).
+- **Building from source** needs Rust 1.93 or newer and a C compiler, because archive extraction builds a bundled copy of zstd. The program and the wheels need nothing extra.
+- **Python.** `blazeserve.Server` accepts every option of `blaze serve`, every command is a function, and `Ctrl+C` stops a running command. See [Python and Rust](python-and-rust.md).
+- **Container image.** It now sets its install channel to `docker`, so the anonymous usage report says so.
+
+New in 1.1: `blaze upgrade`, `--background` with `blaze status` and `blaze stop`, `blaze get --extract` and `--verify server-sha256`, `--connect-timeout`, `--idle-timeout` and `--max-time`, `blaze put --if-match` and `--limit-rate`, `blaze send --expires-after`, `blaze doctor --host`, and up to 128 download connections.
+
+## From 0.x to 1.0
 
 BlazeServe 1.0 is a rewrite in Rust. The command-line options and the web addresses are the same as before, apart from the changes below.
 
@@ -22,9 +40,9 @@ BlazeServe 1.0 is a rewrite in Rust. The command-line options and the web addres
 
 **Telemetry.** There is now a small anonymous usage report, on by default, that you can turn off. See [Telemetry](telemetry.md).
 
-## A short checklist
+### Checklist for 0.x
 
-1. Install the new version. From 1.0 on, `blaze upgrade` does this for you; see [Getting started](getting-started.md#keep-it-up-to-date).
+1. Install the new version.
 2. If you used the Python API, change your code to `blazeserve.Server`.
 3. If you accepted uploads, add `--max-upload-mb` with a real limit and a password.
 4. Update your alert rules and dashboards if you copied them.

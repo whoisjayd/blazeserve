@@ -15,7 +15,7 @@ These guides explain how to use BlazeServe, from sharing a single file to runnin
 | [Performance](performance.md) | Measure speed on your own machine |
 | [Telemetry](telemetry.md) | See exactly what anonymous usage data is sent, and how to turn it off |
 | [Troubleshooting](troubleshooting.md) | Fix the most common problems |
-| [Upgrading from 0.x](upgrading.md) | Move from the old Python version |
+| [Upgrading](upgrading.md) | What changed between versions, and how to move from the old Python version |
 | [Reference](reference.md) | Look up every option, endpoint, setting and exit code |
 
 To change BlazeServe itself, [How BlazeServe works](design.md) follows a request through the code.

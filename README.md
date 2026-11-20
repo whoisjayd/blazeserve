@@ -99,7 +99,7 @@ If the variable is missing or empty, BlazeServe refuses to start. It never quiet
 | [Getting started](https://github.com/whoisjayd/blazeserve/blob/main/docs/getting-started.md) | [Deployment](https://github.com/whoisjayd/blazeserve/blob/main/deploy/README.md) | [Reference](https://github.com/whoisjayd/blazeserve/blob/main/docs/reference.md) |
 | [Sharing and downloading](https://github.com/whoisjayd/blazeserve/blob/main/docs/sharing-files.md) | [Monitoring](https://github.com/whoisjayd/blazeserve/blob/main/docs/monitoring.md) | [Troubleshooting](https://github.com/whoisjayd/blazeserve/blob/main/docs/troubleshooting.md) |
 | [Serving files](https://github.com/whoisjayd/blazeserve/blob/main/docs/serving-files.md) | [Security](https://github.com/whoisjayd/blazeserve/blob/main/docs/security.md) | [Python and Rust](https://github.com/whoisjayd/blazeserve/blob/main/docs/python-and-rust.md) |
-| [Uploads](https://github.com/whoisjayd/blazeserve/blob/main/docs/uploads.md) | [Performance](https://github.com/whoisjayd/blazeserve/blob/main/docs/performance.md) | [Telemetry](https://github.com/whoisjayd/blazeserve/blob/main/docs/telemetry.md) and [upgrading from 0.x](https://github.com/whoisjayd/blazeserve/blob/main/docs/upgrading.md) |
+| [Uploads](https://github.com/whoisjayd/blazeserve/blob/main/docs/uploads.md) | [Performance](https://github.com/whoisjayd/blazeserve/blob/main/docs/performance.md) | [Telemetry](https://github.com/whoisjayd/blazeserve/blob/main/docs/telemetry.md) and [upgrading](https://github.com/whoisjayd/blazeserve/blob/main/docs/upgrading.md) |
 
 ## Security
 
