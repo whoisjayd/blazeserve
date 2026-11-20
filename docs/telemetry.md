@@ -32,6 +32,8 @@ A report is sent when `blaze serve` or `blaze send` starts, and another when it 
 
 ## What is never sent
 
+`blaze upgrade` sends no usage report. It only contacts the release server when you run it.
+
 File names and paths, host names, IP addresses, ports, URLs, passwords, the values of environment variables, and anything from a request. BlazeServe does not create or send an install ID, so reports cannot be linked together.
 
 ## Where it goes

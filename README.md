@@ -81,6 +81,7 @@ Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and
 | Accept uploads, with a password | `blaze serve ./incoming --max-upload-mb 500 --auth-env BLAZE_AUTH` |
 | Get a file's SHA-256 | `blaze checksum ./big.iso` |
 | Check that setup is healthy | `blaze doctor ./site` |
+| Update to the newest release | `blaze upgrade` |
 
 Keep passwords out of your shell history by putting them in an environment variable:
 

@@ -11,6 +11,7 @@ mod live;
 mod serve;
 mod telemetry;
 mod transfer;
+mod upgrade;
 mod util;
 
 use ansi::Style;
@@ -20,6 +21,7 @@ use clap_complete::Shell;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+pub use upgrade::api as upgrade_api;
 pub use util::{human_size, sha256_file};
 
 const STYLES: Styles = Styles::styled()
@@ -139,6 +141,16 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
     Stop(jobs::StopArgs),
     /// Manage anonymous usage statistics
     Telemetry(telemetry::TelemetryArgs),
+    /// Upgrade BlazeServe the way it was installed
+    #[command(after_help = "Examples:
+  blaze upgrade --check
+  blaze upgrade --check --json
+  blaze upgrade --yes
+  blaze upgrade --version 1.0.0 --yes   Install an exact version, also to go back
+
+A downloaded binary replaces itself after checking its SHA-256 against the release SHA256SUMS.
+pip and cargo installs run pip or cargo. Containers and package managers get instructions only.")]
+    Upgrade(upgrade::UpgradeArgs),
     /// Print a shell completion script
     #[command(after_help = "Examples:
   blaze completions bash > ~/.local/share/bash-completion/completions/blaze
@@ -256,6 +268,7 @@ fn dispatch(command: Command) -> Result<u8, String> {
         Command::Status(a) => jobs::status(a),
         Command::Stop(a) => jobs::stop(a),
         Command::Telemetry(a) => telemetry::run(a),
+        Command::Upgrade(a) => upgrade::run(a),
         Command::Completions(a) => completions(a),
     }
 }
@@ -309,6 +322,7 @@ fn run(cli: Cli) -> u8 {
     cli.color.apply();
     exit::reset();
     jobs::clear_stop();
+    upgrade::remove_stale_backup();
     match dispatch(cli.command) {
         Ok(code) => code,
         Err(message) => {

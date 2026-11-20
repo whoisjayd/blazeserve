@@ -16,6 +16,7 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze doctor [PATH]` | Check the folder, the port and system capabilities |
 | `blaze benchmark` | Time a download. See [Performance](performance.md) |
 | `blaze telemetry` | `status`, `enable`, `disable`, `reset` or `preview` |
+| `blaze upgrade` | Check for a newer release and install it the way BlazeServe was installed |
 | `blaze completions SHELL` | Print a shell completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 | `blaze version` | Version and platform. Add `--json` for scripts |
 
@@ -109,6 +110,27 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 
 Without `--if-match`, an existing file is never replaced. With it, every request carries the tag. A stale tag or a missing file exits with an error (HTTP `412`) and leaves the file alone. The client never fetches a newer tag and tries again.
 
+## `blaze upgrade` options
+
+| Option | Meaning |
+| :--- | :--- |
+| `--check` | Show the installed and the latest version and change nothing. Exits 0 whether or not a newer release exists |
+| `--json` | With `--check`, print JSON: `current`, `latest`, `update_available`, `channel`, `status` |
+| `--version X.Y.Z` | Install this exact version instead of the latest. Needed to go back to an older version or to pick a pre-release |
+| `-y`, `--yes` | Do not ask first. Without a terminal, an upgrade refuses to run unless you pass this |
+
+Pre-releases are never chosen by default, and an older release is never installed unless you name it with `--version`. The command contacts the network only when you run it, and sends no usage report. What it does depends on how BlazeServe was installed:
+
+| Install | What `blaze upgrade` does |
+| :--- | :--- |
+| Downloaded binary | Downloads the archive for this system, checks its SHA-256 against the release `SHA256SUMS`, and replaces itself. The old program is restored if anything fails |
+| pip | Runs `python -m pip install --upgrade blazeserve` with the Python that started `blaze` |
+| Cargo | Runs `cargo install blazeserve --locked --force` |
+| Container | Prints the `docker pull` command and changes nothing |
+| Homebrew, Scoop, winget, Nix, pipx, uv or a system package | Prints the command for that tool and changes nothing |
+
+Both `pip` and `cargo` ask first. The install is read from `BLAZE_INSTALL_CHANNEL`, then from the Python that launched `blaze`, then from where the program lives. The command exits 0 when it only prints instructions.
+
 ## Other options
 
 | Command | Options |
@@ -175,3 +197,6 @@ A range request with an `If-Range` that no longer matches gets the whole file. S
 | `NO_COLOR`, `CLICOLOR_FORCE` | Colour control |
 | `BLAZE_STATE_DIR` | Where background job records live: `<folder>/jobs`. Defaults to the per-user state folder. See [Background jobs](background-jobs.md) |
 | `BLAZE_TELEMETRY_URL` | Where usage reports are sent. Set when building a release; a build without it sends nothing |
+| `BLAZE_UPGRADE_API`, `BLAZE_UPGRADE_DOWNLOADS` | Where `blaze upgrade` looks for releases. They exist for mirrors and tests. `https://` is required, except for a loopback address |
+| `BLAZE_INSTALL_CHANNEL` | `pip`, `cargo`, `docker` or `binary`. Tells `blaze upgrade` how this copy was installed, and is set by the container image |
+| `BLAZE_PYTHON` | The Python that started `blaze`. The Python package sets it, so `blaze upgrade` runs that Python's pip |

@@ -62,6 +62,17 @@ blaze doctor ./site
 
 `doctor` checks that the folder exists, that the port is free, and that your system supports what BlazeServe needs. It is the first thing to run if something seems wrong.
 
+## Keep it up to date
+
+```bash
+blaze upgrade --check
+blaze upgrade
+```
+
+`--check` only compares versions. `blaze upgrade` then updates BlazeServe the way you installed it: a downloaded program replaces itself, pip and Cargo installs run their own tool, and a container or a package manager such as Homebrew gets the command to run instead. It asks before it changes anything. In a script, add `--yes`. `blaze upgrade --version 1.0.0` installs an exact version, also an older one. See the [reference](reference.md#blaze-upgrade-options) for the details.
+
+The download is checked against the `SHA256SUMS` file of the same release. That guards against a damaged or truncated download, but a checksum fetched from the same place cannot prove who built the file. To check that too, download the release archive and run `gh attestation verify <file> --repo whoisjayd/blazeserve` before you trust it.
+
 ## Where to go next
 
 - To protect a server with a password or HTTPS, read [Serving files](serving-files.md).

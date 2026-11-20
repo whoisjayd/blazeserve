@@ -24,7 +24,7 @@ BlazeServe 1.0 is a rewrite in Rust. The command-line options and the web addres
 
 ## A short checklist
 
-1. Install the new version.
+1. Install the new version. From 1.0 on, `blaze upgrade` does this for you; see [Getting started](getting-started.md#keep-it-up-to-date).
 2. If you used the Python API, change your code to `blazeserve.Server`.
 3. If you accepted uploads, add `--max-upload-mb` with a real limit and a password.
 4. Update your alert rules and dashboards if you copied them.

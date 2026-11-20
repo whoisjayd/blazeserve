@@ -52,6 +52,8 @@ Be aware of these limits.
 
 ## Supply chain
 
+`blaze upgrade` downloads over HTTPS only (plain HTTP is accepted solely for a loopback mirror), limits the size of every download, and installs a downloaded binary only if its SHA-256 matches the release `SHA256SUMS`. That file is fetched from the same place as the archive, so it proves the download is intact, not who built it. Use the attestation check below for that. It reads the proxy settings from `HTTPS_PROXY` and `NO_PROXY`.
+
 Release files carry build provenance. To check a download:
 
 ```bash
