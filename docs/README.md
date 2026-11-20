@@ -17,4 +17,6 @@ These guides explain how to use BlazeServe, from sharing a single file to runnin
 | [Upgrading from 0.x](upgrading.md) | Move from the old Python version |
 | [Reference](reference.md) | Look up every option, endpoint, setting and exit code |
 
+To change BlazeServe itself, [How BlazeServe works](design.md) follows a request through the code.
+
 Deployment files for Docker, Kubernetes, systemd and reverse proxies are described in [deploy/README.md](../deploy/README.md). If you want to change BlazeServe itself, read [CONTRIBUTING.md](../CONTRIBUTING.md).
