@@ -113,6 +113,21 @@ On Windows PowerShell, set it with `$env:BLAZE_AUTH = "alice:s3cret"`.
 
 `--retries` sets how many failed attempts in a row are allowed before giving up. The default is 5, with a pause that grows between attempts.
 
+### Time limits
+
+`get` and `put` accept three separate limits. Each takes a number with `s`, `m`, `h` or `d` (for example `45s`, `30m`, `1h30m`) or `off`. A bare number such as `30` is rejected because it does not say whether it means seconds or minutes.
+
+```bash
+blaze get http://host:8000/big.iso --connect-timeout 20s --idle-timeout 45s --max-time 30m
+blaze put ./big.iso http://host:8000/ --idle-timeout 60s --max-time 2h
+```
+
+- `--connect-timeout` (default `15s`) bounds setting up the connection.
+- `--idle-timeout` (default `off`) stops a transfer when the other side stops moving data. A slow transfer that keeps making progress is never stopped by it, and neither is a wait you asked for with `--limit-rate`, or the pause between retries.
+- `--max-time` (default `off`) is one budget for the whole command, counted from when it starts. It covers the upload checksum, every retry and pause, the transfer and the final check. It is not restarted by a retry, a chunk or a parallel connection. A pause that would not fit in what is left ends the command at once instead of waiting.
+
+When a limit runs out the command stops with a non-zero exit code and says which limit it was. A partial download or upload is kept, so running the same command again continues where it stopped, and a file that was not fully received and verified is never put in place. `--max-time` does not cover unpacking with `--extract`.
+
 If a server answers `429` or `503` with a `Retry-After` header, `get` and `put` wait at least that long before the next attempt, whether the header gives seconds or an HTTP date. A date that has already passed, or a value that is not valid, is ignored and the usual pause applies. The wait is never shorter than the usual pause, and a small random extra is added so parallel downloads do not return together. All connections of one download pause together. Other statuses ignore the header.
 
 A server may ask for at most 5 minutes. If it asks for more, the transfer stops with an error saying so rather than retrying early. These pauses are not counted against a time limit, because `get` and `put` have none. `--retries 0` still never retries.

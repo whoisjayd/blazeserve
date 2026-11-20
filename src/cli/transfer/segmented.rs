@@ -5,8 +5,10 @@ use super::download::{
     Download, MAX_RESTARTS, Meta, parse_content_range, rename_with_retry, sibling,
 };
 use super::http::{
-    describe_error, header, http_failure, retry_hint, transient_error, transient_status,
+    describe_error, describe_io, header, http_failure, retry_hint, transient_error,
+    transient_status,
 };
+use super::limits;
 use super::retry::{jitter, plan_wait, retry_note};
 use crate::cli::ansi::announce;
 use crate::cli::util::{Progress, backoff, human_size, transfer_title};
@@ -85,7 +87,7 @@ fn probe(d: &Download<'_>) -> Option<Probe> {
     if let Some(a) = &d.auth {
         req = req.header("Authorization", a);
     }
-    let resp = req.call().ok()?;
+    let resp = limits::bound(req).call().ok()?;
     if resp.status().as_u16() != 200 {
         return None;
     }
@@ -237,7 +239,7 @@ impl Shared<'_> {
 
     fn sleep(&self, wait: Duration) {
         let end = Instant::now() + wait;
-        while !self.stopped() && Instant::now() < end {
+        while !self.stopped() && Instant::now() < end && limits::check().is_ok() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -253,7 +255,7 @@ impl Shared<'_> {
         if let Some(a) = &self.d.auth {
             req = req.header("Authorization", a);
         }
-        let resp = match req.call() {
+        let resp = match limits::bound(req).call() {
             Ok(r) => r,
             Err(e) if transient_error(&e) => {
                 return Err(SegError::Transient {
@@ -293,7 +295,10 @@ impl Shared<'_> {
             match reader.read(&mut buf[..self.d.read_len()]) {
                 Ok(0) => break,
                 Ok(n) => {
-                    self.d.pace(n);
+                    if let Err(why) = self.d.pace(n) {
+                        self.progress.dec(counted);
+                        return Err(SegError::Fatal(why));
+                    }
                     if let Err(e) = write_at(&self.file, &buf[..n], pos) {
                         self.progress.dec(counted);
                         return Err(SegError::Fatal(format!("write failed: {e}")));
@@ -304,8 +309,11 @@ impl Shared<'_> {
                 }
                 Err(e) => {
                     self.progress.dec(counted);
+                    if let Err(why) = limits::check() {
+                        return Err(SegError::Fatal(why));
+                    }
                     return Err(SegError::Transient {
-                        msg: e.to_string(),
+                        msg: describe_io(&e),
                         progressed: counted > 0,
                         retry_after: None,
                     });
@@ -336,6 +344,9 @@ impl Shared<'_> {
             self.await_cooldown();
             if self.stopped() {
                 return;
+            }
+            if let Err(why) = limits::check() {
+                return self.fail(why);
             }
             match self.fetch(index) {
                 Ok(()) => return self.complete(index),
@@ -368,6 +379,9 @@ impl Shared<'_> {
                         Ok(w) => w,
                         Err(why) => return self.fail(format!("download failed: {msg}; {why}")),
                     };
+                    if let Err(why) = limits::fits(wait) {
+                        return self.fail(why);
+                    }
                     if let Some(h) = retry_after {
                         announce(
                             "Retrying",
@@ -556,6 +570,7 @@ pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, 
     let mut restarts = 0u32;
     let mut conns = conns;
     loop {
+        limits::check()?;
         let Some(probe) = probe(d) else {
             return Ok(false);
         };

@@ -10,10 +10,19 @@ pub fn human_size(n: u64) -> String {
 }
 
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    sha256_file_within(path, || Ok(()))
+}
+
+/// Hashes a file, asking `proceed` before each block so a caller can stop it early.
+pub fn sha256_file_within(
+    path: &Path,
+    mut proceed: impl FnMut() -> std::io::Result<()>,
+) -> std::io::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1024 * 1024];
     loop {
+        proceed()?;
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;

@@ -5,6 +5,7 @@ use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
     transient_error, transient_status,
 };
+use super::limits::{self, TimeoutArgs};
 use super::retry::{jitter, plan_wait, retry_note};
 use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
@@ -57,6 +58,8 @@ pub struct PutArgs {
     /// not an exact cap on TLS and TCP overhead.
     #[arg(long, value_name = "RATE", value_parser = parse_rate)]
     pub limit_rate: Option<u64>,
+    #[command(flatten)]
+    pub timeouts: TimeoutArgs,
 }
 
 /// A single strong entity tag. Weak tags and `*` cannot guard a replacement.
@@ -102,6 +105,7 @@ fn whole_file_digest(path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; READ_BUF];
     loop {
+        limits::check()?;
         let n = file.read(&mut buf).map_err(fail)?;
         if n == 0 {
             break;
@@ -148,7 +152,7 @@ impl Upload<'_> {
     /// `staged_is_ours` says this run already sent a chunk, so a staged partial can only be
     /// its own. A replacement never adopts a staged partial it cannot identify.
     fn remote_offset(&self, staged_is_ours: bool) -> Result<Probed, String> {
-        let resp = match self.authorize(self.agent.head(self.url)).call() {
+        let resp = match limits::bound(self.authorize(self.agent.head(self.url))).call() {
             Ok(r) => r,
             Err(e) if transient_error(&e) => return Ok(Err((describe_error(&e), None))),
             Err(e) => return Err(describe_error(&e)),
@@ -215,10 +219,10 @@ impl Upload<'_> {
                     inner: chunk,
                     throttle,
                 };
-                self.authorize(req.header("Content-Length", chunk.len().to_string()))
+                limits::bound(self.authorize(req.header("Content-Length", chunk.len().to_string())))
                     .send(SendBody::from_reader(&mut body))
             }
-            None => self.authorize(req).send(chunk),
+            None => limits::bound(self.authorize(req)).send(chunk),
         };
         let resp = match sent {
             Ok(r) => r,
@@ -257,6 +261,7 @@ impl Upload<'_> {
 pub fn put(args: PutArgs) -> Result<u8, String> {
     let url = upload_target(&args.url, &args.file)?;
     let auth = basic_header(args.auth.as_deref(), args.auth_env.as_deref())?;
+    limits::install(&args.timeouts);
     let total = std::fs::metadata(&args.file)
         .map_err(|e| e.to_string())?
         .len();
@@ -281,6 +286,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
     let mut progress = Progress::titled(&transfer_title("↑", &args.file), Some(total), 0);
 
     loop {
+        limits::check()?;
         if need_sync {
             match up.remote_offset(sent_any)? {
                 Ok(n) => offset = n.min(total),
@@ -337,6 +343,7 @@ fn pause(fails: u32, retries: u32, msg: &str, retry_after: Option<Duration>) -> 
     }
     let wait = plan_wait(fails, retry_after, jitter())
         .map_err(|why| format!("upload failed: {msg}; {why}"))?;
+    limits::fits(wait)?;
     announce(
         "Retrying",
         &format!("{}: {msg}", retry_note(wait, retry_after, fails, retries)),

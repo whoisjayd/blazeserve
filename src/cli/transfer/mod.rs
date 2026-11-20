@@ -6,6 +6,7 @@ mod download;
 mod extract;
 mod filename;
 mod http;
+mod limits;
 mod retry;
 mod segmented;
 mod throttle;

@@ -1,15 +1,22 @@
 //! Shared HTTP client setup, auth header, error wording and retry classification.
 
+use super::limits;
 use crate::cli::serve::resolve_auth;
 use base64::Engine as _;
 use std::time::Duration;
+
+const HEADER_WAIT: Duration = Duration::from_secs(60);
 
 pub(super) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(None)
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_recv_response(Some(Duration::from_secs(60)))
+        .timeout_connect(limits::connect())
+        .timeout_per_read(limits::idle())
+        .timeout_per_write(limits::idle())
+        .timeout_recv_response(Some(
+            limits::idle().map_or(HEADER_WAIT, |i| i.max(HEADER_WAIT)),
+        ))
         .build()
         .into()
 }
@@ -36,7 +43,10 @@ pub(super) fn http_url(url: &str) -> Result<(), String> {
 }
 
 pub(super) fn transient_error(e: &ureq::Error) -> bool {
-    !matches!(e, ureq::Error::BadUri(_) | ureq::Error::Http(_))
+    !matches!(
+        e,
+        ureq::Error::BadUri(_) | ureq::Error::Http(_) | ureq::Error::Timeout(ureq::Timeout::Global)
+    )
 }
 
 /// Network failures phrased for a person, keeping the OS detail only when nothing better is known.
@@ -68,9 +78,9 @@ pub(super) fn describe_error(e: &ureq::Error) -> String {
         ureq::Error::HostNotFound => {
             "cannot resolve the host name; check the URL and your network".to_owned()
         }
-        ureq::Error::Timeout(_) => {
+        ureq::Error::Timeout(t) => limits::explain(*t).unwrap_or_else(|| {
             "the connection timed out; check the network or try again".to_owned()
-        }
+        }),
         ureq::Error::ConnectionFailed => {
             "could not connect; check the host, the port and your network".to_owned()
         }
@@ -84,6 +94,14 @@ pub(super) fn describe_error(e: &ureq::Error) -> String {
             "the connection timed out; check the network or try again".to_owned()
         }
         _ => explain_network_error(&e.to_string()),
+    }
+}
+
+/// A failed body read, worded like the request errors when ureq reported it.
+pub(super) fn describe_io(e: &std::io::Error) -> String {
+    match e.get_ref().and_then(|i| i.downcast_ref::<ureq::Error>()) {
+        Some(inner) => describe_error(inner),
+        None => e.to_string(),
     }
 }
 

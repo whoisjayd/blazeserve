@@ -4,14 +4,15 @@ use super::READ_BUF;
 use super::discover::{self, ServerDigest};
 use super::filename::suggested_name;
 use super::http::{
-    agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
+    agent, basic_header, describe_error, describe_io, header, http_failure, http_url, retry_hint,
     transient_error, transient_status,
 };
+use super::limits::{self, TimeoutArgs};
 use super::retry::{jitter, plan_wait, retry_note};
 use super::segmented::{self, SegMeta};
 use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
-use crate::cli::util::{Progress, human_size, sha256_file, transfer_title};
+use crate::cli::util::{Progress, human_size, sha256_file_within, transfer_title};
 use clap::Args;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,8 @@ pub struct GetArgs {
     /// With --extract, free space to leave untouched, e.g. 500M or 2G [default: 1G]
     #[arg(long, value_name = "SIZE", requires = "extract", value_parser = parse_free_space)]
     pub keep_free: Option<u64>,
+    #[command(flatten)]
+    pub timeouts: TimeoutArgs,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -159,7 +162,7 @@ fn server_file_name(agent: &ureq::Agent, url: &str, auth: Option<&str>) -> Optio
     if let Some(a) = auth {
         req = req.header("Authorization", a);
     }
-    let resp = req.call().ok()?;
+    let resp = limits::bound(req).call().ok()?;
     if !resp.status().is_success() {
         return None;
     }
@@ -231,10 +234,11 @@ impl Download<'_> {
             .map_or(READ_BUF, |t| t.chunk(READ_BUF))
     }
 
-    pub(super) fn pace(&self, bytes: usize) {
+    pub(super) fn pace(&self, bytes: usize) -> Result<(), String> {
         if let Some(t) = &self.throttle {
-            t.throttle(bytes);
+            t.throttle(bytes).map_err(|e| e.to_string())?;
         }
+        limits::check()
     }
 
     pub(super) fn reset(&self) {
@@ -285,7 +289,7 @@ impl Download<'_> {
             }
         }
 
-        let resp = match req.call() {
+        let resp = match limits::bound(req).call() {
             Ok(r) => r,
             Err(e) if transient_error(&e) => {
                 return Ok(Step::Transient {
@@ -365,7 +369,10 @@ impl Download<'_> {
             match reader.read(&mut buf[..self.read_len()]) {
                 Ok(0) => break,
                 Ok(n) => {
-                    self.pace(n);
+                    if let Err(why) = self.pace(n) {
+                        progress.finish(have);
+                        return Err(why);
+                    }
                     file.write_all(&buf[..n])
                         .map_err(|e| format!("write failed: {e}"))?;
                     have += n as u64;
@@ -374,8 +381,9 @@ impl Download<'_> {
                 }
                 Err(e) => {
                     progress.finish(have);
+                    limits::check()?;
                     return Ok(Step::Transient {
-                        msg: e.to_string(),
+                        msg: describe_io(&e),
                         progressed: got > 0,
                         retry_after: None,
                     });
@@ -451,7 +459,13 @@ fn finish_download(
         ));
     }
     if let Some(expected) = sha256 {
-        let actual = sha256_file(&d.part).map_err(|e| format!("cannot hash download: {e}"))?;
+        let actual = sha256_file_within(&d.part, limits::check_io).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                e.to_string()
+            } else {
+                format!("cannot hash download: {e}")
+            }
+        })?;
         if !actual.eq_ignore_ascii_case(expected) {
             d.reset();
             return Err(format!(
@@ -459,6 +473,7 @@ fn finish_download(
             ));
         }
     }
+    limits::check()?;
     let size = d.part_len();
     rename_with_retry(&d.part, dest)
         .map_err(|e| format!("cannot move download to {}: {e}", dest.display()))?;
@@ -480,6 +495,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         return Err("--sha256 must be 64 hexadecimal characters".to_owned());
     }
     let auth = basic_header(args.auth.as_deref(), args.auth_env.as_deref())?;
+    limits::install(&args.timeouts);
     let agent = agent();
     let dest = match &args.output {
         Some(p) => p.clone(),
@@ -532,6 +548,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
     let mut fails = 0u32;
     let mut restarts = 0u32;
     loop {
+        limits::check()?;
         match d.step()? {
             Step::Complete => return complete(&d, &dest, &args, server_digest.as_ref()),
             Step::Restart => {
@@ -554,6 +571,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
                 }
                 let wait = plan_wait(fails, retry_after, jitter())
                     .map_err(|why| format!("download failed: {msg}; {why}"))?;
+                limits::fits(wait)?;
                 announce(
                     "Retrying",
                     &format!(

@@ -1,5 +1,6 @@
 //! Total download rate cap shared by every connection of one `blaze get`.
 
+use super::limits;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -61,12 +62,14 @@ impl Throttle {
     }
 
     /// Blocks until `bytes` just received fit within the cap. The lock is released
-    /// before sleeping.
-    pub fn throttle(&self, bytes: usize) {
+    /// before sleeping. A wait that would outlast `--max-time` fails at once instead.
+    pub fn throttle(&self, bytes: usize) -> std::io::Result<()> {
         let wait = self.reserve(bytes as u64, Instant::now());
         if !wait.is_zero() {
+            limits::fits(wait).map_err(|m| std::io::Error::new(std::io::ErrorKind::TimedOut, m))?;
             std::thread::sleep(wait);
         }
+        Ok(())
     }
 }
 
@@ -81,7 +84,7 @@ impl<R: std::io::Read> std::io::Read for Paced<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let take = self.throttle.chunk(buf.len());
         let n = self.inner.read(&mut buf[..take])?;
-        self.throttle.throttle(n);
+        self.throttle.throttle(n)?;
         Ok(n)
     }
 }
@@ -149,7 +152,7 @@ mod tests {
                 let t = &t;
                 s.spawn(move || {
                     for _ in 0..4 {
-                        t.throttle(4096);
+                        t.throttle(4096).unwrap();
                     }
                 });
             }

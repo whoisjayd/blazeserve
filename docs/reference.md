@@ -71,6 +71,9 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | `--force` | off | Replace an existing file |
 | `-c`, `--connections N` | `4` | Parallel connections, 1 to 128, or `max` for 128 |
 | `--limit-rate RATE` | none | Total speed cap in bytes per second, with optional `K`, `M` or `G` |
+| `--connect-timeout TIME` | `15s` | Give up if the connection is not made in time. `off` waits as long as the system allows |
+| `--idle-timeout TIME` | `off` | Give up when no data moves for this long |
+| `--max-time TIME` | `off` | Give up when the whole command, retries and waits included, takes longer than this |
 | `--extract` | off | After the download, extract the archive in place (zip, 7z, tar, `.tar.gz`, `.tar.bz2`, `.tar.xz`) |
 | `--keep-archive` | off | With `--extract`, keep the archive instead of consuming it as files come out |
 | `--no-verify-first` | off | With `--extract`, skip the check of the whole archive that runs before it is consumed |
@@ -85,6 +88,9 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | :--- | :--- | :--- |
 | `--chunk-mb N` | `8` | Size of each request |
 | `--retries N` | `5` | Failed attempts in a row before giving up |
+| `--connect-timeout TIME` | `15s` | Give up if the connection is not made in time. `off` waits as long as the system allows |
+| `--idle-timeout TIME` | `off` | Give up when no data moves for this long |
+| `--max-time TIME` | `off` | Give up when the whole command, retries and waits included, takes longer than this |
 | `--if-match ETAG` | none | Replace an existing file only if its current quoted `ETag` equals this value. `*` and weak tags are refused |
 | `--limit-rate RATE` | none | Cap on upload speed in bytes per second, with optional `K`, `M` or `G` (minimum `1K`), as for `get` |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
