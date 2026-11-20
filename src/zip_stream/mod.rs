@@ -17,7 +17,6 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::{BodyExt, Empty, Full, StreamBody};
-use hyper::body::Frame;
 use hyper::header::{self, HeaderValue};
 use hyper::{Response, StatusCode};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
@@ -146,16 +145,22 @@ pub async fn handle_zip(state: &Arc<AppState>, query: Option<&str>, head: bool) 
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         if let Err(e) = write_archive(&base, &target, &hide, tx) {
-            let _ = err_tx.try_send(Err(e));
+            // Waits for room rather than dropping the error, which would let a
+            // truncated archive end like a complete one. It only fails if the client left.
+            let _ = err_tx.blocking_send(Err(e));
         }
     });
 
     let state = state.clone();
-    let stream = futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx)).inspect(move |item| {
-        if let Some(data) = item.as_ref().ok().and_then(Frame::data_ref) {
-            state.metrics.add_bytes_sent(data.len() as u64);
-        }
-    });
+    let stream =
+        futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx)).inspect(move |item| match item {
+            Ok(frame) => {
+                if let Some(data) = frame.data_ref() {
+                    state.metrics.add_bytes_sent(data.len() as u64);
+                }
+            }
+            Err(_) => state.metrics.add_error(),
+        });
     builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
         .unwrap_or_else(|_| failed())
