@@ -23,6 +23,8 @@ We check the report, work on a fix and publish a release. Please keep the detail
 
 ## What is covered
 
-This policy covers the BlazeServe program, its published Python wheels, release archives and container images, and the telemetry relay in `deploy/telemetry-relay`. If the problem is in a library BlazeServe depends on, please report it to that project.
+This policy covers the BlazeServe program, its published Python wheels, release archives and container images, and the telemetry relay in `deploy/telemetry-relay`. Examples we want to hear about: reading or writing outside the served folder, getting past authentication, an upload that overwrites a file or leaves a partial file visible, a request that makes the server use unbounded memory, or a release file that does not match its attestation. If the problem is in a library BlazeServe depends on, please report it to that project.
+
+Some limits are known and documented, such as writers inside the served folder and a trusted proxy that lies. They are listed under "What it does not protect against" in the security guide.
 
 To see what BlazeServe is designed to defend against, and what it is not, read the [security guide](docs/security.md). Release files come with build provenance. You can check one with `gh attestation verify <file> --repo whoisjayd/blazeserve`.
