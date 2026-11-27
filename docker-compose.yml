@@ -35,7 +35,7 @@ services:
 
   lgtm:
     profiles: ["observability"]
-    image: grafana/otel-lgtm:0.41.0
+    image: grafana/otel-lgtm:0.41.1
     container_name: blazeserve-lgtm
     restart: unless-stopped
     ports:
