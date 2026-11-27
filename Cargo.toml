@@ -52,7 +52,7 @@ pyo3 = { version = "0.30", default-features = false, features = ["abi3-py311", "
 indicatif = "0.18"
 anstream = "1"
 anstyle = "1"
-qrcode = { version = "0.14.1", default-features = false }
+qrcode = { version = "0.15.0", default-features = false }
 globset = { version = "0.4.21", default-features = false }
 
 # `blaze upgrade` reads the release archives (.tar.gz on Unix, .zip on Windows). All three are already
