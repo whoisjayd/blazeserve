@@ -51,3 +51,13 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+
+  - package-ecosystem: "pip"
+    directory: "/tests_py"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: "build"
+      include: "scope"

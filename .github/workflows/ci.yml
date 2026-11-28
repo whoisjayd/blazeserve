@@ -195,9 +195,9 @@ jobs:
         shell: bash
         run: |
           pipx run twine check dist/*
-          python -m pip install --force-reinstall --no-index --find-links dist blazeserve
+          python -m pip install --force-reinstall --no-index dist/*.whl
           blaze version
-          python -m pip install pytest
+          python -m pip install --require-hashes -r tests_py/requirements.txt
           python -m pytest -q tests_py
 
   container:

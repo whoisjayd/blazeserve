@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Builds from source, for local use and CI. Published images are made from the release
 # binaries with deploy/docker/release.Dockerfile and need no compiling.
-FROM rust:1-alpine AS builder
+FROM rust:1-alpine@sha256:8d0e82abfdf9a38071e07cabc5afba4ddbe077631a80e4e742a760c38beadc33 AS builder
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 
