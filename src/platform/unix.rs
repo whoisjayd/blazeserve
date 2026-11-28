@@ -98,3 +98,53 @@ pub(crate) fn spawn_detached(build: impl Fn() -> io::Result<Command>) -> io::Res
 
 /// Descriptors are closed on exec unless passed on purpose.
 pub(crate) fn stop_inheriting_std_handles() {}
+
+/// Distribution or macOS release, such as `ubuntu 24.04` or `macos 15.1`.
+pub(crate) fn os_release() -> Option<(String, String)> {
+    if IS_MACOS {
+        let plist =
+            std::fs::read_to_string("/System/Library/CoreServices/SystemVersion.plist").ok()?;
+        let after = plist.split_once("<key>ProductVersion</key>")?.1;
+        let version = after.split_once("<string>")?.1.split_once('<')?.0;
+        return Some(("macos".to_owned(), version.to_owned()));
+    }
+    let text = std::fs::read_to_string("/etc/os-release").ok()?;
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(key))
+            .map(|v| v.trim_matches('"').to_owned())
+    };
+    Some((field("ID=")?, field("VERSION_ID=").unwrap_or_default()))
+}
+
+/// Installed memory, where it can be read without a native call.
+pub(crate) const LIBC: &str = if cfg!(target_env = "musl") {
+    "musl"
+} else if IS_MACOS {
+    "system"
+} else {
+    "glibc"
+};
+
+pub(crate) fn memory_bytes() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = text.lines().find_map(|l| l.strip_prefix("MemTotal:"))?;
+    line.split_whitespace()
+        .next()?
+        .parse::<u64>()
+        .ok()
+        .map(|kib| kib * 1024)
+}
+
+/// The locale the user's programs are told to use.
+pub(crate) fn locale() -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|v| !v.is_empty()))
+}
+
+/// Whether this is Linux running inside Windows.
+pub(crate) fn is_wsl() -> bool {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .is_ok_and(|v| v.to_ascii_lowercase().contains("microsoft"))
+}

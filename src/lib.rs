@@ -13,7 +13,6 @@ pub mod python;
 pub mod range;
 pub mod security;
 pub mod server;
-pub mod telemetry;
 mod testknobs;
 pub mod ui;
 pub mod upload;
@@ -41,7 +40,6 @@ pub struct AppState {
     pub config: config::Config,
     pub metrics: Arc<metrics::Metrics>,
     pub limiters: limiter::IpLimiterPool,
-    pub telemetry: telemetry::Telemetry,
     pub hashes: handler::HashCache,
     pub uploads: upload::UploadState,
     pub zip_slots: Arc<tokio::sync::Semaphore>,
@@ -49,15 +47,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: config::Config) -> Arc<Self> {
-        Self::with_telemetry(config, telemetry::Telemetry::disabled())
-    }
-
-    pub fn with_telemetry(config: config::Config, telemetry: telemetry::Telemetry) -> Arc<Self> {
         Arc::new(Self {
             config,
             metrics: Arc::new(metrics::Metrics::new()),
             limiters: limiter::IpLimiterPool::new(4096),
-            telemetry,
             hashes: handler::HashCache::new(),
             uploads: upload::UploadState::default(),
             zip_slots: zip_stream::new_slots(),

@@ -49,16 +49,11 @@ mime_guess = "2"
 lru = "0.19"
 getrandom = "0.4"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
-
-opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics"], optional = true }
-opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics"], optional = true }
-opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "trace", "metrics"], optional = true }
-opentelemetry-http = { version = "0.33", default-features = false, optional = true }
-async-trait = { version = "0.1", optional = true }
 clap_complete = "4"
 clap_mangen = "0.3"
 pyo3 = { version = "0.30", default-features = false, features = ["abi3-py311", "macros"], optional = true }
 indicatif = "0.18"
+console = "0.16"
 anstream = "1"
 anstyle = "1"
 qrcode = { version = "0.14.1", default-features = false }
@@ -76,11 +71,15 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 hatchzip-core = { version = "0.1.10", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+] }
 
 [features]
-default = ["otel", "extract"]
-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:async-trait"]
+default = ["extract"]
 python = ["dep:pyo3"]
 extract = ["dep:hatchzip-core"]
 

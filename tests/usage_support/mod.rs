@@ -89,7 +89,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
 }
 
 /// Accepts connections forever. When `respond` is false the connection is held open and
-/// never answered, which models a relay that hangs.
+/// never answered, which models a server that hangs.
 pub fn mock(respond: bool) -> Mock {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -109,7 +109,7 @@ pub fn mock(respond: bool) -> Mock {
             thread::spawn(move || {
                 if let Some(req) = read_request(&mut stream) {
                     let _ = stream.write_all(
-                        b"HTTP/1.1 204 No Content\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
+                        b"HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
                     );
                     let _ = tx.send(req);
                 }

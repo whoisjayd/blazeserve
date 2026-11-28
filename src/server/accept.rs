@@ -69,7 +69,6 @@ pub(super) async fn accept_loop(
         };
         let Ok(permit) = admission.clone().try_acquire_owned() else {
             state.metrics.add_connection_rejected();
-            state.telemetry.connection_rejected();
             reject(stream, tls.is_none(), &reject_slots);
             continue;
         };

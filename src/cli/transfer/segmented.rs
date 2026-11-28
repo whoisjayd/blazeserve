@@ -446,6 +446,7 @@ fn attempt(
     let base = segments_len(&done, probe.total);
     let pending: Vec<u64> = (0..count).filter(|i| !done.contains(i)).collect();
     if first && base > 0 {
+        crate::usage::trace::note("resumed", true);
         announce("Resuming", &format!("at {}", human_size(base)));
     }
     let workers = conns.min(pending.len()).max(1);

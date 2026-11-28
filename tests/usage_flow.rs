@@ -1,246 +1,339 @@
+//! The reporter against a stand-in for PostHog: what is sent, when, and what never is.
+
 mod usage_support;
 
 use blazeserve::usage::{
-    Command, Features, Settings, StopStats, begin, load_settings, notice_text, reset_settings,
-    save_settings, settings_path,
+    CommandReport, Features, QUEUE_FILE, Reporter, ServerCounters, Settings, load_settings,
+    notice_text, open, reset_settings, save_settings, settings_path,
 };
 use serde_json::Value;
+use std::path::Path;
 use std::time::Duration;
-use usage_support::{Env, elapsed, mock, wait_for};
+use usage_support::{Env, Mock, elapsed, mock, wait_for};
 
-fn features() -> Features {
-    Features {
-        listing: true,
-        uploads_enabled: true,
-        ..Features::default()
-    }
-}
-
-fn env_for(dir: &std::path::Path, relay: &str) -> Env {
+fn env_for(dir: &Path, host: &str) -> Env {
     Env::new(&[
         ("BLAZE_CONFIG_DIR", dir.to_str().unwrap()),
-        ("BLAZE_TELEMETRY_URL", relay),
+        ("BLAZE_POSTHOG_KEY", "phc_test"),
+        ("BLAZE_POSTHOG_HOST", host),
         ("BLAZE_INSTALL_CHANNEL", "pip"),
     ])
 }
 
-#[test]
-fn start_posts_exactly_one_event_and_prints_the_notice_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let relay = mock(true);
-    let env = env_for(dir.path(), &relay.url());
+fn reporter(env: &Env, diag: &mut Vec<u8>) -> Option<Reporter> {
+    open(&env.lookup(), None, None, diag, true, true)
+}
 
-    let mut diag = Vec::new();
-    let session = begin(&env.lookup(), None, &mut diag, Command::Serve, features());
-    assert!(session.is_some());
-    let notice = String::from_utf8(diag).unwrap();
-    assert_eq!(notice, notice_text());
+fn report(kind: Option<&'static str>) -> CommandReport<'static> {
+    CommandReport {
+        command: "get",
+        flags: vec!["connections".to_owned(), "url".to_owned()],
+        background: false,
+        exit_code: u8::from(kind.is_some()),
+        error_kind: kind,
+        log_id: None,
+    }
+}
 
-    let req = wait_for(&relay.requests, 5).expect("start event was not delivered");
+fn batch(relay: &Mock) -> Vec<Value> {
+    let request = wait_for(&relay.requests, 5).expect("nothing was delivered");
     assert!(
-        req.head.starts_with("POST /v1/event HTTP/1.1"),
+        request.head.starts_with("POST /batch/ HTTP/1.1"),
         "{}",
-        req.head
+        request.head
     );
-    let body: Value = serde_json::from_str(&req.body).unwrap();
-    assert_eq!(body["event"], "start");
-    assert_eq!(body["command"], "serve");
-    assert_eq!(body["install_channel"], "pip");
-    assert_eq!(body["features"]["uploads_enabled"], true);
-    assert!(!req.body.contains("install_id"));
-    assert!(
-        relay
-            .requests
-            .recv_timeout(Duration::from_millis(300))
-            .is_err(),
-        "only one event"
-    );
+    let body: Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["api_key"], "phc_test");
+    body["batch"].as_array().unwrap().clone()
+}
 
-    let mut second = Vec::new();
-    let again = begin(&env.lookup(), None, &mut second, Command::Serve, features());
-    assert!(again.is_some());
-    assert!(second.is_empty(), "the notice must be shown only once");
-    assert!(wait_for(&relay.requests, 5).is_some());
+fn quiet(relay: &Mock) {
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(relay.connection_count(), 0);
 }
 
 #[test]
-fn finish_posts_a_bucketed_stop_event() {
+fn a_command_is_sent_with_a_stable_install_id_and_the_notice_shows_once() {
     let dir = tempfile::tempdir().unwrap();
-    let relay = mock(true);
-    let env = env_for(dir.path(), &relay.url());
-    let mut diag = Vec::new();
-    let session = begin(&env.lookup(), None, &mut diag, Command::Send, features()).unwrap();
-    let _start = wait_for(&relay.requests, 5).unwrap();
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
 
-    session.finish(
-        StopStats {
-            requests_total: 42,
-            bytes_sent: 3 * 1024 * 1024,
-            errors_total: 0,
-        },
-        &mut diag,
-    );
-    let stop = wait_for(&relay.requests, 5).expect("stop event was not delivered");
-    let body: Value = serde_json::from_str(&stop.body).unwrap();
-    assert_eq!(body["event"], "stop");
-    assert_eq!(body["command"], "send");
-    assert_eq!(body["requests_bucket"], "10-99");
-    assert_eq!(body["bytes_sent_bucket"], "1-10MiB");
-    assert_eq!(body["had_errors"], false);
-    assert_eq!(body["install_channel"], "pip");
-    assert!(!stop.body.contains("42,") && !stop.body.contains("3145728"));
+    let mut diag = Vec::new();
+    let first = reporter(&env, &mut diag).expect("on by default");
+    assert_eq!(String::from_utf8(diag.clone()).unwrap(), notice_text());
+    first.command_finished(report(None), true, &mut diag);
+    let events = batch(&host);
+    assert_eq!(events.len(), 1);
+    let sent = &events[0]["properties"];
+    assert_eq!(events[0]["event"], "command finished");
+    assert_eq!(sent["command"], "get");
+    assert_eq!(sent["flags"], serde_json::json!(["connections", "url"]));
+    assert_eq!(sent["outcome"], "ok");
+    assert_eq!(sent["install_channel"], "pip");
+    assert_eq!(sent["$process_person_profile"], false);
+
+    let mut again = Vec::new();
+    let second = reporter(&env, &mut again).expect("enabled");
+    assert!(again.is_empty(), "the notice must be shown only once");
+    second.command_finished(report(None), true, &mut again);
+    let later = batch(&host);
+    assert_eq!(later[0]["properties"]["distinct_id"], sent["distinct_id"]);
+    assert_ne!(later[0]["properties"]["$session_id"], sent["$session_id"]);
 }
 
 #[test]
-fn disabled_runs_never_touch_the_network_or_print() {
+fn a_failure_also_reports_an_error_by_kind_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
+    let mut diag = Vec::new();
+    reporter(&env, &mut diag)
+        .unwrap()
+        .command_finished(report(Some("network")), true, &mut diag);
+    let events = batch(&host);
+    assert_eq!(events[1]["event"], "$exception");
+    assert_eq!(
+        events[1]["properties"]["$exception_list"][0]["type"],
+        "network"
+    );
+    assert_eq!(events[0]["properties"]["outcome"], "failed");
+}
+
+#[test]
+fn quick_commands_wait_in_a_queue_until_something_is_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
+    let mut diag = Vec::new();
+    let queue = dir.path().join(QUEUE_FILE);
+    reporter(&env, &mut diag)
+        .unwrap()
+        .command_finished(report(None), false, &mut diag);
+    assert!(queue.exists());
+    quiet(&host);
+
+    reporter(&env, &mut diag)
+        .unwrap()
+        .command_finished(report(None), true, &mut diag);
+    assert_eq!(batch(&host).len(), 2);
+    assert!(!queue.exists());
+}
+
+#[test]
+fn server_events_carry_features_and_every_counter() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
+    let mut diag = Vec::new();
+    let reporter = reporter(&env, &mut diag).unwrap();
+    let features = Features {
+        listing: true,
+        uploads_enabled: true,
+        ..Features::default()
+    };
+    reporter.server_started("serve", features, &mut diag);
+    let start = batch(&host);
+    assert_eq!(start[0]["event"], "server started");
+    assert_eq!(start[0]["properties"]["features"]["uploads_enabled"], true);
+
+    let counters = ServerCounters {
+        uptime_seconds: 7,
+        requests_total: 42,
+        requests_active: 0,
+        bytes_sent: 3 * 1024 * 1024,
+        bytes_received: 512,
+        errors_total: 1,
+        connections_rejected: 2,
+    };
+    reporter.server_heartbeat("serve", features, counters, &mut diag);
+    assert_eq!(batch(&host)[0]["event"], "server heartbeat");
+    reporter.server_stopped("serve", features, counters, &mut diag);
+    let stop = batch(&host);
+    let sent = &stop[0]["properties"];
+    for (key, want) in [
+        ("requests_total", 42),
+        ("bytes_sent", 3_145_728),
+        ("bytes_received", 512),
+        ("errors_total", 1),
+        ("connections_rejected", 2),
+        ("uptime_seconds", 7),
+    ] {
+        assert_eq!(sent[key], want, "{key}");
+    }
+}
+
+#[test]
+fn disabled_runs_never_touch_the_network_print_or_save() {
     for (k, v) in [
         ("DO_NOT_TRACK", "1"),
         ("BLAZE_TELEMETRY", "0"),
         ("CI", "true"),
     ] {
         let dir = tempfile::tempdir().unwrap();
-        let relay = mock(true);
-        let env = env_for(dir.path(), &relay.url()).with(k, v);
+        let host = mock(true);
+        let env = env_for(dir.path(), &host.url()).with(k, v);
         let mut diag = Vec::new();
-        assert!(begin(&env.lookup(), None, &mut diag, Command::Serve, features()).is_none());
+        assert!(reporter(&env, &mut diag).is_none());
         assert!(diag.is_empty(), "{k} must not print the notice");
-        std::thread::sleep(Duration::from_millis(250));
-        assert_eq!(relay.connection_count(), 0, "{k} must not connect");
-        assert!(
-            !dir.path().join("telemetry.json").exists(),
-            "{k} must not write settings"
-        );
+        quiet(&host);
+        assert!(!dir.path().join("telemetry.json").exists(), "{k}");
     }
 }
 
 #[test]
-fn a_build_without_a_relay_is_inert_and_silent() {
+fn nothing_is_sent_before_the_notice_can_be_seen() {
     let dir = tempfile::tempdir().unwrap();
-    let env = Env::new(&[("BLAZE_CONFIG_DIR", dir.path().to_str().unwrap())]);
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
     let mut diag = Vec::new();
-    assert!(begin(&env.lookup(), None, &mut diag, Command::Serve, features()).is_none());
+    assert!(open(&env.lookup(), None, None, &mut diag, false, false).is_none());
     assert!(diag.is_empty());
     assert!(!dir.path().join("telemetry.json").exists());
+    quiet(&host);
+}
+
+#[test]
+fn someone_shown_the_old_notice_sees_the_new_one_and_a_no_stays_no() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
+    let path = settings_path(&env.lookup()).unwrap();
+    std::fs::write(&path, r#"{"enabled":true,"notice_shown":true}"#).unwrap();
+    let mut diag = Vec::new();
+    assert!(reporter(&env, &mut diag).is_some());
+    assert_eq!(String::from_utf8(diag).unwrap(), notice_text());
+
+    std::fs::write(&path, r#"{"enabled":false,"notice_shown":true}"#).unwrap();
+    let mut diag = Vec::new();
+    assert!(reporter(&env, &mut diag).is_none());
+    assert!(diag.is_empty());
 }
 
 #[test]
 fn the_persisted_choice_survives_and_reset_restores_the_notice() {
     let dir = tempfile::tempdir().unwrap();
-    let relay = mock(true);
-    let env = env_for(dir.path(), &relay.url());
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url());
     let path = settings_path(&env.lookup()).unwrap();
-
-    save_settings(
-        &path,
-        Settings {
-            enabled: false,
-            notice_shown: true,
-        },
-    )
-    .unwrap();
+    let off = Settings {
+        enabled: false,
+        ..Settings::default()
+    };
+    save_settings(&path, &off).unwrap();
     let mut diag = Vec::new();
-    assert!(begin(&env.lookup(), None, &mut diag, Command::Serve, features()).is_none());
-    assert!(diag.is_empty());
-    std::thread::sleep(Duration::from_millis(250));
-    assert_eq!(relay.connection_count(), 0);
+    assert!(reporter(&env, &mut diag).is_none());
+    quiet(&host);
 
     reset_settings(&path).unwrap();
     assert_eq!(load_settings(&path), Ok(None));
-    let mut diag = Vec::new();
-    assert!(begin(&env.lookup(), None, &mut diag, Command::Serve, features()).is_some());
-    assert!(!diag.is_empty(), "the notice returns after a reset");
+    assert!(reporter(&env, &mut diag).is_some());
+    assert!(!diag.is_empty(), "the question returns after a reset");
 }
 
 #[test]
 fn unreadable_or_unwritable_state_means_no_send() {
     let dir = tempfile::tempdir().unwrap();
-    let relay = mock(true);
-    let env = env_for(dir.path(), &relay.url());
+    let host = mock(true);
     std::fs::write(dir.path().join("telemetry.json"), "{not json").unwrap();
     let mut diag = Vec::new();
-    assert!(begin(&env.lookup(), None, &mut diag, Command::Serve, features()).is_none());
-    assert!(diag.is_empty());
+    assert!(reporter(&env_for(dir.path(), &host.url()), &mut diag).is_none());
 
     let blocker = dir.path().join("blocker");
     std::fs::write(&blocker, "a file, not a directory").unwrap();
     let nested = blocker.join("sub");
-    let env = env_for(&nested, &relay.url());
-    let mut diag = Vec::new();
-    assert!(begin(&env.lookup(), None, &mut diag, Command::Serve, features()).is_none());
+    assert!(reporter(&env_for(&nested, &host.url()), &mut diag).is_none());
     assert!(
         diag.is_empty(),
         "the notice must not print when it cannot be recorded"
     );
-    std::thread::sleep(Duration::from_millis(250));
-    assert_eq!(relay.connection_count(), 0);
+    quiet(&host);
 }
 
 #[test]
-fn debug_mode_prints_the_payload_and_sends_nothing() {
+fn debug_mode_prints_the_event_and_sends_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    let relay = mock(true);
-    let env = env_for(dir.path(), &relay.url()).with("BLAZE_TELEMETRY_DEBUG", "1");
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url()).with("BLAZE_TELEMETRY_DEBUG", "1");
     let mut diag = Vec::new();
-    let session = begin(&env.lookup(), None, &mut diag, Command::Serve, features());
-    assert!(session.is_some());
+    reporter(&env, &mut diag)
+        .unwrap()
+        .command_finished(report(None), true, &mut diag);
     let out = String::from_utf8(diag).unwrap();
     let line = out
         .lines()
         .find_map(|l| l.strip_prefix("telemetry (not sent): "))
-        .expect("payload line");
-    let body: Value = serde_json::from_str(line).unwrap();
-    assert_eq!(body["event"], "start");
-    std::thread::sleep(Duration::from_millis(250));
-    assert_eq!(relay.connection_count(), 0);
+        .expect("event line");
+    let event: Value = serde_json::from_str(line).unwrap();
+    assert_eq!(event["event"], "command finished");
+    quiet(&host);
 }
 
 #[test]
-fn a_hanging_relay_never_delays_start_or_shutdown() {
-    let dir = tempfile::tempdir().unwrap();
-    let relay = mock(false);
-    let env = env_for(dir.path(), &relay.url());
-    let mut diag = Vec::new();
-    let (session, start_took) =
-        elapsed(|| begin(&env.lookup(), None, &mut diag, Command::Serve, features()));
-    assert!(
-        start_took < Duration::from_secs(1),
-        "start took {start_took:?}"
-    );
-    let (_, stop_took) = elapsed(|| session.unwrap().finish(StopStats::default(), &mut diag));
-    assert!(
-        stop_took < Duration::from_millis(1500),
-        "shutdown was delayed by {stop_took:?}"
-    );
-}
-
-#[test]
-fn a_dead_relay_is_silent_and_fast() {
-    let dir = tempfile::tempdir().unwrap();
+fn a_hanging_or_dead_host_never_delays_a_command() {
+    let hanging = mock(false);
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", closed.local_addr().unwrap());
+    let dead = format!("http://{}", closed.local_addr().unwrap());
     drop(closed);
-    let env = env_for(dir.path(), &url);
-    let mut diag = Vec::new();
-    let (session, took) =
-        elapsed(|| begin(&env.lookup(), None, &mut diag, Command::Serve, features()));
-    assert!(took < Duration::from_secs(1));
-    let (_, stop_took) = elapsed(|| session.unwrap().finish(StopStats::default(), &mut diag));
-    assert!(stop_took < Duration::from_millis(1500));
-    assert_eq!(String::from_utf8(diag).unwrap(), notice_text());
+    for url in [hanging.url(), dead] {
+        let dir = tempfile::tempdir().unwrap();
+        let env = env_for(dir.path(), &url);
+        let mut diag = Vec::new();
+        let reporter = reporter(&env, &mut diag).unwrap();
+        let (_, start) = elapsed(|| {
+            reporter.server_started("serve", Features::default(), &mut Vec::new());
+        });
+        assert!(start < Duration::from_millis(300), "start took {start:?}");
+        let (_, end) = elapsed(|| reporter.command_finished(report(None), true, &mut Vec::new()));
+        assert!(end < Duration::from_millis(1500), "exit took {end:?}");
+    }
 }
 
 #[test]
 fn the_notice_is_plain_and_complete() {
-    let text = notice_text();
+    let text = anstream::adapter::strip_str(&notice_text()).to_string();
     for needle in [
         "blaze telemetry disable",
         "BLAZE_TELEMETRY=0",
         "DO_NOT_TRACK=1",
-        "anonymous",
+        "blaze telemetry preview",
+        "On by default",
+        "Anonymous",
+        "PostHog in the EU",
+        "random install ID",
+        "location",
+        "Never",
         "https://github.com/whoisjayd/blazeserve#telemetry",
     ] {
-        assert!(text.contains(needle), "notice is missing {needle:?}");
+        assert!(
+            text.contains(needle),
+            "notice is missing {needle:?}:\n{text}"
+        );
     }
-    assert!(text.is_ascii());
+    assert!(
+        text.lines().all(|l| l.chars().count() <= 80),
+        "it must fit a narrow terminal:\n{text}"
+    );
     assert!(!text.contains('!'));
+}
+
+#[test]
+fn feedback_is_delivered_or_says_why_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = mock(true);
+    let env = env_for(dir.path(), &host.url()).with("DO_NOT_TRACK", "1");
+    let extra: serde_json::Map<String, Value> = [("rating".to_owned(), Value::from(5))]
+        .into_iter()
+        .collect();
+    blazeserve::usage::send_feedback(&env.lookup(), None, None, "feedback rating", extra.clone())
+        .expect("a person's own act is sent even with analytics off");
+    let events = batch(&host);
+    assert_eq!(events[0]["event"], "feedback rating");
+    assert_eq!(events[0]["properties"]["rating"], 5);
+    assert!(!dir.path().join("telemetry.json").exists());
+
+    let dead = env_for(dir.path(), "http://127.0.0.1:1");
+    assert!(
+        blazeserve::usage::send_feedback(&dead.lookup(), None, None, "feedback bug", extra)
+            .is_err()
+    );
 }

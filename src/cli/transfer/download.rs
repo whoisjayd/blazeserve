@@ -16,6 +16,7 @@ use crate::cli::ansi::{Style, announce};
 use crate::cli::jobs::{self, tracker};
 use crate::cli::util::{Progress, human_size, sha256_file_within, transfer_title};
 use crate::security::retry_sharing;
+use crate::usage::{self, trace};
 use clap::Args;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -235,6 +236,11 @@ fn server_file_name(agent: &ureq::Agent, url: &str, auth: Option<&str>) -> Optio
     suggested_name(&header(&resp, "content-disposition")?)
 }
 
+fn probed_name(agent: &ureq::Agent, url: &str, auth: Option<&str>) -> Option<String> {
+    let _probing = trace::phase("probe_ms");
+    server_file_name(agent, url, auth)
+}
+
 fn default_destination(url: &str) -> Result<PathBuf, TransferError> {
     let without_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = without_scheme.split(['?', '#']).next().unwrap_or("");
@@ -442,6 +448,7 @@ impl Download<'_> {
         .map_err(|e| cannot_write(&self.meta_path, &e))?;
 
         if resume_from > 0 {
+            trace::note("resumed", true);
             announce("Resuming", &format!("at {}", human_size(resume_from)));
         }
         let mut progress = Progress::titled(&transfer_title("↓", &self.part), total, resume_from);
@@ -510,6 +517,7 @@ fn complete(
     let expected = server.map_or(args.sha256.as_deref(), |s| Some(s.sha256.as_str()));
     let code = finish_download(d, dest, expected, server.map(|s| s.size))?;
     if code == 0 && args.extract {
+        let _extracting = trace::phase("extract_ms");
         extract_archive(dest, args).map_err(|e| {
             e.map_message(|why| {
                 format!(
@@ -556,6 +564,7 @@ fn finish_download(
         )));
     }
     if let Some(expected) = sha256 {
+        let _hashing = trace::phase("verify_ms");
         let actual = sha256_file_within(&d.part, limits::check_io).map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
                 TransferError::Network(e.to_string())
@@ -572,6 +581,7 @@ fn finish_download(
     }
     limits::check()?;
     let size = d.part_len();
+    trace::note("size_bucket", usage::bytes_bucket(size));
     rename_with_retry(&d.part, dest).map_err(|e| {
         TransferError::Io(format!("cannot move download to {}: {e}", dest.display()))
     })?;
@@ -609,7 +619,7 @@ pub fn get(args: GetArgs) -> Result<u8, TransferError> {
     let agent = agent();
     let dest = match &args.output {
         Some(p) => p.clone(),
-        None => match server_file_name(&agent, &args.url, auth.as_deref()) {
+        None => match probed_name(&agent, &args.url, auth.as_deref()) {
             Some(name) => PathBuf::from(name),
             None => default_destination(&args.url)?,
         },
@@ -659,16 +669,25 @@ pub fn get(args: GetArgs) -> Result<u8, TransferError> {
             ),
         );
     }
+    trace::note("connections", args.connections);
+    let transferring = trace::phase("transfer_ms");
     if args.connections > 1 && segmented::run(&d, usize::from(args.connections), args.retries)? {
+        trace::note("segmented", true);
+        drop(transferring);
         return complete(&d, &dest, &args, server_digest.as_ref());
     }
+    trace::note("segmented", false);
 
     let mut fails = 0u32;
     let mut restarts = 0u32;
+    let mut retries = 0u32;
     loop {
         limits::check()?;
         match d.step()? {
-            Step::Complete => return complete(&d, &dest, &args, server_digest.as_ref()),
+            Step::Complete => {
+                drop(transferring);
+                return complete(&d, &dest, &args, server_digest.as_ref());
+            }
             Step::Restart => {
                 restarts += 1;
                 if restarts > MAX_RESTARTS {
@@ -683,6 +702,8 @@ pub fn get(args: GetArgs) -> Result<u8, TransferError> {
                 retry_after,
             } => {
                 fails = if progressed { 1 } else { fails + 1 };
+                retries += 1;
+                trace::note("retries", retries);
                 if fails > args.retries {
                     return Err(TransferError::Network(format!(
                         "download failed after {} retries: {msg}",

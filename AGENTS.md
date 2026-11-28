@@ -16,7 +16,7 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 - `blaze benchmark` without `--url` starts a temporary loopback server and cleans it up. With `--url` it measures an existing server and must not start another.
 - BlazeServe opens its own socket. systemd socket activation is not supported.
 - Changing a TLS certificate needs a restart. There is no reload inside the process.
-- The default Kubernetes deployment is private and has one replica, backed by a pod-local `emptyDir`. Ingress and ServiceMonitor are optional and are not part of the Kustomize base.
+- The default Kubernetes deployment is private and has one replica, backed by a pod-local `emptyDir`. Ingress is optional and is not part of the Kustomize base.
 - Compose and Kubernetes mount served data read-only. Uploads are off by default, and need authentication and storage that is deliberately writable.
 - Performance depends on the operating system, filesystem, storage, network, TLS and proxy. Publish a figure only together with its command, workload, machine and comparison method.
 
@@ -33,23 +33,24 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | `src/security.rs` | Canonical path containment, race-resistant file creation, reserved staging names, request IDs |
 | `src/platform/` | Everything that differs between operating systems. `.github/scripts/platform-guard.sh` fails when other code asks which one it is built for |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/ui.rs` | Throttling, counters, logs, the directory listing page |
-| `src/telemetry/`, `src/usage/` | OpenTelemetry export (`settings`, `transport`, `exporter`) and the anonymous usage report (`payload`, `gate`, `settings`, `session`) |
+| `src/usage/` | Anonymous usage analytics sent to PostHog (`gate`, `payload`, `environment`, `settings`, `session`, `trace`) |
 | `src/python.rs`, `python/blazeserve/`, `tests_py/` | PyO3 bindings (feature `python`), the thin Python package with its type stubs, and the pytest suite run against the built wheel |
 | `pyproject.toml` | maturin metadata for the abi3 wheels and the `blaze` console script |
 | `tests/` | Integration tests against a live server. Unit tests sit in `#[cfg(test)]` modules |
 | `docs/` | The user guides, and `assets/` with the logo, social preview, README demo animation and the VHS tapes that record it. `README.md` is the front page and links to them |
 | `.github/workflows/` | `ci.yml` and `release.yml`, the authoritative gates, and `codeql.yml`, the weekly and per-change security scan |
 | `Dockerfile`, `docker-compose.yml` | The `scratch` image, running as uid and gid 10001 |
-| `deploy/` | Kubernetes, systemd, proxy, monitoring, Linux tuning and the telemetry relay. Start at `deploy/README.md` |
+| `deploy/` | Kubernetes, systemd, proxy and Linux tuning. Start at `deploy/README.md` |
 
 Dependencies point downward and never form cycles:
 
 ```text
 cli -> config, server, logging, usage
-server -> handler, limiter, metrics, config, telemetry
-handler -> security, upload, zip_stream, ui, range, cache, limiter, metrics, config, telemetry
+server -> handler, limiter, metrics, config
+handler -> security, upload, zip_stream, ui, range, cache, limiter, metrics, config
 upload, zip_stream -> security, metrics, config
-config, security, limiter, metrics, logging, ui, range, cache, usage -> platform
+usage -> config, logging, platform
+config, security, limiter, metrics, logging, ui, range, cache -> platform
 platform -> leaf
 ```
 
@@ -89,7 +90,7 @@ Concurrency and lifecycle:
 - The active-request gauge falls exactly once on every exit, including a dropped response body, and never below zero. Uptime uses a monotonic clock.
 - Contain expected disconnects only at network write and cleanup boundaries. Unexpected errors stay visible and increase the error counter.
 - Transfers read in bounded chunks. Never hold a whole file or upload in memory, and release file handles before a transfer ends so Windows can reopen, rename or delete the file.
-- `Ctrl+C` works on every platform and `SIGTERM` on Unix. Shutdown closes the listener at once, gives in-flight work a bounded grace period, and flushes telemetry for at most five seconds.
+- `Ctrl+C` works on every platform and `SIGTERM` on Unix. Shutdown closes the listener at once, gives in-flight work a bounded grace period.
 - Address resolution prefers IPv4 on dual-family hosts, supports IPv6-only hosts, and falls back to IPv4 when lookup fails.
 
 ## How to work
@@ -127,7 +128,7 @@ CI also enforces 80 percent line coverage with `cargo llvm-cov`, runs `cargo den
 - Do not replace a transfer path without measurements on the affected platforms.
 - Keep proxy buffering off for streaming: Nginx request and response buffering off, Caddy `flush_interval -1`.
 - In JSON mode, stdout carries only JSON records and human output goes to stderr. Keep the fields `timestamp` (UTC), `level`, `request_id`, `client_ip`, `peer_ip`, `request`, `status` and `size`.
-- Never log `Authorization`, URLs with credentials, TLS keys, auth environment values, telemetry headers or content.
+- Never log `Authorization`, URLs with credentials, TLS keys, auth environment values or content.
 - Count only bytes actually sent or accepted, and count parsed requests, not connections. Metric names and types are public contracts. Changing one needs a review of monitoring and documentation.
 - Use deliberate HTTP statuses or CLI errors for user and configuration failures. Fail closed for authentication, TLS, paths and uploads. No `unwrap` or `expect` on a path driven by requests.
 - Comment only to explain a reason that is not obvious from the code.
@@ -143,8 +144,8 @@ Write documentation for people, in plain language. Keep it accurate and keep the
 | Startup, shutdown, TLS, bind or health | `deploy/README.md`, `deploy/systemd/`, `Dockerfile`, Compose and the Kubernetes probes |
 | Container identity, port, path or writable state | `Dockerfile`, Compose, `deploy/README.md`, `deploy/k8s/` |
 | Proxy transport or identity | Every affected file in `deploy/reverse-proxy/`, `deploy/README.md` and `docs/serving-files.md` |
-| Metric name, type or meaning | The metric table in `docs/monitoring.md`, the `deploy/monitoring/` config, alerts and dashboard |
-| Usage telemetry field | `docs/telemetry.md`, the telemetry summary in `README.md`, `src/usage/payload.rs`, `tests/usage_payload.rs` and `deploy/telemetry-relay/` |
+| Metric name, type or meaning | The metric table in `docs/monitoring.md` |
+| Usage analytics property or event | `docs/telemetry.md`, the telemetry summary in `README.md`, the notice in `src/usage/settings.rs` (raise `NOTICE_VERSION` when more is collected), `src/usage/payload.rs` and `tests/usage_payload.rs` |
 | Gate commands | `Makefile`, pre-commit, `CONTRIBUTING.md`, this file and the workflows |
 
 ## Commits
@@ -173,7 +174,7 @@ Keep every hard-coded release version in sync: `version` in `Cargo.toml` and `py
 
 Do not bump versions, create or reuse tags, push, publish or start release workflows unless explicitly authorised.
 
-The release workflow needs its manual version or `v*` tag to equal `Cargo.toml` and `pyproject.toml`, needs the commit to be on `main`, and rejects a manual tag that already exists. Gates, binaries, wheels, the crate package and the container come before publication, and the GitHub release is created only after PyPI, crates.io and GHCR all succeed. PyPI files and crates.io versions are immutable, and reruns skip what is already published. `PYPI_API_TOKEN` is a repository or `pypi` environment secret, `CARGO_REGISTRY_TOKEN` is a repository or `crates-io` environment secret, `BLAZE_TELEMETRY_URL` is a repository variable, and GHCR uses `GITHUB_TOKEN`.
+The release workflow needs its manual version or `v*` tag to equal `Cargo.toml` and `pyproject.toml`, needs the commit to be on `main`, and rejects a manual tag that already exists. Gates, binaries, wheels, the crate package and the container come before publication, and the GitHub release is created only after PyPI, crates.io and GHCR all succeed. PyPI files and crates.io versions are immutable, and reruns skip what is already published. `PYPI_API_TOKEN` is a repository or `pypi` environment secret, `CARGO_REGISTRY_TOKEN` is a repository or `crates-io` environment secret, `BLAZE_POSTHOG_KEY` is a repository secret and `BLAZE_POSTHOG_HOST` an optional variable, and GHCR uses `GITHUB_TOKEN`.
 
 ## Secrets and generated files
 

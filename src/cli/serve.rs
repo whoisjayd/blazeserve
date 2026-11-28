@@ -80,9 +80,6 @@ pub struct Common {
     /// Maximum proxy hops walked in a forwarded chain
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u64).range(1..=64))]
     pub max_proxy_hops: u64,
-    /// Export traces and metrics over OTLP/HTTP to this collector (env OTEL_EXPORTER_OTLP_ENDPOINT)
-    #[arg(long, value_name = "URL")]
-    pub otlp_endpoint: Option<String>,
     #[command(flatten)]
     pub bg: super::jobs::BackgroundArgs,
 }
@@ -273,10 +270,6 @@ impl Common {
         cfg.header_timeout_secs = self.header_timeout;
         cfg.trusted_proxies = self.trust_proxy.clone();
         cfg.max_proxy_hops = self.max_proxy_hops as usize;
-        cfg.otlp_endpoint = self
-            .otlp_endpoint
-            .clone()
-            .or_else(|| crate::telemetry::env_endpoint_present().then(String::new));
         Ok(())
     }
 }
@@ -452,12 +445,31 @@ fn print_status(text: &str, json_logs: bool) {
     }
 }
 
-type UsageSlot =
-    std::sync::Arc<std::sync::Mutex<Option<(usage::Session, std::sync::Arc<crate::AppState>)>>>;
+/// Kept from start to stop so the final report can read the server's counters.
+type UsageSlot = std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<crate::AppState>>>>;
+
+const HEARTBEAT: Duration = Duration::from_secs(60 * 60);
+
+/// Reports the server's counters every hour until `stopped` closes.
+fn heartbeat(
+    reporter: usage::Reporter,
+    command: &'static str,
+    features: usage::Features,
+    state: std::sync::Arc<crate::AppState>,
+    stopped: std::sync::mpsc::Receiver<()>,
+) {
+    std::thread::spawn(move || {
+        use std::sync::mpsc::RecvTimeoutError;
+        while stopped.recv_timeout(HEARTBEAT) == Err(RecvTimeoutError::Timeout) {
+            let counters = usage::ServerCounters::of(&state.metrics);
+            reporter.server_heartbeat(command, features, counters, &mut std::io::stderr());
+        }
+    });
+}
 
 fn run_config(
     cfg: Config,
-    command: usage::Command,
+    command: &'static str,
     verbose: bool,
     open: bool,
     qr: bool,
@@ -470,15 +482,17 @@ fn run_config(
         if cfg.tls.is_some() { "https" } else { "http" },
         cfg.port
     );
-    let otlp = std::env::var_os("OTEL_EXPORTER_OTLP_ENDPOINT").is_some_and(|v| !v.is_empty());
-    let features = usage::Features::from_config(&cfg, otlp);
+    let features = usage::Features::from_config(&cfg);
     let slot: UsageSlot = UsageSlot::default();
     let slot_in = slot.clone();
-    // Verbose and JSON runs print a line per request, and OTLP errors go to stderr, so an
-    // in-place status line would fight them.
-    let live_allowed = !verbose && !json_logs && !otlp;
+    // Verbose and JSON runs print a line per request, which an in-place status line would
+    // fight.
+    let live_allowed = !verbose && !json_logs;
     let live: std::sync::Arc<std::sync::Mutex<Option<live::Live>>> = Default::default();
     let live_in = live.clone();
+    // Dropping the sender ends the heartbeat.
+    let (heartbeat_stop, heartbeat_stopped) = std::sync::mpsc::channel::<()>();
+    let mut heartbeat_stopped = Some(heartbeat_stopped);
     let reason = crate::server::run_until(
         cfg,
         expires_after,
@@ -508,10 +522,14 @@ fn run_config(
             if live_allowed && let Ok(mut g) = live_in.lock() {
                 *g = live::Live::start(handle.state().clone());
             }
-            if let Some(session) = usage::begin_from_process(command, features)
-                && let Ok(mut g) = slot_in.lock()
-            {
-                *g = Some((session, handle.state().clone()));
+            if let Some(reporter) = super::report::current() {
+                reporter.server_started(command, features, &mut std::io::stderr());
+                if let Some(stopped) = heartbeat_stopped.take() {
+                    heartbeat(reporter, command, features, handle.state().clone(), stopped);
+                }
+            }
+            if let Ok(mut g) = slot_in.lock() {
+                *g = Some(handle.state().clone());
             }
             if open {
                 open_browser(&url);
@@ -519,20 +537,20 @@ fn run_config(
         },
     )
     .map_err(|e| e.to_string());
+    drop(heartbeat_stop);
     if let Some(line) = live.lock().ok().and_then(|mut g| g.take()) {
         line.finish();
     }
     let reason = reason?;
     let taken = slot.lock().ok().and_then(|mut g| g.take());
-    if let Some((session, state)) = taken {
-        let s = state.metrics.stats();
-        usage::finish_from_process(
-            session,
-            usage::StopStats {
-                requests_total: s.requests_total,
-                bytes_sent: s.bytes_sent,
-                errors_total: s.errors_total,
-            },
+    if let Some(state) = taken
+        && let Some(reporter) = super::report::current()
+    {
+        reporter.server_stopped(
+            command,
+            features,
+            usage::ServerCounters::of(&state.metrics),
+            &mut std::io::stderr(),
         );
     }
     let stopped = match (reason, expires_after) {
@@ -549,7 +567,7 @@ pub fn serve(args: ServeArgs) -> Result<u8, String> {
     let cfg = serve_config(&args)?;
     run_config(
         cfg,
-        usage::Command::Serve,
+        "serve",
         args.verbose,
         args.open_browser,
         args.common.qr,
@@ -561,7 +579,7 @@ pub fn send(args: SendArgs) -> Result<u8, String> {
     let cfg = send_config(&args)?;
     run_config(
         cfg,
-        usage::Command::Send,
+        "send",
         false,
         false,
         args.common.qr,

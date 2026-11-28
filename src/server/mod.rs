@@ -13,7 +13,6 @@ pub use proxy::resolve_client_ip;
 
 use crate::AppState;
 use crate::config::Config;
-use crate::telemetry::{FLUSH_TIMEOUT, Telemetry};
 use std::error::Error;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -45,7 +44,6 @@ impl ServerHandle {
         if let Some(task) = self.task.take() {
             let _ = task.await;
         }
-        self.state.telemetry.shutdown(FLUSH_TIMEOUT).await;
     }
 
     pub async fn wait(&mut self) {
@@ -83,13 +81,6 @@ pub fn probe_bind(host: &str, port: u16) -> Result<SocketAddr, BoxError> {
 /// Binding is complete when this returns, so callers may connect immediately.
 pub async fn start(config: Config) -> Result<ServerHandle, BoxError> {
     config.validate()?;
-    let telemetry = Telemetry::init(&config)?;
-    start_with(config, telemetry).await
-}
-
-/// Like [`start`], with telemetry already built (embedders and tests).
-pub async fn start_with(config: Config, telemetry: Telemetry) -> Result<ServerHandle, BoxError> {
-    config.validate()?;
     // Load TLS before binding so a bad pair never leaves a listener behind.
     let acceptor = config
         .tls
@@ -100,7 +91,7 @@ pub async fn start_with(config: Config, telemetry: Telemetry) -> Result<ServerHa
     let listener = bind::bind_listener(addr, &config)
         .map_err(|e| BoxError::from(format!("cannot bind {addr}: {e}")))?;
     let local = listener.local_addr()?;
-    let state = AppState::with_telemetry(config, telemetry);
+    let state = AppState::new(config);
     let (stop, rx) = watch::channel(false);
     let task = tokio::spawn(accept::accept_loop(listener, state.clone(), acceptor, rx));
     Ok(ServerHandle {

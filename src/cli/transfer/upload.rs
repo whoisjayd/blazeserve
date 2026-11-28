@@ -12,6 +12,7 @@ use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::jobs::{self, tracker};
 use crate::cli::util::{Progress, existing_file, human_size, transfer_title};
+use crate::usage::{self, trace};
 use base64::Engine as _;
 use clap::Args;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -283,12 +284,17 @@ pub fn put(args: PutArgs) -> Result<u8, TransferError> {
         direction: Some(jobs::Direction::Upload),
         listen: None,
     });
+    trace::note("size_bucket", usage::bytes_bucket(total));
+    let repr_digest = {
+        let _hashing = trace::phase("hash_ms");
+        whole_file_digest(&args.file)?
+    };
     let up = Upload {
         agent: agent(),
         url: &url,
         auth,
         total,
-        repr_digest: whole_file_digest(&args.file)?,
+        repr_digest,
         if_match: args.if_match.clone(),
         throttle: args.limit_rate.map(Throttle::new),
     };
@@ -302,6 +308,8 @@ pub fn put(args: PutArgs) -> Result<u8, TransferError> {
     let mut need_sync = true;
     let mut sent_any = false;
     let mut progress = Progress::titled(&transfer_title("↑", &args.file), Some(total), 0);
+    let _transferring = trace::phase("transfer_ms");
+    let mut retries = 0u32;
 
     loop {
         limits::check()?;
@@ -352,6 +360,8 @@ pub fn put(args: PutArgs) -> Result<u8, TransferError> {
                 resync,
                 retry_after,
             } => {
+                retries += 1;
+                trace::note("retries", retries);
                 fails += 1;
                 pause(fails, args.retries, &msg, retry_after)?;
                 need_sync = resync;

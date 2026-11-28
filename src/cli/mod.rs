@@ -4,10 +4,15 @@
 mod ansi;
 pub mod argv;
 mod bench;
+mod crash;
 mod doctor;
 mod exit;
+mod feedback;
 mod jobs;
 mod live;
+mod pick;
+mod report;
+mod runlog;
 mod serve;
 mod telemetry;
 mod transfer;
@@ -16,7 +21,7 @@ mod util;
 
 use ansi::Style;
 use clap::builder::styling::{AnsiColor, Styles};
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -148,8 +153,14 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
   blaze stop 3f9a01bc
   blaze stop 3f9a01bc --yes")]
     Stop(jobs::StopArgs),
-    /// Manage anonymous usage statistics
+    /// Manage anonymous usage analytics
     Telemetry(telemetry::TelemetryArgs),
+    /// Report a problem to the maintainer
+    #[command(after_help = "Examples:
+  blaze bug                        Pick a recent run, then describe the problem
+  blaze bug -m 'resume restarts' --step 'blaze get URL' --step 'press Ctrl+C'
+  blaze bug --log 1a2b3c4d         Attach a particular run (the ID is printed on errors)")]
+    Bug(feedback::BugArgs),
     /// Upgrade BlazeServe the way it was installed
     #[command(after_help = "Examples:
   blaze upgrade --check
@@ -268,6 +279,8 @@ fn version(args: VersionArgs) -> Result<u8, String> {
 struct Failure {
     message: String,
     code: u8,
+    /// A fixed word for the usage report; never the message.
+    kind: &'static str,
 }
 
 impl From<String> for Failure {
@@ -275,6 +288,7 @@ impl From<String> for Failure {
         Self {
             message,
             code: exit::OTHER,
+            kind: "other",
         }
     }
 }
@@ -283,6 +297,7 @@ impl From<transfer::TransferError> for Failure {
     fn from(e: transfer::TransferError) -> Self {
         Self {
             code: e.code(),
+            kind: e.kind(),
             message: e.to_string(),
         }
     }
@@ -320,6 +335,7 @@ fn dispatch(command: Command) -> Result<u8, Failure> {
         Command::Status(a) => Ok(jobs::status(a)?),
         Command::Stop(a) => Ok(jobs::stop(a)?),
         Command::Telemetry(a) => Ok(telemetry::run(a)?),
+        Command::Bug(a) => Ok(feedback::bug(a)?),
         Command::Upgrade(a) => Ok(upgrade::run(a)?),
         Command::Completions(a) => Ok(completions(a)?),
         Command::Man => Ok(man()?),
@@ -350,7 +366,7 @@ pub fn serve_config_from(args: &[String]) -> Result<crate::config::Config, Strin
 /// 4 integrity failure and 5 authentication refused (see `exit`).
 pub fn main() -> ExitCode {
     jobs::mark_standalone();
-    ExitCode::from(run(Cli::parse()))
+    ExitCode::from(parse_and_run(std::env::args_os().collect()))
 }
 
 /// Like [`main`] for an explicit argument list (embedders). Parse errors and help are
@@ -362,26 +378,58 @@ where
 {
     let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
     jobs::set_embedded_args(args.iter().skip(1).cloned().collect());
-    match Cli::try_parse_from(args) {
-        Ok(cli) => run(cli),
+    parse_and_run(args)
+}
+
+fn parse_and_run(args: Vec<std::ffi::OsString>) -> u8 {
+    let parsed = Cli::command()
+        .try_get_matches_from(&args)
+        .and_then(|matches| Ok((Cli::from_arg_matches(&matches)?, matches)));
+    match parsed {
+        Ok((cli, matches)) => run(cli, &matches),
         Err(e) => {
             let _ = e.print();
+            // The first word that names a command, else the program itself.
+            let command = Cli::command();
+            let name = args
+                .iter()
+                .skip(1)
+                .filter_map(|a| a.to_str())
+                .find_map(|a| command.find_subcommand(a))
+                .map_or("blaze", clap::Command::get_name);
+            report::unparsed(name, e.kind());
             u8::try_from(e.exit_code()).unwrap_or(2)
         }
     }
 }
 
-fn run(cli: Cli) -> u8 {
+fn run(cli: Cli, matches: &clap::ArgMatches) -> u8 {
     cli.color.apply();
     jobs::clear_stop();
     upgrade::remove_stale_backup();
-    match dispatch(cli.command) {
-        Ok(code) => code,
+    let reporting = report::begin(matches);
+    let mut message = None;
+    // Lets a test crash a real process at a known place; nothing in release builds.
+    crate::testknobs::panic_point("run");
+    let (code, kind) = match dispatch(cli.command) {
+        Ok(code) => (
+            code,
+            match code {
+                0 => None,
+                exit::INTEGRITY => Some("integrity"),
+                _ => Some("other"),
+            },
+        ),
         Err(failure) => {
             anstream::eprintln!("{} {failure}", Style::stderr().red("error:"));
-            failure.code
+            message = Some(failure.message);
+            (failure.code, Some(failure.kind))
         }
+    };
+    if let Some(reporting) = reporting {
+        reporting.finish(code, kind, message.as_deref());
     }
+    code
 }
 
 #[cfg(test)]

@@ -1,7 +1,9 @@
-//! The ordered decision of whether telemetry may be sent, and relay URL validation.
+//! The ordered decision of whether analytics may be sent, and where to.
 
 use super::Env;
 use super::settings::{Settings, load_settings, settings_path};
+
+pub const DEFAULT_HOST: &str = "https://eu.i.posthog.com";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
@@ -10,8 +12,9 @@ pub enum Reason {
     Ci,
     SettingDisabled,
     SettingsUnreadable,
-    NoRelay,
-    RelayInvalid,
+    NoKey,
+    KeyInvalid,
+    HostInvalid,
 }
 
 impl Reason {
@@ -22,8 +25,9 @@ impl Reason {
             Reason::Ci => "CI is set",
             Reason::SettingDisabled => "disabled with `blaze telemetry disable`",
             Reason::SettingsUnreadable => "the settings file could not be read",
-            Reason::NoRelay => "no relay URL is configured in this build",
-            Reason::RelayInvalid => "the relay URL must be https (http only for loopback)",
+            Reason::NoKey => "this build has no PostHog project key",
+            Reason::KeyInvalid => "the key is not a PostHog project key (phc_...)",
+            Reason::HostInvalid => "the host must be https (http only for loopback)",
         }
     }
 }
@@ -32,6 +36,13 @@ impl Reason {
 pub enum Decision {
     Enabled,
     Disabled(Reason),
+}
+
+/// Where events go: a PostHog host and the project's public, write-only key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Target {
+    pub key: String,
+    pub host: String,
 }
 
 fn set_and_not_zero(v: Option<String>) -> bool {
@@ -56,7 +67,7 @@ fn loopback(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
-fn relay_valid(url: &str) -> bool {
+pub(super) fn host_valid(url: &str) -> bool {
     if let Some(rest) = url.strip_prefix("https://") {
         return !rest.is_empty() && !rest.starts_with('/');
     }
@@ -71,20 +82,25 @@ fn relay_valid(url: &str) -> bool {
     loopback(host)
 }
 
-/// Runtime override first, then the URL baked in at build time.
-pub fn relay_url(env: &Env, build_time: Option<&str>) -> Option<String> {
-    env("BLAZE_TELEMETRY_URL")
+/// A runtime value first, then the one built into the binary.
+fn setting(env: &Env, name: &str, built_in: Option<&str>) -> Option<String> {
+    env(name)
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            build_time
-                .filter(|v| !v.trim().is_empty())
-                .map(str::to_owned)
-        })
+        .or_else(|| built_in.map(str::to_owned))
         .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
+pub fn target(env: &Env, built_key: Option<&str>, built_host: Option<&str>) -> Option<Target> {
+    Some(Target {
+        key: setting(env, "BLAZE_POSTHOG_KEY", built_key)?,
+        host: setting(env, "BLAZE_POSTHOG_HOST", built_host)
+            .unwrap_or_else(|| DEFAULT_HOST.to_owned()),
+    })
 }
 
 /// Gate order is part of the public contract: the first matching rule wins.
-pub fn decide(env: &Env, persisted: Option<Settings>, relay: Option<&str>) -> Decision {
+pub fn decide(env: &Env, persisted: Option<&Settings>, target: Option<&Target>) -> Decision {
     if set_and_not_zero(env("DO_NOT_TRACK")) {
         return Decision::Disabled(Reason::DoNotTrack);
     }
@@ -104,20 +120,26 @@ pub fn decide(env: &Env, persisted: Option<Settings>, relay: Option<&str>) -> De
         Some(s) if !s.enabled => return Decision::Disabled(Reason::SettingDisabled),
         Some(_) => {}
     }
-    match relay {
-        None => Decision::Disabled(Reason::NoRelay),
-        Some(url) if !relay_valid(url) => Decision::Disabled(Reason::RelayInvalid),
+    match target {
+        None => Decision::Disabled(Reason::NoKey),
+        // A personal key is a secret and must never be shipped or sent as a project key.
+        Some(t) if !t.key.starts_with("phc_") => Decision::Disabled(Reason::KeyInvalid),
+        Some(t) if !host_valid(&t.host) => Decision::Disabled(Reason::HostInvalid),
         Some(_) => Decision::Enabled,
     }
 }
 
-pub fn effective(env: &Env, build_time: Option<&str>) -> (Decision, Option<Settings>) {
+pub fn effective(
+    env: &Env,
+    built_key: Option<&str>,
+    built_host: Option<&str>,
+) -> (Decision, Option<Settings>) {
     let persisted = match settings_path(env) {
         Some(p) => load_settings(&p).map(|s| s.unwrap_or_default()).ok(),
         None => None,
     };
-    let relay = relay_url(env, build_time);
-    (decide(env, persisted, relay.as_deref()), persisted)
+    let target = target(env, built_key, built_host);
+    (decide(env, persisted.as_ref(), target.as_ref()), persisted)
 }
 
 #[cfg(test)]
@@ -126,13 +148,13 @@ mod tests {
 
     #[test]
     fn loopback_http_only() {
-        assert!(relay_valid("https://relay.example.com"));
-        assert!(relay_valid("http://127.0.0.1:9000"));
-        assert!(relay_valid("http://localhost:8787/x"));
-        assert!(relay_valid("http://[::1]:1"));
-        assert!(!relay_valid("http://relay.example.com"));
-        assert!(!relay_valid("ftp://127.0.0.1"));
-        assert!(!relay_valid("https://"));
-        assert!(!relay_valid("http://127.0.0.1.evil.com"));
+        assert!(host_valid("https://eu.i.posthog.com"));
+        assert!(host_valid("http://127.0.0.1:9000"));
+        assert!(host_valid("http://localhost:8787/x"));
+        assert!(host_valid("http://[::1]:1"));
+        assert!(!host_valid("http://posthog.example.com"));
+        assert!(!host_valid("ftp://127.0.0.1"));
+        assert!(!host_valid("https://"));
+        assert!(!host_valid("http://127.0.0.1.evil.com"));
     }
 }

@@ -99,6 +99,7 @@ pub fn status_line(style: Style, verb: &str, message: &str) -> String {
 }
 
 pub fn announce(verb: &str, message: &str) {
+    super::runlog::note(&format!("{verb} {message}"));
     let line = status_line(Style::stderr(), verb, message);
     let bar = ACTIVE_BAR.lock().ok().and_then(|slot| slot.clone());
     match bar {

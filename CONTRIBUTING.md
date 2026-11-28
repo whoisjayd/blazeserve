@@ -50,10 +50,10 @@ CI also requires 80 percent line coverage (`cargo llvm-cov`) and runs `cargo den
 | `src/server/` | Sockets, TLS, connection limits, proxy identity, shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP behaviour: ranges, caching headers, status pages |
 | `src/upload/`, `src/zip_stream/`, `src/security.rs` | Uploads, ZIP streaming, keeping paths inside the served folder |
-| `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/telemetry/`, `src/usage/`, `src/ui.rs` | Speed limits, metrics, logs, OpenTelemetry, the usage report, the folder listing page |
+| `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/usage/`, `src/ui.rs` | Speed limits, metrics, logs, usage analytics, the folder listing page |
 | `src/python.rs`, `python/`, `tests_py/` | The Python bindings, the Python package and its tests |
 | `tests/` | Tests that start a real server. Smaller unit tests sit next to the code |
-| `deploy/` | Container, Kubernetes, systemd, proxy and monitoring files, and the telemetry relay |
+| `deploy/` | Container, Kubernetes, systemd, proxy and monitoring files |
 | `docs/` | The user guides |
 
 [docs/design.md](docs/design.md) follows a request through these parts. [AGENTS.md](AGENTS.md) has a more detailed map and the rules each part must keep.

@@ -385,3 +385,75 @@ fn man_prints_a_man_page() {
     assert!(page.contains(".TH blaze 1"), "{page}");
     assert!(page.contains("Download a file"), "{page}");
 }
+
+#[test]
+fn a_bug_report_is_never_sent_without_a_yes() {
+    let out = run(&[
+        "bug",
+        "-m",
+        "something broke",
+        "--step",
+        "run it",
+        "--no-log",
+    ]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("nothing was sent"),
+        "{}",
+        stderr(&out)
+    );
+    let out = run(&["bug"]);
+    assert_eq!(code(&out), 1);
+    assert!(stderr(&out).contains("--message"), "{}", stderr(&out));
+}
+
+#[test]
+fn each_run_leaves_a_redacted_log_that_a_bug_report_finds() {
+    let config = tempfile::tempdir().unwrap();
+    let secret = config.path().join("secret-plans.txt");
+    let failed = blaze()
+        .args(["checksum", secret.to_str().unwrap()])
+        .env("BLAZE_CONFIG_DIR", config.path())
+        .output()
+        .unwrap();
+    assert_ne!(code(&failed), 0);
+    let ok = blaze()
+        .arg("version")
+        .env("BLAZE_CONFIG_DIR", config.path())
+        .output()
+        .unwrap();
+    assert_eq!(code(&ok), 0);
+
+    let report = blaze()
+        .args(["bug", "-m", "x"])
+        .env("BLAZE_CONFIG_DIR", config.path())
+        .output()
+        .unwrap();
+    let shown = stderr(&report);
+    assert!(shown.contains("Log file"), "{shown}");
+    assert!(shown.contains(".log"), "{shown}");
+    for log in std::fs::read_dir(config.path().join("logs")).unwrap() {
+        let text = std::fs::read_to_string(log.unwrap().path()).unwrap();
+        assert!(!text.contains("secret-plans"), "{text}");
+    }
+}
+
+#[test]
+fn a_crash_leaves_a_redacted_report_and_sends_nothing_unasked() {
+    let config = tempfile::tempdir().unwrap();
+    let out = blaze()
+        .arg("version")
+        .env("BLAZE_CONFIG_DIR", config.path())
+        .env("BLAZE_PANIC_AT", "run")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        !stderr(&out).contains("Send the report?"),
+        "nobody to ask: {}",
+        stderr(&out)
+    );
+    let pending = std::fs::read_to_string(config.path().join("crash.json")).unwrap();
+    assert!(pending.contains("src/testknobs.rs:"), "{pending}");
+    assert!(!pending.contains("secret"), "{pending}");
+}

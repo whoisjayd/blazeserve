@@ -1,6 +1,6 @@
 # BlazeServe fuzz targets
 
-Separate Cargo workspace for `cargo-fuzz` (nightly Rust + libFuzzer). It builds `blazeserve` with `default-features = false` so `otel` and `extract` (bundled zstd C sources) are skipped.
+Separate Cargo workspace for `cargo-fuzz` (nightly Rust + libFuzzer). It builds `blazeserve` with `default-features = false` so `extract` (bundled zstd C sources) is skipped.
 
 ## Targets
 

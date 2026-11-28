@@ -8,12 +8,49 @@ Pick whichever method suits you.
 
 | Method | Command |
 | :--- | :--- |
+| Linux / macOS script | `curl -fsSL https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.sh \| sh` |
+| Windows PowerShell script | `irm https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.ps1 \| iex` |
 | pip or uv | `pip install blazeserve` or `uv tool install blazeserve` |
-| Cargo | `cargo install blazeserve` |
-| Download | Get an archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases) and check it against the `SHA256SUMS` file |
+| Cargo (prebuilt) | `cargo binstall blazeserve` |
+| Cargo (from source) | `cargo install blazeserve` |
+| Download | Get an archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases) and check it against `SHA256SUMS` |
 | Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 
-Builds exist for Linux (x86_64 and aarch64, with glibc or musl), Windows x86_64, and macOS (Intel and Apple silicon). To build from source you need Rust 1.93 or newer.
+Prebuilt builds exist for Linux (x86_64 and aarch64, with glibc or musl), Windows x86_64, and macOS (Intel and Apple silicon). None of the prebuilt options (`install.sh`, `install.ps1`, `cargo binstall`, pip/uv wheels, release archives, or Docker) need Rust or a C compiler.
+
+### Using the install scripts
+
+Both [`install.sh`](../install.sh) and [`install.ps1`](../install.ps1) download the release archive for your machine and verify its SHA-256 against the release `SHA256SUMS` file before placing `blaze`. Neither script asks for root or administrator privileges, and neither configures automatic updates.
+
+- **Linux and macOS (`install.sh`):** installs to `~/.local/bin/blaze` (override with `BLAZE_INSTALL_DIR`, or pin a release with `BLAZE_VERSION=v1.1.0`). Remove it with:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.sh | sh -s -- --uninstall
+  ```
+
+- **Windows (`install.ps1`):** installs to `%LOCALAPPDATA%\Programs\BlazeServe\blaze.exe` and adds that folder to your user `PATH` (`BLAZE_VERSION=v1.1.0` pins a release). Remove it with:
+
+  ```powershell
+  $env:BLAZE_UNINSTALL = 1; irm https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.ps1 | iex
+  ```
+
+Checking `SHA256SUMS` guards against corrupted downloads and mismatched mirrors, not against a compromised release host. To verify who built an archive, download it from the release page and run `gh attestation verify` before running or extracting it:
+
+```bash
+gh attestation verify blazeserve-v1.1.0-x86_64-unknown-linux-musl.tar.gz --repo whoisjayd/blazeserve
+```
+
+### Building from source
+
+To build from source with `cargo install blazeserve`, you need Rust 1.93 or newer and a C compiler. The default `extract` feature enables `hatchzip-core`, which compiles bundled zstd C source (via `zstd-sys`), and `ring` (used for TLS) also builds C and assembly sources.
+
+To build without `hatchzip-core` (which turns off `blaze get --extract`), disable default features:
+
+```bash
+cargo install blazeserve --no-default-features
+```
+
+Note that `ring` may still require a C compiler depending on your platform.
 
 Check that it works:
 
@@ -50,6 +87,7 @@ This serves just that file and prints a link. Give the link to the other person,
 
 ```bash
 blaze get http://host:8000/big.iso
+blaze get http://host:8000/game.zip --extract   # unpack in place; add --keep-archive to keep game.zip
 ```
 
 If the connection drops, run the same command again. It carries on from where it stopped instead of starting over. See [Sharing and downloading files](sharing-files.md) for the details.

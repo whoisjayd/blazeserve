@@ -263,9 +263,6 @@ pub struct Config {
     /// Trusted reverse proxies. Empty (default) means forwarding headers are ignored.
     pub trusted_proxies: Vec<TrustedProxy>,
     pub max_proxy_hops: usize,
-    /// OTLP/HTTP collector base URL. `None` disables export; an empty string opts in to the
-    /// standard `OTEL_EXPORTER_OTLP_*` environment variables.
-    pub otlp_endpoint: Option<String>,
 }
 
 impl Default for Config {
@@ -297,7 +294,6 @@ impl Default for Config {
             http2: true,
             trusted_proxies: Vec::new(),
             max_proxy_hops: 8,
-            otlp_endpoint: None,
         }
     }
 }

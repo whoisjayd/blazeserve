@@ -3,7 +3,8 @@
 # Prerequisites
 #   secret    PYPI_API_TOKEN, upload scope for the project (repository or pypi environment)
 #   secret    CARGO_REGISTRY_TOKEN, publish scope for the crate (repository or crates-io environment)
-#   variable  BLAZE_TELEMETRY_URL, the telemetry relay URL baked into release binaries, wheels and the image
+#   secret    BLAZE_POSTHOG_KEY, the public PostHog project key (phc_...) baked into release builds
+#   variable  BLAZE_POSTHOG_HOST, optional PostHog host; the EU cloud when unset
 #
 # A manual run is a dry run unless dry_run is unchecked: it builds and tests everything and publishes
 # nothing. To release, run it from main with the exact version and dry_run unchecked, or push a v* tag on
@@ -151,7 +152,9 @@ jobs:
           context: .
           load: true
           push: false
-          build-args: BLAZE_TELEMETRY_URL=${{ vars.BLAZE_TELEMETRY_URL }}
+          build-args: |
+            BLAZE_POSTHOG_KEY=${{ secrets.BLAZE_POSTHOG_KEY || vars.BLAZE_POSTHOG_KEY }}
+            BLAZE_POSTHOG_HOST=${{ vars.BLAZE_POSTHOG_HOST }}
           tags: blazeserve:release-gate
           cache-from: type=gha,scope=blazeserve-amd64
           cache-to: type=gha,scope=blazeserve-amd64,mode=max,ignore-error=true
@@ -206,7 +209,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target ${{ matrix.target }}
         env:
-          BLAZE_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
+          BLAZE_POSTHOG_KEY: ${{ secrets.BLAZE_POSTHOG_KEY || vars.BLAZE_POSTHOG_KEY }}
+          BLAZE_POSTHOG_HOST: ${{ vars.BLAZE_POSTHOG_HOST }}
       - name: Check debug test knobs are absent from release binary
         if: runner.os == 'Linux'
         shell: bash
@@ -218,7 +222,7 @@ jobs:
           tmp="$(mktemp)"
           trap 'rm -f "$tmp"' EXIT
           strings "$bin" > "$tmp"
-          if grep -E 'BLAZE_CRASH_AT|BLAZE_CRASH_AFTER|BLAZE_FREE' "$tmp"; then
+          if grep -E 'BLAZE_CRASH_AT|BLAZE_CRASH_AFTER|BLAZE_FREE|BLAZE_PANIC_AT' "$tmp"; then
             echo "debug test knob found in release binary: $bin" >&2
             exit 1
           fi
@@ -229,7 +233,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           EXT: ${{ matrix.ext }}
           EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
-          EXPECTED_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
+          EXPECTED_KEY: ${{ secrets.BLAZE_POSTHOG_KEY || vars.BLAZE_POSTHOG_KEY }}
         run: |
           set -euo pipefail
           exe=blaze
@@ -240,7 +244,7 @@ jobs:
           else
             py=python
           fi
-          "$py" - "$bin" "$EXPECTED_VERSION" "$EXPECTED_TELEMETRY_URL" <<'PY'
+          "$py" - "$bin" "$EXPECTED_VERSION" "$EXPECTED_KEY" <<'PY'
           import json
           import os
           import pathlib
@@ -250,7 +254,7 @@ jobs:
           import tempfile
 
           bin_path = str(pathlib.Path(sys.argv[1]).resolve())
-          expected_version, expected_url = sys.argv[2:4]
+          expected_version, expected_key = sys.argv[2:4]
 
           def run(args, env):
               return subprocess.run(
@@ -271,7 +275,8 @@ jobs:
                   d.mkdir()
 
               base_env = os.environ.copy()
-              base_env.pop("BLAZE_TELEMETRY_URL", None)
+              base_env.pop("BLAZE_POSTHOG_KEY", None)
+              base_env.pop("BLAZE_POSTHOG_HOST", None)
               base_env["BLAZE_CONFIG_DIR"] = str(config_dir)
               base_env["BLAZE_STATE_DIR"] = str(state_dir)
               base_env["NO_COLOR"] = "1"
@@ -289,10 +294,10 @@ jobs:
 
               tel = run(["telemetry", "status"], base_env)
               assert tel.returncode == 0, tel.stderr
-              if expected_url:
+              if expected_key:
                   assert "configured" in tel.stdout and "not configured" not in tel.stdout, tel.stdout
-                  assert expected_url.encode("utf-8") in pathlib.Path(bin_path).read_bytes(), (
-                      f"baked telemetry URL {expected_url!r} missing from binary"
+                  assert expected_key.encode("utf-8") in pathlib.Path(bin_path).read_bytes(), (
+                      "the PostHog project key is missing from the binary"
                   )
               else:
                   assert "not configured" in tel.stdout, tel.stdout
@@ -377,12 +382,13 @@ jobs:
           save-if: false
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
-          BLAZE_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
+          BLAZE_POSTHOG_KEY: ${{ secrets.BLAZE_POSTHOG_KEY || vars.BLAZE_POSTHOG_KEY }}
+          BLAZE_POSTHOG_HOST: ${{ vars.BLAZE_POSTHOG_HOST }}
         with:
           command: build
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          docker-options: -e BLAZE_TELEMETRY_URL
+          docker-options: -e BLAZE_POSTHOG_KEY -e BLAZE_POSTHOG_HOST
           args: --release --locked --out dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -524,7 +530,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
           sbom: true
-          build-args: BLAZE_TELEMETRY_URL=${{ vars.BLAZE_TELEMETRY_URL }}
+          build-args: |
+            BLAZE_POSTHOG_KEY=${{ secrets.BLAZE_POSTHOG_KEY || vars.BLAZE_POSTHOG_KEY }}
+            BLAZE_POSTHOG_HOST=${{ vars.BLAZE_POSTHOG_HOST }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max,ignore-error=true
           tags: |

@@ -7,7 +7,7 @@ Every command, option, address and setting in one place. For explanations, use t
 | Command | What it does |
 | :--- | :--- |
 | `blaze serve [PATH]` | Serve a folder or a file |
-| `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy and telemetry options of `serve`, plus `--expires-after DURATION` |
+| `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy options of `serve`, plus `--expires-after DURATION` |
 | `blaze get URL` | Download with resume |
 | `blaze put FILE URL` | Upload with resume. A bare server address uploads under `/__upload__/` |
 | `blaze status [JOB]` | Show background jobs. `--watch` refreshes, `--json` prints one snapshot, `--all` adds finished jobs |
@@ -16,13 +16,14 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze verify` | Check files against a checksum list. See [`blaze verify`](#blaze-verify) |
 | `blaze doctor [PATH]` | Check the folder, the port and system capabilities |
 | `blaze benchmark` | Time a download. See [Performance](performance.md) |
-| `blaze telemetry` | `status`, `enable`, `disable`, `reset` or `preview` |
+| `blaze bug` | Guided problem report: what happened, steps, expected result and the redacted log of a run. Shown to you before it is sent |
+| `blaze telemetry` | Usage analytics: `status`, `enable`, `disable`, `reset` or `preview` |
 | `blaze upgrade` | Check for a newer release and install it the way BlazeServe was installed |
 | `blaze completions SHELL` | Print a shell completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 | `blaze man` | Print the man page, for `man -l -` or a `man1` folder |
 | `blaze version` | Version and platform. Add `--json` for scripts |
 
-The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose`, `--log-json` or OpenTelemetry export, which write their own lines.
+The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose` or `--log-json`, which write their own lines.
 
 ## Exit codes
 
@@ -64,7 +65,6 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--sock-sndbuf-mb N` | `4` | Socket send buffer |
 | `--backlog N` | `8192` | Waiting-connection queue size |
 | `--log-json`, `--no-log-json` | from `BLAZE_LOG_JSON` | JSON log lines |
-| `--otlp-endpoint URL` | from `OTEL_EXPORTER_OTLP_ENDPOINT` | Send traces and metrics here |
 | `--background` | off | Run as a [background job](background-jobs.md) and print its job ID. Also for `send` |
 | `--qr` | off | Print a QR code of the network address |
 | `--open` | off | Open a browser |
@@ -206,13 +206,12 @@ A range request with an `If-Range` that no longer matches gets the whole file. S
 | :--- | :--- |
 | `BLAZE_AUTH` (any name you choose) | The `USER:PASS` that `--auth-env` reads |
 | `BLAZE_LOG_JSON` | `1` turns on JSON logs |
-| `BLAZE_TELEMETRY` | `0` turns off the usage report |
+| `BLAZE_TELEMETRY` | `0` turns off [usage analytics](telemetry.md) |
 | `DO_NOT_TRACK` | `1` turns off the usage report |
 | `CI` | When set, the usage report is off |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` | OpenTelemetry export. See [Monitoring](monitoring.md) |
 | `NO_COLOR`, `CLICOLOR_FORCE` | Colour control |
 | `BLAZE_STATE_DIR` | Where background job records live: `<folder>/jobs`. Defaults to the per-user state folder. See [Background jobs](background-jobs.md) |
-| `BLAZE_TELEMETRY_URL` | Where usage reports are sent. Set when building a release; a build without it sends nothing |
+| `BLAZE_POSTHOG_KEY`, `BLAZE_POSTHOG_HOST` | The PostHog project that [usage analytics](telemetry.md) go to. Set when building a release; a build without a key sends nothing |
 | `BLAZE_UPGRADE_API`, `BLAZE_UPGRADE_DOWNLOADS` | Where `blaze upgrade` looks for releases. They exist for mirrors and tests. `https://` is required, except for a loopback address |
 | `BLAZE_INSTALL_CHANNEL` | `pip`, `cargo`, `docker` or `binary`. Tells `blaze upgrade` how this copy was installed, and is set by the container image |
 | `BLAZE_PYTHON` | The Python that started `blaze`. The Python package sets it, so `blaze upgrade` runs that Python's pip |

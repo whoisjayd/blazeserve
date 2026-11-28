@@ -1,22 +1,29 @@
-//! Anonymous, opt-out usage telemetry. `docs/telemetry.md` is the public contract.
+//! Anonymous, opt-out usage analytics sent to PostHog. `docs/telemetry.md` is the public
+//! contract.
 //!
 //! Nothing here may block, slow or fail a command: every error degrades to "do not send".
+//! No event may carry a file name, path, URL, host name, address, argument value or error
+//! message; properties are chosen from a closed list (`ALLOWED_PROPERTIES`).
 
+mod environment;
 mod gate;
+mod ids;
 mod payload;
 mod session;
 mod settings;
+pub mod trace;
 
-pub use gate::{Decision, Reason, decide, effective, relay_url};
+pub use gate::{DEFAULT_HOST, Decision, Reason, Target, decide, effective, target};
 pub use payload::{
-    ALLOWED_KEYS, ARCHES, BYTES_BUCKETS, CHANNELS, COMMANDS, COUNT_BUCKETS, Command, EVENTS, Event,
-    FEATURE_KEYS, Features, OSES, SCHEMA_VERSION, StopStats, UPTIME_BUCKETS, bytes_bucket,
-    count_bucket, start_event, stop_event, uptime_bucket,
+    ALLOWED_PROPERTIES, CHANNELS, Event, FEATURE_KEYS, Features, ServerCounters, bytes_bucket,
 };
-pub use session::{Session, begin, begin_from_process, build_time_url, finish_from_process};
+pub use session::{
+    CommandReport, QUEUE_FILE, Reporter, build_time_host, build_time_key, clear_queue,
+    install_panic_hook, open, preview, queued, send_feedback,
+};
 pub use settings::{
-    Settings, SettingsUnreadable, config_dir, load_settings, notice_text, reset_settings,
-    save_settings, settings_path,
+    NOTICE_VERSION, Settings, SettingsUnreadable, config_dir, load_settings, notice_text,
+    reset_settings, save_settings, settings_path,
 };
 
 pub type Env<'a> = dyn Fn(&str) -> Option<String> + 'a;

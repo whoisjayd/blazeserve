@@ -30,6 +30,16 @@ pub(crate) fn crash_point(name: &str) {
     }
 }
 
+/// Panics at a named step, so a test can see how a crash is reported.
+pub(crate) fn panic_point(name: &str) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    if std::env::var("BLAZE_PANIC_AT").is_ok_and(|v| v == name) {
+        panic!("test panic at /home/someone/secret.txt");
+    }
+}
+
 /// Free space to report instead of asking the filesystem.
 #[allow(dead_code)]
 pub(crate) fn free_space_override() -> Option<u64> {

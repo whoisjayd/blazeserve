@@ -244,7 +244,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Pinned validators: Compose v5.7.0; kubectl v1.37.2; yq v4.54.2; Python v3.15.2; Bash v5.3.20;
-    # Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9; Traefik v3.7.17.
+    # Nginx v1.31.8; Caddy v2.11.9; Traefik v3.7.17.
     # systemd-analyze is the runner-provided Ubuntu version.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -302,14 +302,6 @@ jobs:
           if not sysctl_lines or any(not assignment.fullmatch(line) for line in sysctl_lines):
               raise SystemExit("deploy/linux-tuning/sysctl-blazeserve.conf must use: lowercase.key = non-empty whitespace-separated value")
           PY
-      - name: Validate monitoring configuration
-        run: |
-          set -Eeuo pipefail
-          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check config /etc/prometheus/prometheus.yml
-          docker run --rm --mount type=bind,src="$PWD/deploy/monitoring",dst=/etc/prometheus,readonly --entrypoint /bin/promtool prom/prometheus:v3.16.0 check rules /etc/prometheus/alerts.yml
-          for dashboard in grafana-dashboard.json grafana-usage-dashboard.json; do
-            docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly python:3.15.2-alpine3.24 python -m json.tool "/work/deploy/monitoring/$dashboard" > /dev/null
-          done
       - name: Validate reverse-proxy configuration
         run: |
           set -Eeuo pipefail

@@ -5,13 +5,11 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
+use hyper::Request;
 use hyper::body::{Frame, Incoming, SizeHint};
-use hyper::header::{self};
-use hyper::{Method, Request};
 
 use crate::logging::{self, RequestLog};
 use crate::metrics::RequestGuard;
-use crate::telemetry::{Outcome, RequestInfo, RequestSpan};
 use crate::{AppState, Body, PeerInfo};
 
 pub(super) struct LogMeta {
@@ -20,18 +18,15 @@ pub(super) struct LogMeta {
     pub(super) request_id: String,
 }
 
-/// Everything that must end exactly once per request: the in-flight gauge, the trace span
-/// and the access-log record. It lives in the response body, so all three finish when the
-/// body completes or is dropped, not merely when the headers are produced.
+/// Everything that must end exactly once per request: the in-flight gauge and the
+/// access-log record. It lives in the response body, so both finish when the body completes
+/// or is dropped, not merely when the headers are produced.
 pub(super) struct RequestScope {
     pub(super) _guard: RequestGuard,
     pub(super) state: Arc<AppState>,
-    pub(super) span: Option<RequestSpan>,
     pub(super) log: Option<LogMeta>,
     pub(super) client_ip: IpAddr,
     pub(super) peer_ip: IpAddr,
-    pub(super) upload: bool,
-    pub(super) declared_bytes: Option<u64>,
     pub(super) status: u16,
     pub(super) response_bytes: u64,
     pub(super) ended: bool,
@@ -45,31 +40,6 @@ impl RequestScope {
         request_id: &str,
     ) -> Self {
         let cfg = &state.config;
-        let headers = req.headers();
-        let text = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
-        let span = state.telemetry.is_enabled().then(|| {
-            let version = match req.version() {
-                hyper::Version::HTTP_10 => "1.0",
-                hyper::Version::HTTP_2 => "2",
-                _ => "1.1",
-            };
-            state.telemetry.start_request(&RequestInfo {
-                method: req.method().as_str(),
-                path: req.uri().path(),
-                scheme: if peer.tls { "https" } else { "http" },
-                version,
-                client_ip: peer.client_ip,
-                peer_ip: peer.socket_addr.ip(),
-                user_agent: text(header::USER_AGENT),
-                host: text(header::HOST),
-                request_id,
-                headers,
-            })
-        });
-        let upload = matches!(*req.method(), Method::PUT | Method::POST);
-        let declared_bytes = upload
-            .then(|| text(header::CONTENT_LENGTH).and_then(|v| v.parse().ok()))
-            .flatten();
         let log = (cfg.log_json || cfg.verbose).then(|| LogMeta {
             method: req.method().as_str().to_owned(),
             target: req.uri().path().to_owned(),
@@ -78,12 +48,9 @@ impl RequestScope {
         Self {
             _guard: state.metrics.request_guard(),
             state: Arc::clone(state),
-            span,
             log,
             client_ip: peer.client_ip,
             peer_ip: peer.socket_addr.ip(),
-            upload,
-            declared_bytes,
             status: 0,
             response_bytes: 0,
             ended: false,
@@ -93,23 +60,9 @@ impl RequestScope {
 
 impl Drop for RequestScope {
     fn drop(&mut self) {
-        // Status stays 0 only if `finalize` never ran; the span then releases itself.
+        // Status stays 0 only if `finalize` never ran.
         if self.status == 0 {
             return;
-        }
-        let accepted = self.upload && (200..300).contains(&self.status);
-        let outcome = Outcome {
-            status: self.status,
-            response_bytes: self.response_bytes,
-            request_bytes: if accepted { self.declared_bytes } else { None },
-            complete: self.ended,
-        };
-        let ids = match (&self.span, &self.log) {
-            (Some(span), Some(_)) => span.trace_ids(),
-            _ => None,
-        };
-        if let Some(span) = self.span.take() {
-            span.finish(outcome);
         }
         if let Some(meta) = &self.log {
             logging::log_request(
@@ -122,8 +75,6 @@ impl Drop for RequestScope {
                     target: &meta.target,
                     status: self.status,
                     bytes: self.response_bytes,
-                    trace_id: ids.as_ref().map(|i| i.trace_id.as_str()),
-                    span_id: ids.as_ref().map(|i| i.span_id.as_str()),
                 },
             );
         }

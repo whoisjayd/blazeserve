@@ -49,6 +49,22 @@ impl TransferError {
         }
     }
 
+    /// A fixed word naming the cause, for the usage report. The message is never reported.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NoSpace(_) => "no_space",
+            Self::Integrity(_) => "integrity",
+            Self::Auth(_) => "auth",
+            Self::Network(_) => "network",
+            Self::Unstable(_) => "unstable",
+            Self::Http(_) => "http",
+            Self::Extract(_) => "extract",
+            Self::Io(_) => "io",
+            Self::Usage(_) => "usage",
+            Self::Interrupted(_) => "interrupted",
+        }
+    }
+
     pub(super) fn map_message(self, f: impl FnOnce(String) -> String) -> Self {
         match self {
             Self::NoSpace(m) => Self::NoSpace(f(m)),

@@ -1,22 +1,29 @@
 mod usage_support;
 
-use blazeserve::usage::{Decision, Reason, Settings, config_dir, decide, relay_url};
+use blazeserve::usage::{
+    DEFAULT_HOST, Decision, Reason, Settings, Target, config_dir, decide, target,
+};
 use usage_support::Env;
 
-const RELAY: &str = "https://relay.example.com";
+const HOST: &str = "https://eu.i.posthog.com";
+const KEY: &str = "phc_test";
 
 fn enabled_settings() -> Option<Settings> {
     Some(Settings::default())
 }
 
-fn decision(env: &Env, persisted: Option<Settings>, relay: Option<&str>) -> Decision {
-    decide(&env.lookup(), persisted, relay)
+fn decision(env: &Env, persisted: Option<Settings>, host: Option<&str>) -> Decision {
+    let target = host.map(|host| Target {
+        key: KEY.to_owned(),
+        host: host.to_owned(),
+    });
+    decide(&env.lookup(), persisted.as_ref(), target.as_ref())
 }
 
 #[test]
 fn enabled_by_default_when_a_relay_exists() {
     assert_eq!(
-        decision(&Env::new(&[]), enabled_settings(), Some(RELAY)),
+        decision(&Env::new(&[]), enabled_settings(), Some(HOST)),
         Decision::Enabled
     );
 }
@@ -26,7 +33,7 @@ fn do_not_track_is_honored_for_any_nonzero_value() {
     for v in ["1", "true", "yes", "anything"] {
         let env = Env::new(&[("DO_NOT_TRACK", v)]);
         assert_eq!(
-            decision(&env, enabled_settings(), Some(RELAY)),
+            decision(&env, enabled_settings(), Some(HOST)),
             Decision::Disabled(Reason::DoNotTrack),
             "DO_NOT_TRACK={v}"
         );
@@ -34,7 +41,7 @@ fn do_not_track_is_honored_for_any_nonzero_value() {
     for v in ["", "0"] {
         let env = Env::new(&[("DO_NOT_TRACK", v)]);
         assert_eq!(
-            decision(&env, enabled_settings(), Some(RELAY)),
+            decision(&env, enabled_settings(), Some(HOST)),
             Decision::Enabled
         );
     }
@@ -45,14 +52,14 @@ fn blaze_telemetry_off_values() {
     for v in ["0", "false", "off", "no", "OFF", "False"] {
         let env = Env::new(&[("BLAZE_TELEMETRY", v)]);
         assert_eq!(
-            decision(&env, enabled_settings(), Some(RELAY)),
+            decision(&env, enabled_settings(), Some(HOST)),
             Decision::Disabled(Reason::EnvDisabled),
             "BLAZE_TELEMETRY={v}"
         );
     }
     let on = Env::new(&[("BLAZE_TELEMETRY", "1")]);
     assert_eq!(
-        decision(&on, enabled_settings(), Some(RELAY)),
+        decision(&on, enabled_settings(), Some(HOST)),
         Decision::Enabled
     );
 }
@@ -61,16 +68,16 @@ fn blaze_telemetry_off_values() {
 fn explicit_on_never_overrides_a_stronger_off() {
     let env = Env::new(&[("BLAZE_TELEMETRY", "1"), ("DO_NOT_TRACK", "1")]);
     assert_eq!(
-        decision(&env, enabled_settings(), Some(RELAY)),
+        decision(&env, enabled_settings(), Some(HOST)),
         Decision::Disabled(Reason::DoNotTrack)
     );
     let disabled = Some(Settings {
         enabled: false,
-        notice_shown: true,
+        ..Settings::default()
     });
     let env = Env::new(&[("BLAZE_TELEMETRY", "1")]);
     assert_eq!(
-        decision(&env, disabled, Some(RELAY)),
+        decision(&env, disabled.clone(), Some(HOST)),
         Decision::Disabled(Reason::SettingDisabled)
     );
 }
@@ -80,7 +87,7 @@ fn ci_disables_unless_it_is_false_or_zero() {
     for v in ["1", "true", "github"] {
         let env = Env::new(&[("CI", v)]);
         assert_eq!(
-            decision(&env, enabled_settings(), Some(RELAY)),
+            decision(&env, enabled_settings(), Some(HOST)),
             Decision::Disabled(Reason::Ci),
             "CI={v}"
         );
@@ -88,7 +95,7 @@ fn ci_disables_unless_it_is_false_or_zero() {
     for v in ["", "0", "false", "FALSE"] {
         let env = Env::new(&[("CI", v)]);
         assert_eq!(
-            decision(&env, enabled_settings(), Some(RELAY)),
+            decision(&env, enabled_settings(), Some(HOST)),
             Decision::Enabled,
             "CI={v}"
         );
@@ -100,28 +107,28 @@ fn gate_order_first_match_wins() {
     let env = Env::new(&[("DO_NOT_TRACK", "1"), ("BLAZE_TELEMETRY", "0"), ("CI", "1")]);
     let disabled = Some(Settings {
         enabled: false,
-        notice_shown: true,
+        ..Settings::default()
     });
     assert_eq!(
-        decision(&env, disabled, None),
+        decision(&env, disabled.clone(), None),
         Decision::Disabled(Reason::DoNotTrack)
     );
 
     let env = Env::new(&[("BLAZE_TELEMETRY", "0"), ("CI", "1")]);
     assert_eq!(
-        decision(&env, disabled, None),
+        decision(&env, disabled.clone(), None),
         Decision::Disabled(Reason::EnvDisabled)
     );
 
     let env = Env::new(&[("CI", "1")]);
     assert_eq!(
-        decision(&env, disabled, None),
+        decision(&env, disabled.clone(), None),
         Decision::Disabled(Reason::Ci)
     );
 
     let env = Env::new(&[]);
     assert_eq!(
-        decision(&env, disabled, None),
+        decision(&env, disabled.clone(), None),
         Decision::Disabled(Reason::SettingDisabled)
     );
     assert_eq!(
@@ -130,28 +137,28 @@ fn gate_order_first_match_wins() {
     );
     assert_eq!(
         decision(&env, enabled_settings(), None),
-        Decision::Disabled(Reason::NoRelay)
+        Decision::Disabled(Reason::NoKey)
     );
 }
 
 #[test]
-fn relay_must_be_https_except_on_loopback() {
+fn the_host_must_be_https_except_on_loopback() {
     let env = Env::new(&[]);
     for url in [
-        "http://relay.example.com",
+        "http://posthog.example.com",
         "ftp://x",
-        "relay.example.com",
+        "posthog.example.com",
         "https://",
         "http://127.0.0.1.evil.com",
     ] {
         assert_eq!(
             decision(&env, enabled_settings(), Some(url)),
-            Decision::Disabled(Reason::RelayInvalid),
+            Decision::Disabled(Reason::HostInvalid),
             "{url}"
         );
     }
     for url in [
-        "https://relay.example.com/base",
+        "https://us.i.posthog.com",
         "http://127.0.0.1:9000",
         "http://localhost:8787",
         "http://[::1]:80",
@@ -165,18 +172,42 @@ fn relay_must_be_https_except_on_loopback() {
 }
 
 #[test]
-fn runtime_relay_overrides_the_build_time_one() {
-    let env = Env::new(&[("BLAZE_TELEMETRY_URL", "https://override.example")]);
+fn only_a_public_project_key_is_ever_used() {
+    for key in ["phx_secret", "sk_live", "token"] {
+        let target = Target {
+            key: key.to_owned(),
+            host: HOST.to_owned(),
+        };
+        assert_eq!(
+            decide(
+                &Env::new(&[]).lookup(),
+                enabled_settings().as_ref(),
+                Some(&target)
+            ),
+            Decision::Disabled(Reason::KeyInvalid),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn runtime_values_override_the_built_in_ones() {
+    let env = Env::new(&[("BLAZE_POSTHOG_KEY", "phc_override")]);
+    let got = target(&env.lookup(), Some("phc_baked"), None).unwrap();
     assert_eq!(
-        relay_url(&env.lookup(), Some("https://baked.example")).as_deref(),
-        Some("https://override.example")
+        (got.key.as_str(), got.host.as_str()),
+        ("phc_override", DEFAULT_HOST)
     );
-    let empty = Env::new(&[("BLAZE_TELEMETRY_URL", "  ")]);
+    let blank = Env::new(&[("BLAZE_POSTHOG_KEY", "  ")]);
     assert_eq!(
-        relay_url(&empty.lookup(), Some("https://baked.example")).as_deref(),
-        Some("https://baked.example")
+        target(&blank.lookup(), Some("phc_baked"), Some("https://baked")).map(|t| (t.key, t.host)),
+        Some(("phc_baked".to_owned(), "https://baked".to_owned()))
     );
-    assert_eq!(relay_url(&Env::new(&[]).lookup(), None), None);
+    assert_eq!(
+        target(&Env::new(&[]).lookup(), None, Some("https://baked")),
+        None
+    );
+    assert_eq!(target(&Env::new(&[]).lookup(), Some(""), None), None);
 }
 
 #[test]

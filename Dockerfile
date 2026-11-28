@@ -9,8 +9,9 @@ RUN mkdir src && touch src/lib.rs && echo 'fn main() {}' > src/main.rs \
     && rm -rf src target/release/deps/blazeserve* target/release/blaze* target/release/.fingerprint/blazeserve-*
 
 COPY src ./src
-ARG BLAZE_TELEMETRY_URL=""
-ENV BLAZE_TELEMETRY_URL=${BLAZE_TELEMETRY_URL}
+ARG BLAZE_POSTHOG_KEY=""
+ARG BLAZE_POSTHOG_HOST=""
+ENV BLAZE_POSTHOG_KEY=${BLAZE_POSTHOG_KEY} BLAZE_POSTHOG_HOST=${BLAZE_POSTHOG_HOST}
 RUN find src -type f -exec touch {} + \
     && cargo build --release --locked && mkdir -p /rootfs/data /rootfs/tmp
 

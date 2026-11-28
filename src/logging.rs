@@ -18,8 +18,6 @@ pub struct RequestLog<'a> {
     pub target: &'a str,
     pub status: u16,
     pub bytes: u64,
-    pub trace_id: Option<&'a str>,
-    pub span_id: Option<&'a str>,
 }
 
 pub fn utc_timestamp() -> String {
@@ -186,12 +184,6 @@ pub fn request_json(r: &RequestLog<'_>) -> String {
     );
     json_escape(&redact(&format!("{} {}", r.method, r.target)), &mut s);
     let _ = write!(s, ",\"status\":{},\"size\":{}", r.status, r.bytes);
-    if let (Some(trace), Some(span)) = (r.trace_id, r.span_id) {
-        s.push_str(",\"trace_id\":");
-        json_escape(trace, &mut s);
-        s.push_str(",\"span_id\":");
-        json_escape(span, &mut s);
-    }
     s.push('}');
     s
 }
@@ -286,33 +278,11 @@ mod tests {
             target: "/a\"b",
             status: 200,
             bytes: 5,
-            trace_id: None,
-            span_id: None,
         };
         let v: serde_json::Value = serde_json::from_str(&request_json(&r)).unwrap();
         assert_eq!(v["status"], 200);
         assert_eq!(v["size"], 5);
         assert_eq!(v["request"], "GET /a\"b");
         assert!(v["timestamp"].as_str().unwrap().ends_with('Z'));
-        assert!(v.get("trace_id").is_none() && v.get("span_id").is_none());
-    }
-
-    #[test]
-    fn json_record_carries_trace_ids_when_present() {
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-        let r = RequestLog {
-            request_id: "abc",
-            client_ip: ip,
-            peer_ip: ip,
-            method: "GET",
-            target: "/",
-            status: 200,
-            bytes: 0,
-            trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736"),
-            span_id: Some("00f067aa0ba902b7"),
-        };
-        let v: serde_json::Value = serde_json::from_str(&request_json(&r)).unwrap();
-        assert_eq!(v["trace_id"], "4bf92f3577b34da6a3ce929d0e0e4736");
-        assert_eq!(v["span_id"], "00f067aa0ba902b7");
     }
 }

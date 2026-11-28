@@ -32,7 +32,7 @@ docker compose up -d
 docker compose logs -f blazeserve
 ```
 
-Compose passes `BLAZE_TELEMETRY` and the `OTEL_*` variables through from your shell when they are set, so no values are stored in the file. To allow uploads, mount a writable volume, set `--max-upload-mb` and require a password.
+Compose passes `BLAZE_TELEMETRY` through from your shell when it is set. To allow uploads, mount a writable volume, set `--max-upload-mb` and require a password.
 
 ## Kubernetes
 
@@ -48,11 +48,9 @@ The deployment stays at one replica because its data volume is an `emptyDir`, wh
 Two more files are optional and are left out of the base, so applying it never exposes the service by accident:
 
 - `ingress.yaml` is for the Nginx Ingress Controller. Replace `files.example.com` first. It turns proxy buffering off and sets the body limit to `100m`, so raise that if you enable large uploads.
-- `servicemonitor.yaml` is for clusters with the Prometheus Operator. It scrapes `/__metrics__` through the Service every 10 seconds.
 
 ```console
 kubectl apply -f deploy/k8s/ingress.yaml
-kubectl apply -f deploy/k8s/servicemonitor.yaml
 ```
 
 To turn off the usage report, add `BLAZE_TELEMETRY=0` under the container's `env` in `deployment.yaml`.
@@ -97,34 +95,6 @@ blaze serve /srv/files --host 127.0.0.1 --trust-proxy 127.0.0.1/32
 You can repeat `--trust-proxy`. When a request comes from a trusted proxy, BlazeServe reads the `Forwarded` or `X-Forwarded-For` header and walks the list from the right, skipping trusted proxies. The first address that is not trusted is the visitor. `--max-proxy-hops` limits how far it looks. Headers from anyone else are ignored, and the address that actually connected is logged separately as `peer_ip`.
 
 This is only safe if visitors cannot reach BlazeServe directly, so bind it to the loopback address or a private network and firewall the port. Your proxy must also set `X-Forwarded-For`; the Nginx example does this with `$proxy_add_x_forwarded_for`, and you should check that your Caddy and Traefik setups do the same. Because `Forwarded` wins over `X-Forwarded-For`, the proxy must also remove any `Forwarded` header a visitor sends, as all three examples do. Without that, a visitor can pick their own identity. If your proxy sits behind another trusted proxy, list both networks.
-
-## Monitoring
-
-`monitoring/` has a Prometheus scrape config, alert rules and two Grafana dashboards: one for the `blazeserve_*` runtime metrics, and one for the anonymous usage reports that the telemetry relay forwards to Loki. Prometheus reads `/__metrics__`, and the metrics are listed in the [monitoring guide](../docs/monitoring.md#metrics). Keep that address off untrusted networks.
-
-- **Alerts** in `alerts.yml`: `BlazeServeInstanceDown`, `BlazeServeHighErrorRate`, `BlazeServeHighActiveRequests` and `BlazeServeConnectionsRejected`.
-- **Scrape target:** `prometheus.yml` points at `blazeserve.default.svc.cluster.local:80`, the Service from `k8s/service.yaml`. Use `127.0.0.1:8000` for the systemd unit, or `blazeserve:8000` when Prometheus shares the Compose network. Give Prometheus both `prometheus.yml` and `alerts.yml`.
-- **Runtime dashboard:** in Grafana choose Dashboards, then New, then Import, load `monitoring/grafana-dashboard.json`, and pick the Prometheus data source that uses this scrape config.
-- **Usage dashboard:** load `monitoring/grafana-usage-dashboard.json` the same way and pick the Loki data source that receives the relay's logs. It reads `{service_name="blazeserve-usage"}` and covers reports over time, versions, platforms, feature adoption and session outcomes. The [relay guide](telemetry-relay/README.md#dashboard) lists the queries and the meaning of each field.
-
-Traces and metrics can also be exported with OpenTelemetry, described in the [monitoring guide](../docs/monitoring.md#opentelemetry). Those metrics use the `http.server.*` names and are separate from the `blazeserve_*` series the dashboard and alerts use.
-
-For a local backend to try things out, the `observability` Compose profile starts `grafana/otel-lgtm`, which bundles Grafana, Tempo, Loki and Prometheus in one container. Its ports are published on loopback only and it uses default credentials, so keep it to local use.
-
-```bash
-# Linux and macOS
-OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4318 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
-  docker compose --profile observability up -d
-```
-
-```powershell
-# Windows PowerShell
-$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://lgtm:4318"
-$env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
-docker compose --profile observability up -d
-```
-
-Then open Grafana at `http://localhost:3000`.
 
 ## Linux tuning
 

@@ -101,3 +101,55 @@ pub(crate) fn stop_inheriting_std_handles() {
         }
     }
 }
+
+/// `windows` and the build number, which tells the releases apart (22000 and up is 11).
+pub(crate) fn os_release() -> Option<(String, String)> {
+    use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let key = wide(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+    let name = wide("CurrentBuildNumber");
+    let mut value = [0u16; 32];
+    let mut bytes = 64u32;
+    // SAFETY: both names are NUL-terminated, and `bytes` holds the size of `value`, which
+    // the call does not exceed.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            value.as_mut_ptr().cast(),
+            &mut bytes,
+        )
+    };
+    (status == 0).then(|| {
+        let text = String::from_utf16_lossy(&value);
+        ("windows".to_owned(), text.trim_end_matches('\0').to_owned())
+    })
+}
+
+pub(crate) const LIBC: &str = "msvc";
+
+pub(crate) fn memory_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: the structure is plain data and its length field is set as the call requires.
+    unsafe {
+        let mut status: MEMORYSTATUSEX = std::mem::zeroed();
+        status.dwLength = u32::try_from(std::mem::size_of::<MEMORYSTATUSEX>()).ok()?;
+        (GlobalMemoryStatusEx(&mut status) != 0).then_some(status.ullTotalPhys)
+    }
+}
+
+pub(crate) fn locale() -> Option<String> {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut name = [0u16; 85];
+    // SAFETY: the buffer length passed is the buffer's length.
+    let written = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), 85) };
+    let end = usize::try_from(written).ok()?.checked_sub(1)?;
+    Some(String::from_utf16_lossy(&name[..end]))
+}
+
+pub(crate) fn is_wsl() -> bool {
+    false
+}

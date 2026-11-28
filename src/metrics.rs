@@ -1,5 +1,5 @@
-//! Lock-free telemetry. Names and types of the Prometheus series are a public
-//! contract (see `deploy/monitoring/`): do not rename without a migration note.
+//! Lock-free counters. Names and types of the Prometheus series are a public contract
+//! (see `docs/monitoring.md`): do not rename without a migration note.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -84,6 +84,9 @@ impl Metrics {
     }
     pub fn connections_active(&self) -> u64 {
         self.connections_active.load(Relaxed).max(0) as u64
+    }
+    pub fn connections_rejected(&self) -> u64 {
+        self.connections_rejected_total.load(Relaxed)
     }
 
     fn uptime(&self) -> f64 {

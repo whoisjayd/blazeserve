@@ -109,9 +109,9 @@ To report a vulnerability, follow [SECURITY.md](SECURITY.md) and please do not o
 
 ## Usage statistics
 
-BlazeServe sends a small anonymous usage report when `serve` or `send` starts and stops. It contains the version, the operating system, which features are on (yes or no only) and rough usage ranges. It never contains file names, addresses, passwords or anything from a request, and there is no install ID.
+BlazeServe sends anonymous usage analytics to PostHog (EU) by default: the commands and option names used, timings, error kinds, crashes, details of the machine and a random install ID. It never sends file names, paths, URLs, addresses, option values or anything from your visitors.
 
-Turn it off with `BLAZE_TELEMETRY=0`, `DO_NOT_TRACK=1` or `blaze telemetry disable`. It is also off whenever `CI` is set. Run `blaze telemetry preview` to see exactly what would be sent, or read the [telemetry guide](https://github.com/whoisjayd/blazeserve/blob/main/docs/telemetry.md).
+Turn it off with `blaze telemetry disable`, `BLAZE_TELEMETRY=0` or `DO_NOT_TRACK=1`. It is also off whenever `CI` is set. `blaze telemetry preview` shows an example, and the [telemetry guide](https://github.com/whoisjayd/blazeserve/blob/main/docs/telemetry.md) lists everything.
 
 ## Upgrading from 0.x
 
