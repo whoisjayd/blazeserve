@@ -10,15 +10,8 @@ on:
       - ".gitignore"
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/FUNDING.yml"
-  pull_request:
+  pull_request: # no paths-ignore: `ci result` must always run
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
-      - ".gitignore"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/FUNDING.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -32,21 +25,58 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE...$HEAD")"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -qvE '^docs/|\.md$|^LICENSE$|^\.gitignore$|^\.github/(ISSUE_TEMPLATE/|FUNDING\.yml$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   quality:
     name: Format and clippy
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
+          cache-key: quality
+          shared-key: blaze
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
-    needs: quality
+    needs: [changes, quality]
+    if: needs.changes.outputs.code == 'true' && needs.quality.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -60,58 +90,80 @@ jobs:
           - os: ubuntu-latest
             toolchain: "1.93"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ matrix.toolchain }}
-          cache-key: ${{ matrix.toolchain }}
+          cache-key: test-${{ matrix.toolchain }}
+          shared-key: blaze
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --all-targets --locked
 
   coverage:
     name: Coverage
-    needs: quality
+    needs: [changes, quality]
+    if: needs.changes.outputs.code == 'true' && needs.quality.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@v2
+          cache-key: coverage
+          shared-key: blaze
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2.90.11
         with:
           tool: cargo-llvm-cov
       - run: cargo llvm-cov --locked --fail-under-lines 80 --lcov --output-path lcov.info
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lcov
           path: lcov.info
 
   deny:
     name: Advisories and licenses
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: taiki-e/install-action@v2
+        with:
+          cache-key: deny
+          shared-key: blaze
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2.90.11
         with:
           tool: cargo-deny
       - run: cargo deny check
 
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           fail-on-severity: high
 
   package:
     name: Wheel (${{ matrix.os }})
-    needs: quality
+    needs: [changes, quality]
+    if: needs.changes.outputs.code == 'true' && needs.quality.result == 'success'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -119,10 +171,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          key: wheel-${{ matrix.os }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: wheel-${{ matrix.os }}
+          shared-key: blaze
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the wheel and, on Linux, the source distribution
         shell: bash
         run: |
@@ -141,13 +197,16 @@ jobs:
 
   container:
     name: Container probes
-    needs: test
+    needs: [changes, test]
+    if: needs.changes.outputs.code == 'true' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
@@ -161,23 +220,34 @@ jobs:
 
   crate:
     name: Crate package
-    needs: quality
+    needs: [changes, quality]
+    if: needs.changes.outputs.code == 'true' && needs.quality.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: crate
+          shared-key: blaze
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo package --locked
 
   deploy-config:
     name: Deployment config
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Pinned validators: Compose v5.7.0; kubectl v1.37.2; yq v4.54.2; Python v3.15.2; Bash v5.3.20;
     # Prometheus v3.16.0; Nginx v1.31.8; Caddy v2.11.9; Traefik v3.7.17.
     # systemd-analyze is the runner-provided Ubuntu version.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install Docker Compose v5.7.0 from its Docker Hub image
         env:
           COMPOSE_VERSION: v5.7.0
@@ -258,3 +328,18 @@ jobs:
           sudo ln -sf /bin/true /usr/local/bin/blaze
           trap 'sudo rm -f /usr/local/bin/blaze' EXIT
           systemd-analyze verify deploy/systemd/blazeserve.service
+
+  result:
+    name: ci result
+    if: always()
+    needs: [changes, quality, test, coverage, deny, dependency-review, package, container, crate, deploy-config]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) exit 1 ;; esac
+          done

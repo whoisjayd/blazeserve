@@ -12,17 +12,27 @@ inputs:
     description: Comma-separated extra targets
     default: ""
   cache-key:
-    description: Extra cache key to separate builds
+    description: Cache key that separates one kind of build from another
     default: ""
+  shared-key:
+    description: Prefix that lets another workflow restore a cache with the same cache-key
+    default: ""
+  save-if:
+    description: Whether to save the cargo cache after the job
+    default: "true"
 
 runs:
   using: composite
   steps:
-    - uses: dtolnay/rust-toolchain@v1
+    - if: inputs.toolchain != ''
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
       with:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         key: ${{ inputs.cache-key }}
+        # rust-cache ignores `key` and the job id once `shared-key` is set, so join them here.
+        shared-key: ${{ inputs.shared-key != '' && format('{0}-{1}', inputs.shared-key, inputs.cache-key) || '' }}
+        save-if: ${{ inputs.save-if }}

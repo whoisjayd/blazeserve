@@ -1,7 +1,21 @@
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
 [advisories]
 yanked = "deny"
+# Every ignore needs a reason.
+ignore = []
 
 [licenses]
+confidence-threshold = 0.93
 allow = [
     "MIT",
     "Apache-2.0",
@@ -22,7 +36,15 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+deny = [
+    { crate = "openssl", reason = "TLS is rustls only; no system library" },
+    { crate = "openssl-sys", reason = "TLS is rustls only; no system library" },
+    { crate = "native-tls", reason = "TLS is rustls only; no system library" },
+    { crate = "unrar-ng-sys", reason = "UnRAR license forbids building a RAR-compatible archiver" },
+]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -5,8 +5,10 @@
 #   secret    CARGO_REGISTRY_TOKEN, publish scope for the crate (repository or crates-io environment)
 #   variable  BLAZE_TELEMETRY_URL, the telemetry relay URL baked into release binaries, wheels and the image
 #
-# Run it from main with the exact version, or push a v* tag on a commit that is on main. Every gate passes
-# before any publisher starts. PyPI files and crates.io versions are immutable, so a version is never reused.
+# A manual run is a dry run unless dry_run is unchecked: it builds and tests everything and publishes
+# nothing. To release, run it from main with the exact version and dry_run unchecked, or push a v* tag on
+# a commit that is on main. Every gate passes before any publisher starts. PyPI files and crates.io
+# versions are immutable, so a version is never reused.
 # If one publisher fails, rerun the failed jobs: PyPI skips files it already has, the crate job skips a
 # version that is already on crates.io, and the GitHub release waits for all three.
 #
@@ -24,6 +26,10 @@ on:
         description: Version to release; must equal Cargo.toml and pyproject.toml
         required: true
         type: string
+      dry_run:
+        description: Build and test everything, publish nothing
+        type: boolean
+        default: true
 
 concurrency:
   group: release
@@ -45,8 +51,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Match requested version, tag and package metadata
         id: version
@@ -77,11 +84,12 @@ jobs:
               out.write(f"version={cargo}\ntag={tag}\n")
           PY
       - name: Require release commit on main
+        if: github.event_name == 'push' || !inputs.dry_run
         run: |
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${GITHUB_SHA}^{commit}" origin/main
       - name: Require a new tag for manual dispatch
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -96,10 +104,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
+          cache-key: quality
+          shared-key: blaze
+          save-if: false
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -113,8 +126,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: test-stable
+          shared-key: blaze
+          save-if: false
       - run: cargo test --all-targets --locked
 
   container-gate:
@@ -123,9 +142,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
@@ -144,8 +165,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: crate
+          shared-key: blaze
+          save-if: false
       - run: cargo package --locked
 
   binaries:
@@ -165,17 +192,142 @@ jobs:
           - { target: x86_64-apple-darwin, os: macos-latest, ext: tar.gz }
           - { target: aarch64-apple-darwin, os: macos-latest, ext: tar.gz }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
           cache-key: ${{ matrix.target }}
+          shared-key: blaze
+          save-if: false
       - name: Install musl toolchain
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target ${{ matrix.target }}
         env:
           BLAZE_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
+      - name: Check debug test knobs are absent from release binary
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bin="target/$TARGET/release/blaze"
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          strings "$bin" > "$tmp"
+          if grep -E 'BLAZE_CRASH_AT|BLAZE_CRASH_AFTER|BLAZE_FREE' "$tmp"; then
+            echo "debug test knob found in release binary: $bin" >&2
+            exit 1
+          fi
+      - name: Smoke-test native release binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXT: ${{ matrix.ext }}
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
+        run: |
+          set -euo pipefail
+          exe=blaze
+          [ "$EXT" = zip ] && exe=blaze.exe
+          bin="target/$TARGET/release/$exe"
+          if command -v python3 >/dev/null 2>&1 && python3 --version >/dev/null 2>&1; then
+            py=python3
+          else
+            py=python
+          fi
+          "$py" - "$bin" "$EXPECTED_VERSION" "$EXPECTED_TELEMETRY_URL" <<'PY'
+          import json
+          import os
+          import pathlib
+          import socket
+          import subprocess
+          import sys
+          import tempfile
+
+          bin_path = str(pathlib.Path(sys.argv[1]).resolve())
+          expected_version, expected_url = sys.argv[2:4]
+
+          def run(args, env):
+              return subprocess.run(
+                  [bin_path, *args],
+                  env=env,
+                  text=True,
+                  capture_output=True,
+                  timeout=30,
+              )
+
+          with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+              root = pathlib.Path(tmp)
+              config_dir = root / "config"
+              state_dir = root / "state"
+              serve_dir = root / "serve"
+              out_dir = root / "out"
+              for d in (config_dir, state_dir, serve_dir, out_dir):
+                  d.mkdir()
+
+              base_env = os.environ.copy()
+              base_env.pop("BLAZE_TELEMETRY_URL", None)
+              base_env["BLAZE_CONFIG_DIR"] = str(config_dir)
+              base_env["BLAZE_STATE_DIR"] = str(state_dir)
+              base_env["NO_COLOR"] = "1"
+              base_env["CI"] = "1"
+
+              ver = run(["--version"], base_env)
+              assert ver.returncode == 0, ver.stderr
+              assert expected_version in ver.stdout, ver.stdout
+
+              ver_json = run(["version", "--json"], base_env)
+              assert ver_json.returncode == 0, ver_json.stderr
+              info = json.loads(ver_json.stdout)
+              assert info["name"] == "blazeserve", info
+              assert info["version"] == expected_version, info
+
+              tel = run(["telemetry", "status"], base_env)
+              assert tel.returncode == 0, tel.stderr
+              if expected_url:
+                  assert "configured" in tel.stdout and "not configured" not in tel.stdout, tel.stdout
+                  assert expected_url.encode("utf-8") in pathlib.Path(bin_path).read_bytes(), (
+                      f"baked telemetry URL {expected_url!r} missing from binary"
+                  )
+              else:
+                  assert "not configured" in tel.stdout, tel.stdout
+
+              payload = b"blazeserve-release-smoke\n" * 1024
+              (serve_dir / "smoke.bin").write_bytes(payload)
+
+              job_id = None
+              port = None
+              last_err = ""
+              for _ in range(3):
+                  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                      sock.bind(("127.0.0.1", 0))
+                      candidate = sock.getsockname()[1]
+                  started = run(
+                      ["serve", str(serve_dir), "--host", "127.0.0.1", "--port", str(candidate), "--background"],
+                      base_env,
+                  )
+                  if started.returncode == 0:
+                      job_id = started.stdout.strip()
+                      port = candidate
+                      break
+                  last_err = started.stderr
+              assert job_id and port, f"failed to start background server: {last_err}"
+
+              stop_res = None
+              try:
+                  dest = out_dir / "smoke.bin"
+                  got = run(["get", f"http://127.0.0.1:{port}/smoke.bin", "-o", str(dest)], base_env)
+                  assert got.returncode == 0, got.stderr
+                  assert dest.read_bytes() == payload, "downloaded bytes differ from served file"
+              finally:
+                  stop_res = run(["stop", job_id, "--yes"], base_env)
+              assert stop_res.returncode == 0, stop_res.stderr
+          PY
       - name: Archive
         shell: bash
         env:
@@ -192,7 +344,7 @@ jobs:
           else
             tar -czf "dist/$NAME.tar.gz" "$NAME"
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bin-${{ matrix.target }}
           path: dist/*
@@ -215,11 +367,15 @@ jobs:
           - { target: x86_64, os: macos-latest }
           - { target: aarch64, os: macos-latest }
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          key: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'native' }}
-      - uses: PyO3/maturin-action@v1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'native' }}
+          shared-key: blaze
+          save-if: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
           BLAZE_TELEMETRY_URL: ${{ vars.BLAZE_TELEMETRY_URL }}
         with:
@@ -228,7 +384,7 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           docker-options: -e BLAZE_TELEMETRY_URL
           args: --release --locked --out dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'native' }}
           path: dist/*
@@ -240,9 +396,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: pipx run --spec 'maturin>=1.9.4,<2' maturin sdist --out dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdist
           path: dist/*
@@ -258,7 +416,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: "{bin-*,wheel-*,sdist}"
           path: staging
@@ -270,17 +428,19 @@ jobs:
           mv staging/*.whl staging/blazeserve-[0-9]*.tar.gz dist/
           mv staging/* release/
           (cd release && sha256sum * | tee SHA256SUMS)
-      - uses: actions/attest-build-provenance@v4
+      # An attestation is a public, permanent record, so a dry run must not create one.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event_name == 'push' || !inputs.dry_run
         with:
           subject-path: |
             dist/*
             release/*
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dist
           path: dist/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           path: release/*
@@ -288,16 +448,17 @@ jobs:
 
   publish-package:
     name: Publish to PyPI
+    if: github.event_name == 'push' || !inputs.dry_run
     needs: [validate, assets]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
@@ -306,13 +467,20 @@ jobs:
 
   publish-crate:
     name: Publish to crates.io
+    if: github.event_name == 'push' || !inputs.dry_run
     needs: [validate, assets]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: crates-io
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: crate
+          shared-key: blaze
+          save-if: false
       - name: Publish unless this version is already on crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -328,6 +496,7 @@ jobs:
 
   publish-container:
     name: Publish to GHCR
+    if: github.event_name == 'push' || !inputs.dry_run
     needs: [validate, assets]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -337,16 +506,18 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: true
@@ -359,7 +530,7 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
             ghcr.io/${{ github.repository }}:latest
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -367,17 +538,18 @@ jobs:
 
   github-release:
     name: GitHub release
+    if: github.event_name == 'push' || !inputs.dry_run
     needs: [validate, publish-package, publish-crate, publish-container]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets
           path: release/
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.validate.outputs.tag }}
           target_commitish: ${{ github.sha }}
