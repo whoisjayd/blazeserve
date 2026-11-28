@@ -13,11 +13,13 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze status [JOB]` | Show background jobs. `--watch` refreshes, `--json` prints one snapshot, `--all` adds finished jobs |
 | `blaze stop JOB` | Stop a background job after confirmation. `--yes` skips the question |
 | `blaze checksum FILES...` | SHA-256 of one or more files |
+| `blaze verify` | Check files against a checksum list. See [`blaze verify`](#blaze-verify) |
 | `blaze doctor [PATH]` | Check the folder, the port and system capabilities |
 | `blaze benchmark` | Time a download. See [Performance](performance.md) |
 | `blaze telemetry` | `status`, `enable`, `disable`, `reset` or `preview` |
 | `blaze upgrade` | Check for a newer release and install it the way BlazeServe was installed |
 | `blaze completions SHELL` | Print a shell completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
+| `blaze man` | Print the man page, for `man -l -` or a `man1` folder |
 | `blaze version` | Version and platform. Add `--json` for scripts |
 
 The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose`, `--log-json` or OpenTelemetry export, which write their own lines.
@@ -30,7 +32,7 @@ The global `--color auto|always|never` option controls colour. `NO_COLOR` and `C
 | 1 | Something failed while running |
 | 2 | The command was used incorrectly |
 | 3 | Not enough free disk space, before or while writing (`get`) |
-| 4 | Integrity failure: a SHA-256, size or archive check did not pass, or the server rejected an upload's checksum (`get`, `put`) |
+| 4 | Integrity failure: a SHA-256, CRC-32, size or archive check did not pass, or the server rejected an upload's checksum (`get`, `put`, `verify`) |
 | 5 | The server refused the credentials, HTTP 401 or 403 (`get`, `put`) |
 
 Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password apart from a network problem, which stays at 1. The code follows the error that is printed.
@@ -93,6 +95,18 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 `get` and `put` honour `Retry-After` on `429` and `503` (seconds or HTTP date), up to 5 minutes. See [Passwords and retries](sharing-files.md#passwords-and-retries).
 
 When the server reports the file's size (`Content-Length` or `Content-Range`), `get` checks free disk space before creating `.part` and exits with code `3` if the remaining bytes to fetch do not fit. Plain downloads reserve no extra margin (`--keep-free` applies only with `--extract`).
+
+## `blaze verify`
+
+| Form | Checks |
+| :--- | :--- |
+| `blaze verify FILE...` | Each file against `FILE.sha256`, or else the `SHA256SUMS` beside it |
+| `blaze verify --check LIST` | Every file named in a `sha256sum` list |
+| `blaze verify --sfv LIST` | Every file named in an SFV (CRC-32) list |
+
+Each file is reported as `ok`, `FAILED`, `missing` or `skipped` with a reason. The status is `0` when everything matches, `4` when any file does not match, and `1` when nothing failed but a file could not be checked. A list that is empty or has a line that is not an entry is refused with status `1`.
+
+Only the file name of each entry is used: files are looked up beside the list, and subfolders named in it are not followed. A checksum shows that a file arrived intact, not who made it, and CRC-32 only catches accidents.
 
 ## `blaze put` options
 

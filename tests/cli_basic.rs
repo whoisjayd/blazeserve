@@ -376,3 +376,12 @@ fn send_help_explains_the_expiry_grace_period() {
     assert!(help.contains("10 more seconds"), "{help}");
     assert!(help.contains("sleeps"), "{help}");
 }
+
+#[test]
+fn man_prints_a_man_page() {
+    let out = run(&["man"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let page = stdout(&out);
+    assert!(page.contains(".TH blaze 1"), "{page}");
+    assert!(page.contains("Download a file"), "{page}");
+}

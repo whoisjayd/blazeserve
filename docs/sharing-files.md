@@ -102,6 +102,18 @@ This only works against a BlazeServe server, and only when you ask for it. Befor
 
 Two things to know. The server hashes the whole file first, so a large file that has not been hashed before makes the download start later; the server remembers the result while the file is unchanged, so the next request is quick. And a checksum from the same server only shows that you received what that server holds. It does not prove who published the file, and a server that serves altered content can serve a matching checksum. When the checksum comes from somewhere you trust separately, use `--sha256` instead.
 
+### Check files you already have
+
+`blaze verify` checks files against a checksum list, such as the `SHA256SUMS` published with a release:
+
+```bash
+blaze verify big.iso                 # uses big.iso.sha256, or else SHA256SUMS beside it
+blaze verify --check SHA256SUMS      # every file the list names
+blaze verify --sfv release.sfv       # CRC-32 lists
+```
+
+It exits with `4` when a file does not match. `--check` reports files you did not download as `missing`, so name the files when you only have some of them. See [the reference](reference.md#blaze-verify).
+
 ### Passwords and retries
 
 For a server that asks for a password, prefer an environment variable so the password does not show up in your shell history or process list:

@@ -12,6 +12,8 @@ mod archive;
 mod crc32;
 mod writer;
 
+pub(crate) use crc32::crc32_update;
+
 use std::sync::Arc;
 
 use bytes::Bytes;

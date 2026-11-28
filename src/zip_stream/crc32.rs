@@ -33,7 +33,7 @@ const fn crc_tables() -> [[u32; 256]; 8] {
 
 static CRC: [[u32; 256]; 8] = crc_tables();
 
-pub(super) fn crc32_update(state: u32, data: &[u8]) -> u32 {
+pub(crate) fn crc32_update(state: u32, data: &[u8]) -> u32 {
     let mut crc = !state;
     let (chunks, remainder) = data.as_chunks::<8>();
     for c in chunks {

@@ -45,3 +45,10 @@ path = "fuzz_targets/filename.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "verify"
+path = "fuzz_targets/verify.rs"
+test = false
+doc = false
+bench = false

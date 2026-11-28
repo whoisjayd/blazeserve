@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[cfg(fuzzing)]
-pub use transfer::{parse_digest_for_fuzz, suggested_name_for_fuzz};
+pub use transfer::{parse_digest_for_fuzz, parse_lists_for_fuzz, suggested_name_for_fuzz};
 pub use upgrade::api as upgrade_api;
 pub use util::{human_size, sha256_file};
 
@@ -40,6 +40,7 @@ const TOP_EXAMPLES: &str = "Examples:
   blaze send report.pdf             Share one file
   blaze get http://host:8000/big.iso   Resumable download
   blaze put backup.tar http://host:8000   Resumable upload (server needs --max-upload-mb)
+  blaze verify --check SHA256SUMS   Check downloaded files
   blaze doctor ./site --port 9000   Check a directory and port before serving
   blaze completions powershell      Print a shell completion script
 
@@ -102,6 +103,12 @@ enum Command {
     Send(serve::SendArgs),
     /// SHA256 for files
     Checksum(ChecksumArgs),
+    /// Check files against SHA-256 or SFV lists
+    #[command(after_help = "Examples:
+  blaze verify big.iso                 # uses big.iso.sha256, else SHA256SUMS
+  blaze verify --check SHA256SUMS
+  blaze verify --sfv release.sfv")]
+    Verify(transfer::VerifyArgs),
     /// Show version and system info
     Version(VersionArgs),
     /// Validate system environment and server configuration
@@ -158,6 +165,11 @@ pip and cargo installs run pip or cargo. Containers and package managers get ins
   blaze completions bash > ~/.local/share/bash-completion/completions/blaze
   blaze completions powershell | Out-String | Invoke-Expression")]
     Completions(CompletionsArgs),
+    /// Print the man page
+    #[command(after_help = "Examples:
+  blaze man > ~/.local/share/man/man1/blaze.1
+  blaze man | man -l -")]
+    Man,
 }
 
 #[derive(Args, Debug)]
@@ -180,6 +192,13 @@ fn completions(args: CompletionsArgs) -> Result<u8, String> {
         "blaze",
         &mut std::io::stdout(),
     );
+    Ok(0)
+}
+
+fn man() -> Result<u8, String> {
+    clap_mangen::Man::new(Cli::command())
+        .render(&mut std::io::stdout().lock())
+        .map_err(|e| format!("cannot write the man page: {e}"))?;
     Ok(0)
 }
 
@@ -286,6 +305,7 @@ fn dispatch(command: Command) -> Result<u8, Failure> {
             Ok(jobs::run(jobs::Kind::Send, &bg, move || serve::send(a))?)
         }
         Command::Checksum(a) => Ok(checksum(a)?),
+        Command::Verify(a) => Ok(transfer::verify(a)?),
         Command::Version(a) => Ok(version(a)?),
         Command::Doctor(a) => Ok(doctor::run(a)?),
         Command::Benchmark(a) => Ok(bench::run(a)?),
@@ -302,6 +322,7 @@ fn dispatch(command: Command) -> Result<u8, Failure> {
         Command::Telemetry(a) => Ok(telemetry::run(a)?),
         Command::Upgrade(a) => Ok(upgrade::run(a)?),
         Command::Completions(a) => Ok(completions(a)?),
+        Command::Man => Ok(man()?),
     }
 }
 
