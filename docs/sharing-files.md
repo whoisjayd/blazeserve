@@ -25,6 +25,14 @@ The countdown starts once the port is bound, and the startup output shows the li
 
 The timer uses the monotonic clock, which on most systems does not advance while the computer sleeps. A suspended share is therefore not expired the moment the machine wakes; it stays available for the time that was left. Expiry only stops your server. It cannot recall copies that were already downloaded. `serve` does not have this option.
 
+## Look before you download
+
+```bash
+blaze info http://host:5949/big.iso
+```
+
+`info` shows the file name, size and type, whether an interrupted download can resume, and whether it can come over several connections. If it cannot, it says why. Nothing is saved. Add `--auth-env VAR` for a protected link, or `--json` for a script.
+
 ## Download a file
 
 ```bash
@@ -33,7 +41,7 @@ blaze get http://host:5949/big.iso
 
 The file is saved under the name the server suggests in its `Content-Disposition` header. A folder downloaded as a ZIP, for example `blaze get 'http://host:5949/__zip__?path=docs'`, arrives as `docs.zip`. If the server suggests nothing usable, the last part of the URL is used, here `big.iso`. Only the final part of a suggested name is kept, and names that could write elsewhere or name a device are ignored. Use `-o` to choose another name, which always wins. While it downloads, BlazeServe writes to `big.iso.part`, then checks the size and renames it when the download is complete.
 
-In a terminal, `get` and `put` draw a small live block with the file name, a progress bar with sizes, and the speed, time remaining and time elapsed. Nothing is drawn when the output is piped.
+In a terminal, `get` and `put` draw a framed panel that updates in place: progress and sizes, speed with its recent history, time left and elapsed, and the connections in use. A download in parts also shows a block map of which parts are done, arriving and waiting. Nothing is drawn when the output is piped.
 
 ### Resuming
 
@@ -51,7 +59,7 @@ blaze get http://host:5949/game.zip --extract
 
 When the download has been checked and renamed, the archive is unpacked into a folder named after it, next to it. The archive is consumed as its files come out, so you only need free space for about the extracted size instead of the archive and its contents together. BlazeServe checks that it fits before it changes anything, and keeps `--keep-free` untouched throughout. It also reads the whole archive and checks every file's checksum first, so a damaged download is refused while it is still intact. `--no-verify-first` skips that pass on very large archives. Add `--keep-archive` if you want the archive afterwards; that needs room for both. `--nested` also unpacks the archives that come out, one level deep; a `.jar` or document that happens to be a ZIP is left as it is. For an encrypted archive, put its password in a variable and pass `--password-env VAR`.
 
-If the extraction is interrupted, run the same command again and it resumes. Extraction is powered by [HatchZip](https://github.com/xevrion/hatchzip)'s engine. Encrypted archives are not supported here; use HatchZip itself for those.
+If the extraction is interrupted, run the same command again and it resumes. Extraction is powered by [HatchZip](https://github.com/xevrion/hatchzip)'s engine.
 
 ### Making it faster
 
@@ -62,11 +70,11 @@ blaze get http://host:5949/big.iso -c 8
 blaze get http://host:5949/big.iso -c max
 ```
 
-More connections only help when one stream cannot fill your link, which is typical on a very fast line to a distant server. Each connection costs a thread and a socket, and some servers throttle or block clients that open many, so BlazeServe prints a note above 16. The live display shows how many connections are in use.
+More connections only help when one stream cannot fill your link, which is typical on a very fast line to a distant server. Each connection costs a thread and a socket, and some servers throttle or block clients that open many, so BlazeServe prints a note above 16. The live panel shows how many connections are in use.
 
 If a server refuses or drops the extra connections and the retries run out, `get` does not give up. It halves the count, for example 32, 16, 8, 4, 2 and then 1, and carries on with the parts it already has. Permanent errors such as a wrong password or a missing file still stop the download straight away.
 
-This applies to files of at least 8 MiB, from servers that support byte ranges and give the file a stable identity. If the server cannot do that, BlazeServe quietly falls back to a single stream. If a multi-connection download is interrupted, the next run skips the parts that already finished. Use `-c 1` to force a single stream.
+This applies to files of at least 8 MiB, from servers that support byte ranges and give the file a stable identity. If the server cannot do that, BlazeServe says why and uses a single connection; `blaze info URL` tells you beforehand. If a multi-connection download is interrupted, the next run skips the parts that already finished. Use `-c 1` to force a single stream.
 
 To be polite to a shared network, cap the total speed:
 
@@ -144,7 +152,7 @@ When a limit runs out the command stops with a non-zero exit code and says which
 
 If a server answers `429` or `503` with a `Retry-After` header, `get` and `put` wait at least that long before the next attempt, whether the header gives seconds or an HTTP date. A date that has already passed, or a value that is not valid, is ignored and the usual pause applies. The wait is never shorter than the usual pause, and a small random extra is added so parallel downloads do not return together. All connections of one download pause together. Other statuses ignore the header.
 
-A server may ask for at most 5 minutes. If it asks for more, the transfer stops with an error saying so rather than retrying early. These pauses are not counted against a time limit, because `get` and `put` have none. `--retries 0` still never retries.
+A server may ask for at most 5 minutes. If it asks for more, the transfer stops with an error saying so rather than retrying early. `--retries 0` still never retries.
 
 ## Upload a file
 

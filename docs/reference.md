@@ -6,13 +6,15 @@ Every command, option, address and setting in one place. For explanations, use t
 
 | Command | What it does |
 | :--- | :--- |
+| `blaze` | With nothing after it at a terminal, a guided menu |
 | `blaze serve [PATH]` | Serve a folder or a file |
-| `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy options of `serve`, plus `--expires-after DURATION` |
+| `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, security, limit and proxy options of `serve`, plus `--expires-after DURATION` |
 | `blaze get URL` | Download with resume |
 | `blaze put FILE URL` | Upload with resume. A bare server address uploads under `/__upload__/` |
 | `blaze status [JOB]` | Show background jobs. `--watch` opens a live dashboard at a terminal, `--json` prints one snapshot, `--all` adds finished jobs |
 | `blaze attach [JOB]` | Bring a background job to the front: a live view with its log. Also `blaze fg`. Leaving it does not stop the job |
 | `blaze stop [JOB]` | Stop a background job after confirmation; without a job, choose one from a list. `--yes` skips the question |
+| `blaze info URL` | What a URL would download: name, size, type, resume and parts, with the reason when it must use one connection. `--auth-env`, `--auth`, `--json` and the time limits of `get` |
 | `blaze checksum FILES...` | SHA-256 of one or more files |
 | `blaze verify` | Check files against a checksum list. See [`blaze verify`](#blaze-verify) |
 | `blaze doctor [PATH]` | Check the folder, the port and system capabilities |
@@ -24,7 +26,26 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze man` | Print the man page, for `man -l -` or a `man1` folder |
 | `blaze version` | Version and platform. Add `--json` for scripts |
 
-The global `-q`/`--quiet` option prints only errors and warnings. The global `--progress json` option makes `get` and `put` print `{"event":"progress","bytes":N,"total":N,"elapsed_ms":N}` lines to standard error, at most two a second, and `{"event":"done","path":...,"bytes":N}` to standard output. The global `--name NAME` option labels a run: `status`, the dashboard, `stop`, `attach` and `bug` show it, and `stop` and `attach` accept it in place of an ID. Names stay on your machine. The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose` or `--log-json`, which write their own lines.
+## Global options
+
+These work with every command.
+
+| Option | Meaning |
+| :--- | :--- |
+| `-q`, `--quiet` | Print only errors and warnings |
+| `--name NAME` | Label a run. `status`, the dashboard, `stop`, `attach` and `bug` show it, and `stop` and `attach` accept it in place of an ID. Names stay on your machine |
+| `--progress json` | `get` and `put` print `{"event":"progress","bytes":N,"total":N,"elapsed_ms":N}` lines to standard error, at most two a second, and `{"event":"done","path":...,"bytes":N}` to standard output |
+| `--color auto\|always\|never` | Control colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected |
+
+## What you see in a terminal
+
+Live views go to standard error and appear only in a terminal, so piped output stays plain and nothing waits for input there.
+
+| Command | Live view |
+| :--- | :--- |
+| `get`, `put`, extraction | A framed panel: progress, speed and its recent history, time left, time elapsed, connections and, for a download in parts, the block map |
+| `serve`, `send` | A panel under the startup card: speed, requests, connections, bytes sent and received, errors and uptime. Not drawn with `--verbose` or `--log-json`, which write their own lines |
+| `status --watch`, `attach` | A full-screen [dashboard](background-jobs.md#watch-and-manage-jobs) |
 
 ## Exit codes
 
@@ -101,6 +122,18 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 
 When the server reports the file's size (`Content-Length` or `Content-Range`), `get` checks free disk space before creating `.part` and exits with code `3` if the remaining bytes to fetch do not fit. Plain downloads reserve no extra margin (`--keep-free` applies only with `--extract`).
 
+## `blaze info` options
+
+`blaze info URL` asks the server about a file and saves nothing. It shows the name it would be saved as, the size, the type, whether the download can resume, whether `get` would use several connections (and why not), and the `ETag`, `Last-Modified` and `Server` headers when they are sent.
+
+| Option | Meaning |
+| :--- | :--- |
+| `--auth USER:PASS`, `--auth-env VAR` | Password for the server |
+| `--json` | Print JSON: `name`, `size`, `content_type`, `resume`, `parts`, `why_not`, `etag`, `last_modified`, `server` |
+| `--connect-timeout`, `--idle-timeout`, `--max-time` | As for `get` |
+
+If a server does not answer `HEAD`, one byte is requested instead.
+
 ## `blaze verify`
 
 | Form | Checks |
@@ -146,7 +179,7 @@ Pre-releases are never chosen by default, and an older release is never installe
 | :--- | :--- |
 | Downloaded binary | Downloads the archive for this system, checks its SHA-256 against the release `SHA256SUMS`, and replaces itself. The old program is restored if anything fails |
 | pip | Runs `python -m pip install --upgrade blazeserve` with the Python that started `blaze` |
-| Cargo | Runs `cargo install blazeserve --locked --force` |
+| Cargo | Runs `cargo install blazeserve --locked --force`, which builds from source. On Windows the running program is moved aside first and put back if the build fails |
 | Container | Prints the `docker pull` command and changes nothing |
 | Homebrew, Scoop, winget, Nix, pipx, uv or a system package | Prints the command for that tool and changes nothing |
 

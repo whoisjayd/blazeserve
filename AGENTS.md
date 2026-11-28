@@ -13,6 +13,9 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 
 ## Product boundaries
 
+- The default port is `config::DEFAULT_PORT` (5949). Without `--port`, `serve` and `send` move to the next free port; an asked port is never changed.
+- The terminal experience (cards, the block map, menus, pickers, the dashboard, questions) appears only at a terminal. Piped output stays plain and nothing ever waits for input there.
+- `docs/telemetry.md` is the contract for what is collected. No event may carry a file name, path, URL, address, option value or error message; nothing tracks visitors of a served folder.
 - `blaze benchmark` without `--url` starts a temporary loopback server and cleans it up. With `--url` it measures an existing server and must not start another.
 - BlazeServe opens its own socket. systemd socket activation is not supported.
 - Changing a TLS certificate needs a restart. There is no reload inside the process.
@@ -26,7 +29,7 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | :--- | :--- |
 | `src/lib.rs` | The module list, `VERSION`, `AppState`, `PeerInfo` and `Body` |
 | `src/config.rs` | Typed settings and their validation, the single source of truth for every entry point |
-| `src/cli/`, `src/main.rs` | Commands, help text, progress output and input checks. `cli::main_from` runs the CLI for embedders. `cli/transfer/` holds resumable `get` (one stream in `download`, parallel segments in `segmented`) and `put`. `filename` reads the server-suggested name, `retry` the `Retry-After` policy, `extract` the in-place extraction through `hatchzip-core`; `cli/live.rs` draws the status line under `serve` and `send`. `cli/bench/` holds the benchmark harness |
+| `src/cli/`, `src/main.rs` | Commands, help text, input checks. `cli::main_from` runs the CLI for embedders. Presentation: `ansi` (styles, notices, cards, `--quiet`, JSON progress), `util` (progress bar, summaries), `blocks` (the parallel block map), `panel` (the frame of the live views), `live` (the server panel), `pick` and `prompt` (questions, only at a terminal), `menu` (`blaze` on its own). Around a command: `report`, `runlog` (redacted local logs), `crash`, `feedback` (`bug`, the rating question). `cli/transfer/` holds `get` (`download`, parallel `segmented` with `pace` for the connection count), `put`, `verify`, `extract` and `nested`. `cli/jobs/` holds background jobs and the `dashboard`; `cli/bench/` the benchmark harness |
 | `src/server/` | `bind` and `tls` set up the listener, `accept` applies admission control, `connection` and `idle` serve one connection, `prefixed` sniffs the HTTP/2 preface, `budget` limits how fast one HTTP/2 connection opens streams, `proxy` works out the trusted client identity, and `mod.rs` owns start and shutdown |
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP behaviour: ranges, validators, status routes, CORS, authentication, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
 | `src/upload/`, `src/zip_stream/` | Uploads (`request`, `target`, `stream`, `publish`, `plain`, `resumable`) and streaming ZIPs (`writer`, `crc32`, `archive`) |
@@ -40,7 +43,8 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | `docs/` | The user guides, and `assets/` with the logo, social preview, README demo animation and the VHS tapes that record it. `README.md` is the front page and links to them |
 | `.github/workflows/` | `ci.yml` and `release.yml`, the authoritative gates, and `codeql.yml`, the weekly and per-change security scan |
 | `Dockerfile`, `docker-compose.yml` | The `scratch` image, running as uid and gid 10001 |
-| `deploy/` | Kubernetes, systemd, proxy and Linux tuning. Start at `deploy/README.md` |
+| `deploy/` | Kubernetes, systemd, proxy, Linux tuning and `docker/release.Dockerfile`, which the release builds from its binaries. Start at `deploy/README.md` |
+| `packaging/` | `update_manifests.py`, which writes the Homebrew, Scoop, winget and AUR manifests from `SHA256SUMS` |
 
 Dependencies point downward and never form cycles:
 
@@ -139,7 +143,7 @@ Write documentation for people, in plain language. Keep it accurate and keep the
 
 | Change | Update |
 | :--- | :--- |
-| CLI command, option, default or output | `docs/reference.md` and the relevant guide in `docs/`, `README.md` if it shows the command, the tests, and `CONTRIBUTING.md` if contributor commands change |
+| CLI command, option, default or output | `docs/reference.md` and the relevant guide in `docs/`, `README.md` (features should be visible there), the help text, the Python stubs for a new command, the tests, and `CONTRIBUTING.md` if contributor commands change |
 | HTTP endpoint, method, status, header, cache, auth, upload or range behaviour | The endpoint tables in `docs/reference.md`, the relevant guide, and the integration tests |
 | Startup, shutdown, TLS, bind or health | `deploy/README.md`, `deploy/systemd/`, `Dockerfile`, Compose and the Kubernetes probes |
 | Container identity, port, path or writable state | `Dockerfile`, Compose, `deploy/README.md`, `deploy/k8s/` |
@@ -194,7 +198,9 @@ The release workflow needs its manual version or `v*` tag to equal `Cargo.toml` 
 - Every failure path of an upload removes its staging file, including a refused precheck and a failed publish. A leftover full-size staging file turns every retry into a `409`.
 - A `?hash` or similar answer is about the file asked for. Never negotiate a precompressed sibling for it.
 - `try_send` on a bounded channel drops the item when the consumer is slow. An error that must reach the client uses `blocking_send`.
-- Notices printed while a progress dashboard is on screen go through `ansi::announce`, which draws above it. A bare `eprintln!` tears the redraw.
+- Notices printed while a progress dashboard is on screen go through `ansi::announce`, which draws above it. A bare `eprintln!` tears the redraw. `announce` also feeds the run log, so never pass it a secret.
+- `Swatinem/rust-cache` ignores `key` and the job ID once `shared-key` is set; `setup-rust` joins them.
+- A restarted download must drop its old bytes before recording the new validator, or a crash splices two files together.
 - Cargo features are additive. A dependency cannot switch off a default feature another crate in the tree turns on, so check `cargo tree` before claiming a build is free of C code.
 - Windows briefly holds new files open for security software, so a rename right after a write can fail; use `rename_with_retry`.
 

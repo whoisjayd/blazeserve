@@ -51,6 +51,7 @@ CI also requires 80 percent line coverage (`cargo llvm-cov`) and runs `cargo den
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP behaviour: ranges, caching headers, status pages |
 | `src/upload/`, `src/zip_stream/`, `src/security.rs` | Uploads, ZIP streaming, keeping paths inside the served folder |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/usage/`, `src/ui.rs` | Speed limits, metrics, logs, usage analytics, the folder listing page |
+| `src/platform/`, `packaging/` | Code that differs between systems, package manifests |
 | `src/python.rs`, `python/`, `tests_py/` | The Python bindings, the Python package and its tests |
 | `tests/` | Tests that start a real server. Smaller unit tests sit next to the code |
 | `deploy/` | Container, Kubernetes, systemd, proxy and monitoring files |

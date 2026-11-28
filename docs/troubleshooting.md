@@ -36,13 +36,15 @@ The server wants a password and did not receive a valid one. In a browser, enter
 
 ## Uploads do not work
 
-- Uploads are off until you start the server with `--max-upload-mb` set above zero.
+- Uploads are off until you start the server with `--uploads`, or `--max-upload-mb` set above zero.
 - `409 Conflict` means the file already exists. Uploads never overwrite by accident.
 - `412 Precondition Failed` means you tried to replace a file with an out-of-date `If-Match` tag. Fetch the file's current `ETag` and try again.
 - `413` means the upload is bigger than `--max-upload-mb`.
 - In the example Docker, Compose and Kubernetes files, the data folder is mounted read-only. Mount a writable volume to receive files. See [Uploads](uploads.md).
 
 ## Downloads start over instead of resuming, or use only one connection
+
+Run `blaze info URL`: it says whether the server allows resuming and several connections, and why not. `blaze get` prints the same reason when it falls back.
 
 `blaze get` can only resume or split a file when the server supports byte ranges and gives the file a stable identity (an `ETag` or `Last-Modified`). Some servers and proxies do not. BlazeServe then falls back to a single stream, and if the file changed on the server, it starts over so that you never end up with a mix of versions. Files under 8 MiB are always fetched in a single stream.
 

@@ -10,11 +10,11 @@ Pick whichever method suits you.
 | :--- | :--- |
 | Linux / macOS script | `curl -fsSL https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.sh \| sh` |
 | Windows PowerShell script | `irm https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.ps1 \| iex` |
-| pip or uv | `pip install blazeserve` or `uv tool install blazeserve` |
 | Cargo (prebuilt) | `cargo binstall blazeserve` |
 | Cargo (from source) | `cargo install blazeserve` |
+| pip or uv | `pip install blazeserve` or `uv tool install blazeserve` |
 | Download | Get an archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases) and check it against `SHA256SUMS` |
-| Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
+| Docker | `docker run --rm -p 5949:5949 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 
 Release archives include the man page (`man/blaze.1`) and shell completions (`completions/`). Prebuilt builds exist for Linux (x86_64 and aarch64, with glibc or musl), Windows x86_64, and macOS (Intel and Apple silicon). None of the prebuilt options (`install.sh`, `install.ps1`, `cargo binstall`, pip/uv wheels, release archives, or Docker) need Rust or a C compiler.
 
@@ -50,18 +50,13 @@ To build without `hatchzip-core` (which turns off `blaze get --extract`), disabl
 cargo install blazeserve --no-default-features
 ```
 
-To keep OpenTelemetry export while still leaving out `hatchzip-core`:
-
-```bash
-cargo install blazeserve --no-default-features --features otel
-```
-
 Note that `ring` may still require a C compiler depending on your platform.
 
-Check that it works:
+### Check that it works
 
 ```bash
 blaze version
+blaze          # a guided menu: it asks, runs the command and shows what it ran
 ```
 
 ## Serve a folder
@@ -70,7 +65,7 @@ blaze version
 blaze serve .
 ```
 
-BlazeServe prints the addresses it is listening on. Open `http://localhost:8000` in a browser and you will see a listing of the current folder, with search and sorting. Anyone on your network can reach the same files at your machine's address, because `blaze serve` listens on all interfaces by default. Press `Ctrl+C` to stop it.
+BlazeServe prints the addresses it is listening on. Open `http://localhost:5949` in a browser and you will see a listing of the current folder, with search and sorting. Anyone on your network can reach the same files at your machine's address, because `blaze serve` listens on all interfaces by default. Press `Ctrl+C` to stop it.
 
 Some things to try next:
 
@@ -92,8 +87,9 @@ This serves just that file and prints a link. Give the link to the other person,
 ## Download a file
 
 ```bash
-blaze get http://host:8000/big.iso
-blaze get http://host:8000/game.zip --extract   # unpack in place; add --keep-archive to keep game.zip
+blaze info http://host:5949/big.iso             # what you would get, without downloading
+blaze get http://host:5949/big.iso
+blaze get http://host:5949/game.zip --extract   # unpack in place; add --keep-archive to keep game.zip
 ```
 
 If the connection drops, run the same command again. It carries on from where it stopped instead of starting over. See [Sharing and downloading files](sharing-files.md) for the details.

@@ -6,6 +6,9 @@ Run `blaze upgrade` to move to a newer version; see [Getting started](getting-st
 
 - The default port is now **5949** instead of 8000. Add `--port 8000` to keep the old address, and check proxies, firewall rules and scripts.
 - OpenTelemetry export and the bundled monitoring configs were removed: `--otlp-endpoint`, the `OTEL_*` variables and the `trace_id` and `span_id` log fields are gone. `/__metrics__` stays.
+- Usage analytics now go to PostHog and say more; the notice is shown again. See [Telemetry](telemetry.md).
+
+New: `blaze` on its own opens a menu; help grouped by task; `blaze info URL`; framed live panels for `get`, `put`, `serve` and `send`; `blaze verify`, `blaze man`, `blaze bug`, `blaze attach` (`fg`); a job dashboard in `blaze status --watch`, where `d` deletes finished jobs; `serve --uploads`; a block map, adaptive connections, `--dry-run`, `--nested` and `--password-env` for `get`; upload verification; `-q`, `--name` and `--progress json` everywhere; install scripts.
 
 ## From 1.0 to 1.1
 
