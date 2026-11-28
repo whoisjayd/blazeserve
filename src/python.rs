@@ -197,7 +197,7 @@ impl Server {
         })
     }
 
-    /// Base URL of the server, for example `http://127.0.0.1:8000/`.
+    /// Base URL of the server, for example `http://127.0.0.1:5949/`.
     #[getter]
     fn url(&self) -> String {
         let scheme = if self.tls { "https" } else { "http" };

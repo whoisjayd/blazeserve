@@ -27,6 +27,6 @@ COPY --from=builder --chmod=1777 /rootfs/tmp /tmp
 ENV BLAZE_INSTALL_CHANNEL=docker
 USER 10001:10001
 WORKDIR /data
-EXPOSE 8000
+EXPOSE 5949
 ENTRYPOINT ["/usr/local/bin/blaze"]
-CMD ["serve", "/data", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["serve", "/data", "--host", "0.0.0.0", "--port", "5949"]

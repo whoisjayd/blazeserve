@@ -45,7 +45,7 @@ pip install blazeserve
 blaze serve .
 ```
 
-Open `http://localhost:8000` to browse the folder, with search and sorting. Press `Ctrl+C` to stop.
+Open `http://localhost:5949` to browse the folder, with search and sorting. Press `Ctrl+C` to stop.
 
 <details>
 <summary>Other ways to install</summary>
@@ -56,7 +56,7 @@ Open `http://localhost:8000` to browse the folder, with search and sorting. Pres
 | :--- | :--- |
 | uv | `uv tool install blazeserve` |
 | Cargo | `cargo install blazeserve` |
-| Docker | `docker run --rm -p 8000:8000 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
+| Docker | `docker run --rm -p 5949:5949 -v "$PWD":/data:ro ghcr.io/whoisjayd/blazeserve:latest` |
 | Download | An archive from the [Releases page](https://github.com/whoisjayd/blazeserve/releases), checked against `SHA256SUMS` |
 
 Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and Apple silicon). Building from source needs Rust 1.93 or newer.
@@ -71,10 +71,10 @@ Builds exist for Linux (x86_64 and aarch64), Windows x86_64 and macOS (Intel and
 | Share one file | `blaze send ./big.iso` |
 | Open a shared file on a phone | `blaze send ./big.iso --qr` |
 | Share a file for a limited time | `blaze send ./big.iso --expires-after 20m` |
-| Download, resuming if the connection drops | `blaze get http://host:8000/big.iso` |
-| Download faster over eight connections | `blaze get http://host:8000/big.iso -c 8` |
-| Upload with resume | `blaze put ./big.iso http://host:8000/` |
-| Run a download in the background, then check it | `blaze get http://host:8000/big.iso --background`, `blaze status` |
+| Download, resuming if the connection drops | `blaze get http://host:5949/big.iso` |
+| Download faster over eight connections | `blaze get http://host:5949/big.iso -c 8` |
+| Upload with resume | `blaze put ./big.iso http://host:5949/` |
+| Run a download in the background, then check it | `blaze get http://host:5949/big.iso --background`, `blaze status` |
 | Allow only this computer | `blaze serve ./site --host 127.0.0.1` |
 | Limit each visitor to 25 MB/s | `blaze serve . --rate-mbps 25` |
 | Keep sensitive files out of sight | `blaze serve . --hide '*.env' --hide .git` |

@@ -183,8 +183,8 @@ mod tests {
     #[test]
     fn url_rules() {
         assert_eq!(
-            validate_url("http://127.0.0.1:8000/").unwrap(),
-            "http://127.0.0.1:8000"
+            validate_url("http://127.0.0.1:5949/").unwrap(),
+            "http://127.0.0.1:5949"
         );
         assert!(validate_url("ftp://host").is_err());
         assert!(validate_url("http://user:pw@host").is_err());

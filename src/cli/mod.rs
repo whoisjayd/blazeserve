@@ -46,8 +46,8 @@ const TOP_EXAMPLES: &str = "Common tasks:
   Share a folder           blaze serve .
   ... and let people upload blaze serve ./inbox --uploads
   Send one file            blaze send report.pdf --qr
-  Download (resumes)       blaze get http://host:8000/big.iso
-  Upload (resumes)         blaze put backup.tar http://host:8000 --auth-env BLAZE_AUTH
+  Download (resumes)       blaze get http://host:5949/big.iso
+  Upload (resumes)         blaze put backup.tar http://host:5949 --auth-env BLAZE_AUTH
   Check what you got       blaze verify --check SHA256SUMS
   Run in the background    blaze serve . --background, then blaze status and blaze stop
   Something is off         blaze doctor ./site --port 9000, or blaze bug
@@ -157,12 +157,12 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
     /// Large files come down over several connections at once. A partial file is kept as
     /// NAME.part until it is complete. --sha256 or --verify checks it before it is saved.
     #[command(after_help = "Examples:
-  blaze get http://host:8000/big.iso
-  blaze get http://host:8000/big.iso -o disk.iso --sha256 <digest>
-  blaze get http://host:8000/big.iso --verify server-sha256   # check against the server's own SHA-256
-  blaze get http://host:8000/big.iso -c 8   # up to 8 parallel connections
-  blaze get http://host:8000/big.iso --limit-rate 2M   # cap total speed at 2 MiB/s
-  blaze get http://host:8000/big.iso --idle-timeout 45s --max-time 30m   # give up when stalled or too slow overall")]
+  blaze get http://host:5949/big.iso
+  blaze get http://host:5949/big.iso -o disk.iso --sha256 <digest>
+  blaze get http://host:5949/big.iso --verify server-sha256   # check against the server's own SHA-256
+  blaze get http://host:5949/big.iso -c 8   # up to 8 parallel connections
+  blaze get http://host:5949/big.iso --limit-rate 2M   # cap total speed at 2 MiB/s
+  blaze get http://host:5949/big.iso --idle-timeout 45s --max-time 30m   # give up when stalled or too slow overall")]
     Get(transfer::GetArgs),
     /// Upload a file; run it again to resume
     ///
@@ -493,7 +493,7 @@ mod tests {
         let Command::Serve(a) = cli.command else {
             panic!("expected serve")
         };
-        assert_eq!(a.common.port, 8000);
+        assert_eq!(a.common.port, 5949);
         assert_eq!(a.common.host, "0.0.0.0");
         assert_eq!(a.common.backlog, 8192);
         assert_eq!(a.timeout, 1800);

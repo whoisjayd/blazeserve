@@ -43,7 +43,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | Option | Default | Meaning |
 | :--- | :--- | :--- |
 | `PATH` | `.` | Folder or file to serve |
-| `--host`, `-p/--port` | `0.0.0.0`, `8000` | Address (IPv4 or IPv6) and port |
+| `--host`, `-p/--port` | `0.0.0.0`, `5949` | Address (IPv4 or IPv6) and port |
 | `--single FILE` | none | Serve exactly this file |
 | `--no-listing` | listing on | Turn off the folder listing |
 | `--index NAME` | `index.html`, `index.htm` | Extra index file names; repeatable |
@@ -123,7 +123,7 @@ Only the file name of each entry is used: files are looked up beside the list, a
 | `--background` | off | Run as a [background job](background-jobs.md) and print its job ID |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |
 
-`--limit-rate` limits the speed of the request body, for example `blaze put backup.tar http://host:8000 --limit-rate 2M`. Bytes sent again after a retry count against the limit. Bytes the server already holds from an earlier attempt are not sent and do not. It is not an exact cap on TLS and TCP overhead.
+`--limit-rate` limits the speed of the request body, for example `blaze put backup.tar http://host:5949 --limit-rate 2M`. Bytes sent again after a retry count against the limit. Bytes the server already holds from an earlier attempt are not sent and do not. It is not an exact cap on TLS and TCP overhead.
 
 Without `--if-match`, an existing file is never replaced. With it, every request carries the tag. A stale tag or a missing file exits with an error (HTTP `412`) and leaves the file alone. The client never fetches a newer tag and tries again.
 
@@ -152,14 +152,14 @@ Both `pip` and `cargo` ask first. The install is read from `BLAZE_INSTALL_CHANNE
 
 | Command | Options |
 | :--- | :--- |
-| `blaze doctor` | `--host` (default 127.0.0.1), `-p/--port` (default 8000), `--json` |
+| `blaze doctor` | `--host` (default 127.0.0.1), `-p/--port` (default 5949), `--json` |
 | `blaze benchmark` | `--url`, `--size-mb`, `--json`, `--runs`, `--warmup`, `--workload`, `--output`, `--seed`; `benchmark compare A B` |
 
 `doctor --host` takes the same values as `serve --host` and binds the address `serve` would pick, then releases it at once. Text and JSON name the address that was tested. If a name resolves to several addresses, only the one `serve` would choose is checked. The result is a point-in-time check, not a reservation, and says nothing about firewalls or remote reachability. The JSON report has an additive `host` field with the value you passed.
 
 ```console
-blaze doctor ./shared --host ::1 --port 8000 --json
-blaze serve ./shared --host ::1 --port 8000
+blaze doctor ./shared --host ::1 --port 5949 --json
+blaze serve ./shared --host ::1 --port 5949
 ```
 
 ## Endpoints

@@ -10,6 +10,8 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 pub const DEFAULT_CHUNK_MB: u32 = 1;
 pub const DEFAULT_SNDBUF_MB: u32 = 4;
+/// The port `serve`, `send` and `doctor` use when none is given.
+pub const DEFAULT_PORT: u16 = 5949;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError(pub String);
@@ -269,7 +271,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             host: "0.0.0.0".into(),
-            port: 8000,
+            port: DEFAULT_PORT,
             base: PathBuf::from("."),
             single: None,
             listing: true,

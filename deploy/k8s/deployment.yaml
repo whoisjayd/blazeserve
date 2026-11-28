@@ -28,9 +28,9 @@ spec:
         - name: blazeserve
           image: ghcr.io/whoisjayd/blazeserve:v1.1.0
           imagePullPolicy: IfNotPresent
-          args: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000", "--log-json"]
+          args: ["serve", "/data", "--host", "0.0.0.0", "--port", "5949", "--log-json"]
           ports:
-            - containerPort: 8000
+            - containerPort: 5949
               name: http
           livenessProbe:
             httpGet:

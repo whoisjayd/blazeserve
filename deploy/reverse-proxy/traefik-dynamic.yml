@@ -18,7 +18,7 @@ http:
     blazeserve-service:
       loadBalancer:
         servers:
-          - url: "http://127.0.0.1:8000"
+          - url: "http://127.0.0.1:5949"
         healthCheck:
           path: "/__live__"
           interval: "10s"

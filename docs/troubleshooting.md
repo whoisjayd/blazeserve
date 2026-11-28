@@ -3,14 +3,14 @@
 When something does not work, start with this:
 
 ```bash
-blaze doctor ./site --port 8000
+blaze doctor ./site --port 5949
 ```
 
 It checks the folder, the port and what your system supports, and exits with code 1 if something is wrong. Add `--json` for output a script can read.
 
 ## The server will not start
 
-**The port is taken.** Another program is using port 8000. Pick another with `--port`, or stop the other program. `doctor` reports this. By default it tests `127.0.0.1`; give it the same `--host` you give `serve`, for example `blaze doctor ./site --host 0.0.0.0 --port 8000`, to test the address you will really use.
+**The port is taken.** Another program is using port 5949. Pick another with `--port`, or stop the other program. `doctor` reports this. By default it tests `127.0.0.1`; give it the same `--host` you give `serve`, for example `blaze doctor ./site --host 0.0.0.0 --port 5949`, to test the address you will really use.
 
 **It complains about `--auth-env`.** The environment variable you named is not set, or it is empty. BlazeServe refuses to start rather than run without a password. Set it as `USER:PASS`, and in PowerShell remember that `$env:BLAZE_AUTH = "alice:s3cret"` only lasts for that window.
 

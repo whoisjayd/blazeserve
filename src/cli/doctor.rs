@@ -5,6 +5,8 @@ use serde::Serialize;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
+use crate::config::DEFAULT_PORT;
+
 #[derive(Args, Debug)]
 pub struct DoctorArgs {
     /// Directory to check
@@ -14,7 +16,7 @@ pub struct DoctorArgs {
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
     /// Port to check availability
-    #[arg(short, long, default_value_t = 8000, value_parser = clap::value_parser!(u16))]
+    #[arg(short, long, default_value_t = DEFAULT_PORT, value_parser = clap::value_parser!(u16))]
     pub port: u16,
     /// Display machine-readable JSON
     #[arg(long = "json")]

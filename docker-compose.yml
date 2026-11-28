@@ -12,7 +12,7 @@ services:
     cap_drop:
       - ALL
     ports:
-      - "8000:8000"
+      - "5949:5949"
     volumes:
       - ./data:/data:ro
     tmpfs:
@@ -21,7 +21,7 @@ services:
     environment:
       - BLAZE_LOG_JSON=1
       - BLAZE_TELEMETRY
-    command: ["serve", "/data", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["serve", "/data", "--host", "0.0.0.0", "--port", "5949"]
     deploy:
       resources:
         limits:

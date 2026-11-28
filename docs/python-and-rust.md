@@ -37,12 +37,12 @@ Unlike `blaze serve`, the Python server listens on the loopback address by defau
 Each `blaze` command is a function with the same name. Positional values come first and options are keywords written with underscores. The return value is the exit status, which is `0` on success and uses the [exit codes](reference.md#exit-codes) otherwise.
 
 ```python
-blazeserve.get("http://host:8000/big.iso", connections=8, extract=True)
-blazeserve.put("backup.tar", "http://host:8000", limit_rate="2M", max_time="2h")
+blazeserve.get("http://host:5949/big.iso", connections=8, extract=True)
+blazeserve.put("backup.tar", "http://host:5949", limit_rate="2M", max_time="2h")
 blazeserve.send("report.pdf", expires_after="20m")
-blazeserve.get("http://host:8000/big.iso", background=True)   # prints the job ID
+blazeserve.get("http://host:5949/big.iso", background=True)   # prints the job ID
 blazeserve.status(json=True)
-blazeserve.run("get", "http://host:8000/big.iso", connections=8)   # the same, by name
+blazeserve.run("get", "http://host:5949/big.iso", connections=8)   # the same, by name
 blazeserve.commands()    # {"serve": "...", "get": "...", ...}
 ```
 
@@ -54,7 +54,7 @@ Press `Ctrl+C` during a call and it raises `KeyboardInterrupt` after asking the 
 
 ```python
 blazeserve.sha256("big.iso")                      # checksum of a file
-blazeserve.main(["get", "http://host:8000/big.iso"])   # run a command line as a list, returns the exit status
+blazeserve.main(["get", "http://host:5949/big.iso"])   # run a command line as a list, returns the exit status
 ```
 
 ```python

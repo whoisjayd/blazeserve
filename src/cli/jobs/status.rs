@@ -266,7 +266,7 @@ mod tests {
         r.state = state;
         r.ready_at = Some(1_001);
         r.label = "archive.tar".into();
-        r.remote = Some("http://host:8000".into());
+        r.remote = Some("http://host:5949".into());
         r.direction = Some(Direction::Download);
         r.phase = Some(Phase::Transferring);
         r.updated_at = 1_100;
@@ -324,10 +324,10 @@ mod tests {
         r.state = State::Running;
         r.ready_at = Some(1_000);
         r.label = "shared".into();
-        r.listen = Some("http://127.0.0.1:8000".into());
+        r.listen = Some("http://127.0.0.1:5949".into());
         let text = render(&snap(vec![r]), 1_065, false);
         assert!(
-            text.contains("listening on http://127.0.0.1:8000"),
+            text.contains("listening on http://127.0.0.1:5949"),
             "{text}"
         );
         assert!(text.contains("up 1m 05s"), "{text}");

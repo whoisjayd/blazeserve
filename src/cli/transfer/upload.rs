@@ -399,8 +399,8 @@ mod tests {
 
     #[test]
     fn upload_target_appends_name() {
-        let t = upload_target("http://h:8000/", Path::new("dir/my file.bin")).unwrap();
-        assert_eq!(t, "http://h:8000/__upload__/my%20file.bin");
+        let t = upload_target("http://h:5949/", Path::new("dir/my file.bin")).unwrap();
+        assert_eq!(t, "http://h:5949/__upload__/my%20file.bin");
         assert_eq!(
             upload_target("http://h/__upload__/x", Path::new("y")).unwrap(),
             "http://h/__upload__/x"

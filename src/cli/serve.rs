@@ -4,7 +4,9 @@ use super::util::{
     canonical, display_path, env_truthy, existing_file, existing_path, human_size, lan_ip,
     open_browser,
 };
-use crate::config::{Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_SNDBUF_MB, Hide, TrustedProxy};
+use crate::config::{
+    Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_PORT, DEFAULT_SNDBUF_MB, Hide, TrustedProxy,
+};
 use crate::usage;
 use clap::Args;
 use std::path::PathBuf;
@@ -22,7 +24,7 @@ pub struct Common {
     #[arg(help_heading = "Network", long, default_value = "0.0.0.0")]
     pub host: String,
     /// Port to listen on
-    #[arg(help_heading = "Network", short, long, default_value_t = 8000, value_parser = clap::value_parser!(u16).range(1..))]
+    #[arg(help_heading = "Network", short, long, default_value_t = DEFAULT_PORT, value_parser = clap::value_parser!(u16).range(1..))]
     pub port: u16,
     /// Throttle to MB/s (omit for unlimited)
     #[arg(help_heading = "Speed and caching", long, value_parser = parse_rate, value_name = "MB/S")]
@@ -717,7 +719,7 @@ mod tests {
 
     #[test]
     fn qr_block_is_a_rectangle_of_block_glyphs_with_a_quiet_zone() {
-        let qr = qr_block("http://localhost:8000/", Style::PLAIN).unwrap();
+        let qr = qr_block("http://localhost:5949/", Style::PLAIN).unwrap();
         let lines: Vec<&str> = qr.lines().collect();
         let width = lines[0].chars().count();
         assert!(width >= 21 + 8);
@@ -762,7 +764,7 @@ mod tests {
 
     #[test]
     fn coloured_qr_decodes_to_the_share_url_on_any_theme() {
-        let url = "http://192.168.1.20:8000/My%20File.tar.gz";
+        let url = "http://192.168.1.20:5949/My%20File.tar.gz";
         let qr = qr_block(url, Style::COLOR).unwrap();
         let stripped: Vec<String> = qr
             .lines()
@@ -784,7 +786,7 @@ mod tests {
 
     #[test]
     fn plain_qr_is_inverted_and_decodes_when_the_terminal_is_dark() {
-        let url = "http://192.168.1.20:8000/";
+        let url = "http://192.168.1.20:5949/";
         let qr = qr_block(url, Style::PLAIN).unwrap();
         let lines: Vec<String> = qr.lines().map(str::to_owned).collect();
         let decoded = decode(&lines, |c, top| match c {
@@ -869,10 +871,10 @@ mod tests {
         };
         let plain = banner(&cfg, false, false, None, None);
         let with_qr = banner(&cfg, false, true, None, None);
-        let qr = qr_block("http://localhost:8000/", Style::PLAIN).unwrap();
+        let qr = qr_block("http://localhost:5949/", Style::PLAIN).unwrap();
         assert!(!plain.contains(qr.lines().nth(2).unwrap()));
         assert!(with_qr.contains(qr.lines().nth(2).unwrap()));
-        assert!(with_qr.contains("http://localhost:8000/"));
+        assert!(with_qr.contains("http://localhost:5949/"));
         assert!(with_qr.contains("Press Ctrl+C to stop"));
         assert!(with_qr.len() > plain.len());
     }
@@ -903,7 +905,7 @@ mod tests {
         let text =
             anstream::adapter::strip_str(&banner(&cfg, false, false, None, Some("pw"))).to_string();
         assert!(
-            text.contains("blaze put FILE http://localhost:8000/ --auth blaze:pw"),
+            text.contains("blaze put FILE http://localhost:5949/ --auth blaze:pw"),
             "{text}"
         );
         assert!(text.contains("up to 10.00 GiB"), "{text}");

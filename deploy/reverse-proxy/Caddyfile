@@ -1,7 +1,7 @@
 :80 {
     encode zstd gzip
 
-    reverse_proxy 127.0.0.1:8000 {
+    reverse_proxy 127.0.0.1:5949 {
         flush_interval -1
         header_up Host {host}
         header_up X-Real-IP {remote_host}

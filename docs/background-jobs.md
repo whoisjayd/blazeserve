@@ -4,7 +4,7 @@ Run a download, an upload or a server in the background, then check on it or sto
 
 ```console
 blaze get https://example.com/archive.tar -o archive.tar --background
-blaze put backup.tar http://localhost:8000 --background
+blaze put backup.tar http://localhost:5949 --background
 blaze serve ./shared --background
 blaze send ./report.pdf --background
 ```

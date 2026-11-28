@@ -87,7 +87,7 @@ fn build(choice: usize) -> Option<Vec<String>> {
         }
         3 => {
             let file = existing("File to upload:", false, None)?;
-            let url = required("Server address, such as http://host:8000:")?;
+            let url = required("Server address, such as http://host:5949:")?;
             args = vec![word("put"), file, url];
             let login = prompt::secret("user:password (hidden, Enter if none):")?;
             if !login.is_empty() {

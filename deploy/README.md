@@ -17,12 +17,12 @@ The image is built from `scratch` with a static binary and runs as user and grou
 
 ```bash
 # Linux and macOS
-docker run --rm -p 8000:8000 -v "$PWD/data:/data:ro" ghcr.io/whoisjayd/blazeserve:latest
+docker run --rm -p 5949:5949 -v "$PWD/data:/data:ro" ghcr.io/whoisjayd/blazeserve:latest
 ```
 
 ```powershell
 # Windows PowerShell
-docker run --rm -p 8000:8000 -v "${PWD}\data:/data:ro" ghcr.io/whoisjayd/blazeserve:latest
+docker run --rm -p 5949:5949 -v "${PWD}\data:/data:ro" ghcr.io/whoisjayd/blazeserve:latest
 ```
 
 `docker-compose.yml` runs the same image with a read-only root filesystem, `no-new-privileges`, all capabilities dropped, a 64 MiB `/tmp`, and limits of 2 CPUs and 256 MiB of memory.
@@ -57,7 +57,7 @@ To turn off the usage report, add `BLAZE_TELEMETRY=0` under the container's `env
 
 ## systemd
 
-`systemd/blazeserve.service` is a hardened unit that serves `/srv/blazeserve` on `127.0.0.1:8000`. It trusts forwarded visitor addresses only from `127.0.0.1/32`, which matches the local proxy examples below. If nothing proxies to it, remove `--trust-proxy` from the unit.
+`systemd/blazeserve.service` is a hardened unit that serves `/srv/blazeserve` on `127.0.0.1:5949`. It trusts forwarded visitor addresses only from `127.0.0.1/32`, which matches the local proxy examples below. If nothing proxies to it, remove `--trust-proxy` from the unit.
 
 ```bash
 sudo useradd -r -u 10001 -s /sbin/nologin -d /srv/blazeserve blazeserve
@@ -110,8 +110,8 @@ sudo ./deploy/linux-tuning/tuning.sh --apply
 ## Diagnostics
 
 ```console
-blaze doctor /srv/files --port 8000
-blaze doctor /srv/files --host 0.0.0.0 --port 8000 --json
+blaze doctor /srv/files --port 5949
+blaze doctor /srv/files --host 0.0.0.0 --port 5949 --json
 ```
 
 `doctor` checks the folder, whether the port can be bound on the `--host` address (default `127.0.0.1`; the probe is released at once and is not a reservation), async I/O support, TLS readiness and the open file limit. With `--json` it exits with a non-zero code on failure, which makes it easy to use in scripts.

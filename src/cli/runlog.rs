@@ -224,7 +224,7 @@ mod tests {
     fn nothing_private_survives_redaction() {
         let line = redact(
             "cannot write C:\\Users\\Ann\\notes.txt from http://ann:pw@host/x.iso \
-             (10.1.2.3:8000, ann@example.com, report.pdf) after 1.1.0",
+             (10.1.2.3:5949, ann@example.com, report.pdf) after 1.1.0",
         );
         for private in [
             "Ann", "ann:", "ann@", "pw", "host", "10.1.2.3", "report", "notes",

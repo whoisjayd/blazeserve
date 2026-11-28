@@ -28,10 +28,10 @@ The timer uses the monotonic clock, which on most systems does not advance while
 ## Download a file
 
 ```bash
-blaze get http://host:8000/big.iso
+blaze get http://host:5949/big.iso
 ```
 
-The file is saved under the name the server suggests in its `Content-Disposition` header. A folder downloaded as a ZIP, for example `blaze get 'http://host:8000/__zip__?path=docs'`, arrives as `docs.zip`. If the server suggests nothing usable, the last part of the URL is used, here `big.iso`. Only the final part of a suggested name is kept, and names that could write elsewhere or name a device are ignored. Use `-o` to choose another name, which always wins. While it downloads, BlazeServe writes to `big.iso.part`, then checks the size and renames it when the download is complete.
+The file is saved under the name the server suggests in its `Content-Disposition` header. A folder downloaded as a ZIP, for example `blaze get 'http://host:5949/__zip__?path=docs'`, arrives as `docs.zip`. If the server suggests nothing usable, the last part of the URL is used, here `big.iso`. Only the final part of a suggested name is kept, and names that could write elsewhere or name a device are ignored. Use `-o` to choose another name, which always wins. While it downloads, BlazeServe writes to `big.iso.part`, then checks the size and renames it when the download is complete.
 
 In a terminal, `get` and `put` draw a small live block with the file name, a progress bar with sizes, and the speed, time remaining and time elapsed. Nothing is drawn when the output is piped.
 
@@ -46,7 +46,7 @@ To run a download in the background and check on it later, see [Background jobs]
 ### Extracting an archive
 
 ```bash
-blaze get http://host:8000/game.zip --extract
+blaze get http://host:5949/game.zip --extract
 ```
 
 When the download has been checked and renamed, the archive is unpacked into a folder named after it, next to it. The archive is consumed as its files come out, so you only need free space for about the extracted size instead of the archive and its contents together. BlazeServe checks that it fits before it changes anything, and keeps `--keep-free` untouched throughout. It also reads the whole archive and checks every file's checksum first, so a damaged download is refused while it is still intact. `--no-verify-first` skips that pass on very large archives. Add `--keep-archive` if you want the archive afterwards; that needs room for both.
@@ -58,8 +58,8 @@ If the extraction is interrupted, run the same command again and it resumes. Ext
 Large files are downloaded over several connections at once. The default is 4, and you can ask for anything from 1 to 128, or `max`:
 
 ```bash
-blaze get http://host:8000/big.iso -c 8
-blaze get http://host:8000/big.iso -c max
+blaze get http://host:5949/big.iso -c 8
+blaze get http://host:5949/big.iso -c max
 ```
 
 More connections only help when one stream cannot fill your link, which is typical on a very fast line to a distant server. Each connection costs a thread and a socket, and some servers throttle or block clients that open many, so BlazeServe prints a note above 16. The live display shows how many connections are in use.
@@ -71,7 +71,7 @@ This applies to files of at least 8 MiB, from servers that support byte ranges a
 To be polite to a shared network, cap the total speed:
 
 ```bash
-blaze get http://host:8000/big.iso --limit-rate 2M
+blaze get http://host:5949/big.iso --limit-rate 2M
 ```
 
 The rate is in bytes per second, with an optional `K`, `M` or `G` suffix (powers of 1024, decimals allowed, minimum `1K`). The cap covers all connections together.
@@ -81,7 +81,7 @@ The rate is in bytes per second, with an optional `K`, `M` or `G` suffix (powers
 If the sender gives you a SHA-256 checksum, pass it in and BlazeServe will verify the finished file:
 
 ```bash
-blaze get http://host:8000/big.iso --sha256 <checksum>
+blaze get http://host:5949/big.iso --sha256 <checksum>
 ```
 
 You can also compute a checksum yourself:
@@ -90,12 +90,12 @@ You can also compute a checksum yourself:
 blaze checksum ./big.iso
 ```
 
-A server can also tell you the checksum of a file it holds. Add `?hash` to the file's address, for example `http://host:8000/big.iso?hash`. The reply is a small piece of JSON with the size and SHA-256.
+A server can also tell you the checksum of a file it holds. Add `?hash` to the file's address, for example `http://host:5949/big.iso?hash`. The reply is a small piece of JSON with the size and SHA-256.
 
 To have `blaze get` fetch that checksum and check the download for you, ask for it explicitly:
 
 ```bash
-blaze get http://host:8000/big.iso --verify server-sha256
+blaze get http://host:5949/big.iso --verify server-sha256
 ```
 
 This only works against a BlazeServe server, and only when you ask for it. Before downloading, `blaze get` requests the file's address with `?hash` added (any query you already have, such as a signed link, is kept and never printed). After the download, and before the file is saved under its final name, it compares the size and SHA-256. If the server has no checksum to give, answers badly, refuses your password, or the result does not match, the command fails with a nonzero exit code and nothing is saved. A partial download is deleted on a mismatch, and a file that already existed (with `--force`) is left alone. This works the same for single-stream, parallel, resumed and empty downloads. `--verify` cannot be combined with `--sha256`.
@@ -120,7 +120,7 @@ For a server that asks for a password, prefer an environment variable so the pas
 
 ```bash
 export BLAZE_AUTH='alice:s3cret'
-blaze get http://host:8000/big.iso --auth-env BLAZE_AUTH
+blaze get http://host:5949/big.iso --auth-env BLAZE_AUTH
 ```
 
 On Windows PowerShell, set it with `$env:BLAZE_AUTH = "alice:s3cret"`.
@@ -132,8 +132,8 @@ On Windows PowerShell, set it with `$env:BLAZE_AUTH = "alice:s3cret"`.
 `get` and `put` accept three separate limits. Each takes a number with `s`, `m`, `h` or `d` (for example `45s`, `30m`, `1h30m`) or `off`. A bare number such as `30` is rejected because it does not say whether it means seconds or minutes.
 
 ```bash
-blaze get http://host:8000/big.iso --connect-timeout 20s --idle-timeout 45s --max-time 30m
-blaze put ./big.iso http://host:8000/ --idle-timeout 60s --max-time 2h
+blaze get http://host:5949/big.iso --connect-timeout 20s --idle-timeout 45s --max-time 30m
+blaze put ./big.iso http://host:5949/ --idle-timeout 60s --max-time 2h
 ```
 
 - `--connect-timeout` (default `15s`) bounds setting up the connection.
@@ -151,9 +151,9 @@ A server may ask for at most 5 minutes. If it asks for more, the transfer stops 
 Uploading needs a server that has uploads switched on. See [Uploads](uploads.md) for how to set that up.
 
 ```bash
-blaze put ./big.iso http://host:8000/
+blaze put ./big.iso http://host:5949/
 ```
 
-Given just a server address, `put` uploads under `/__upload__/` using the file's name. You can also give a full destination such as `http://host:8000/__upload__/backups/big.iso`.
+Given just a server address, `put` uploads under `/__upload__/` using the file's name. You can also give a full destination such as `http://host:5949/__upload__/backups/big.iso`.
 
 Uploads resume too. If the transfer breaks, run the same command and BlazeServe asks the server how much it already has, then sends the rest. Data goes up in chunks of 8 MB by default; change that with `--chunk-mb`. To leave bandwidth for other work, cap the upload speed with `--limit-rate`, for example `--limit-rate 2M`.
