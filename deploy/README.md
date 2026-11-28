@@ -34,6 +34,8 @@ docker compose logs -f blazeserve
 
 Compose passes `BLAZE_TELEMETRY` through from your shell when it is set. To allow uploads, mount a writable volume, set `--max-upload-mb` and require a password.
 
+Local builds from `Dockerfile` keep compiled dependencies in a build cache and use thin link-time optimisation; add `--build-arg LTO=fat` to match the published binaries. Published images are not compiled at all: `docker/release.Dockerfile` copies the release's static binaries.
+
 ## Kubernetes
 
 ```console

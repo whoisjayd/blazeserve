@@ -80,6 +80,22 @@ Unit tests sit in `#[cfg(test)]` modules next to the code. Files in `tests/` sta
 
 Tests that start a server bind port `0` on the loopback address through these helpers. Do not use fixed ports or sleeps. A bug fix needs a test that fails without the fix.
 
+## Test settings
+
+Debug builds read a few environment variables so tests can force rare situations. Release builds ignore them, and the release workflow checks the names are absent from its binaries.
+
+| Variable | Effect |
+| :--- | :--- |
+| `BLAZE_CRASH_AT=<step>` | Abort the process at a named step (`get-after-meta`, `upload-after-create`, `upload-after-stage`, `upload-after-link`, `upload-before-rename`, `resume-after-append`) |
+| `BLAZE_CRASH_AFTER=<n>` | Pass that step `n` times before aborting |
+| `BLAZE_PANIC_AT=run` | Panic as a command starts, to test crash reporting |
+| `BLAZE_FREE=<bytes>` | Pretend this much disk space is free |
+| `BLAZE_EXPECT_UNZIP=1` | Fail, instead of skipping, when no `unzip` or `7z` is installed |
+
+To test a nearly full disk for real on Linux, download into a small `tmpfs`: `sudo mount -t tmpfs -o size=20m tmpfs /mnt/tiny`.
+
+Tests that start `blaze` must not touch your own settings: point `BLAZE_CONFIG_DIR` and `BLAZE_STATE_DIR` at a temporary folder.
+
 ## Pull requests
 
 - Branch from `main` and keep the change focused. Do not mix a fix with unrelated cleanup or dependency updates.

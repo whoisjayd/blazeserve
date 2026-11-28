@@ -102,6 +102,9 @@ jobs:
           shared-key: blaze
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --all-targets --locked
+        env:
+          # Windows runners have 7z; the others have unzip.
+          BLAZE_EXPECT_UNZIP: "1"
 
   coverage:
     name: Coverage

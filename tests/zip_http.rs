@@ -260,3 +260,44 @@ async fn saturated_archive_slots_do_not_affect_another_server() {
         let _ = c.stream.shutdown().await;
     }
 }
+
+/// The `zip` crate wrote nothing here, but it reads forgivingly; other tools must agree.
+/// `BLAZE_EXPECT_UNZIP=1` (set in CI) turns a missing tool into a failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn other_zip_tools_accept_the_stream() {
+    let dir = tempfile::tempdir().unwrap();
+    tree(dir.path());
+    let srv = spawn(dir.path(), |_| {}).await;
+    let reply = roundtrip(srv.addr, &get("/__zip__?path=.")).await;
+    assert_eq!(reply.status, 200);
+    let out = tempfile::tempdir().unwrap();
+    let archive = out.path().join("a.zip");
+    std::fs::write(&archive, &reply.body).unwrap();
+
+    let tools: [(&str, &[&str]); 2] = [("unzip", &["-tqq"]), ("7z", &["t"])];
+    let mut checked = 0;
+    for (tool, args) in tools {
+        match std::process::Command::new(tool)
+            .args(args)
+            .arg(&archive)
+            .output()
+        {
+            Ok(done) => {
+                assert!(
+                    done.status.success(),
+                    "{tool} rejects the archive: {}{}",
+                    String::from_utf8_lossy(&done.stdout),
+                    String::from_utf8_lossy(&done.stderr)
+                );
+                checked += 1;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skipped: {tool} is not installed");
+            }
+            Err(e) => panic!("cannot run {tool}: {e}"),
+        }
+    }
+    if std::env::var_os("BLAZE_EXPECT_UNZIP").is_some() {
+        assert!(checked > 0, "no ZIP tool is installed");
+    }
+}
