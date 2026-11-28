@@ -9,7 +9,9 @@ export BLAZE_AUTH='alice:s3cret'
 blaze serve ./incoming --max-upload-mb 500 --auth-env BLAZE_AUTH
 ```
 
-`--max-upload-mb` is both the switch and the size limit. With the default of `0`, uploads are off. Always set a password when uploads are enabled on an address other people can reach. Without one, anyone who can connect can fill your disk up to the limit.
+The quickest way is `blaze serve ./incoming --uploads`. It accepts files up to 10 GiB, makes a password for this run if you did not give one, and prints the exact command for uploading. Without a terminal, such as under systemd, give the password with `--auth-env`.
+
+`--max-upload-mb` sets the largest file and also turns uploads on. With the default of `0` and no `--uploads`, uploads are off. If you turn them on with `--max-upload-mb` alone on an address other people can reach, set a password too: without one, anyone who can connect can fill your disk up to the limit.
 
 ## Upload from the command line
 

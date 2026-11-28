@@ -121,14 +121,14 @@ pub(super) fn http_failure(code: u16, upload: bool) -> TransferError {
         400 => "the server rejected the request as malformed",
         401 => "authentication is required; pass --auth USER:PASS or --auth-env VAR",
         403 if upload => {
-            "the server refused the upload; check the credentials, and that it was started with --max-upload-mb above 0"
+            "the server refused the upload; check the user and password, and that it was started with `blaze serve DIR --uploads`"
         }
         403 => {
             "the server refused access; check the credentials with --auth or --auth-env, or the host may block non-browser clients or require a signed link"
         }
         404 => "nothing exists at that URL; check the path",
         405 | 501 if upload => {
-            "the server does not accept uploads at that URL; BlazeServe takes them under /__upload__/ when started with --max-upload-mb"
+            "the server does not accept uploads at that URL; BlazeServe takes them under /__upload__/ when started with `blaze serve DIR --uploads`"
         }
         405 | 501 => "the server does not support this request",
         409 => "the destination already exists or changed; remove it or choose another name",
@@ -204,11 +204,7 @@ mod tests {
     #[test]
     fn http_failures_explain_the_next_step() {
         assert!(http_failure(403, false).to_string().contains("--auth"));
-        assert!(
-            http_failure(403, true)
-                .to_string()
-                .contains("--max-upload-mb")
-        );
+        assert!(http_failure(403, true).to_string().contains("--uploads"));
         assert!(http_failure(401, false).to_string().contains("--auth-env"));
         assert!(
             http_failure(404, false)

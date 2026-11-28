@@ -457,3 +457,10 @@ fn a_crash_leaves_a_redacted_report_and_sends_nothing_unasked() {
     assert!(pending.contains("src/testknobs.rs:"), "{pending}");
     assert!(!pending.contains("secret"), "{pending}");
 }
+
+#[test]
+fn uploads_without_a_password_are_refused_off_a_terminal() {
+    let out = run(&["serve", ".", "--uploads", "--host", "127.0.0.1"]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(stderr(&out).contains("--auth-env"), "{}", stderr(&out));
+}

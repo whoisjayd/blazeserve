@@ -10,7 +10,9 @@ mod exit;
 mod feedback;
 mod jobs;
 mod live;
+mod menu;
 mod pick;
+mod prompt;
 mod report;
 mod runlog;
 mod serve;
@@ -40,16 +42,19 @@ const STYLES: Styles = Styles::styled()
     .valid(AnsiColor::Green.on_default())
     .invalid(AnsiColor::Yellow.on_default());
 
-const TOP_EXAMPLES: &str = "Examples:
-  blaze serve .                     Serve the current directory on port 8000
-  blaze send report.pdf             Share one file
-  blaze get http://host:8000/big.iso   Resumable download
-  blaze put backup.tar http://host:8000   Resumable upload (server needs --max-upload-mb)
-  blaze verify --check SHA256SUMS   Check downloaded files
-  blaze doctor ./site --port 9000   Check a directory and port before serving
-  blaze completions powershell      Print a shell completion script
+const TOP_EXAMPLES: &str = "Common tasks:
+  Share a folder           blaze serve .
+  ... and let people upload blaze serve ./inbox --uploads
+  Send one file            blaze send report.pdf --qr
+  Download (resumes)       blaze get http://host:8000/big.iso
+  Upload (resumes)         blaze put backup.tar http://host:8000 --auth-env BLAZE_AUTH
+  Check what you got       blaze verify --check SHA256SUMS
+  Run in the background    blaze serve . --background, then blaze status and blaze stop
+  Something is off         blaze doctor ./site --port 9000, or blaze bug
 
-Run 'blaze help <command>' for the options of one command.";
+Run 'blaze' with nothing after it for a guided menu, and 'blaze help <command>' for one
+command. Exit codes: 0 done, 1 failed, 2 usage, 3 no disk space, 4 data check failed,
+5 password refused.";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -90,33 +95,47 @@ impl ColorWhen {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Serve a directory or a single file
+    /// Share a folder (or one file) over HTTP
+    ///
+    /// Anyone who can reach this computer can open the printed address in a browser, or use
+    /// `blaze get`. Downloads resume and can use several connections at once. Add --uploads
+    /// to receive files, --auth-env for a password, and --tls-cert/--tls-key for HTTPS.
+    /// Stop it with Ctrl+C.
     #[command(after_help = "Examples:
   blaze serve .
   blaze serve ./site --port 9000 --no-listing
-  blaze serve ./data --auth-env BLAZE_AUTH --max-upload-mb 512
+  blaze serve ./inbox --uploads                 # receive files; prints how to upload
   blaze serve ./site --hide '*.env' --hide .git
   blaze serve ./site --qr
   blaze serve ./site --background   # then use blaze status and blaze stop")]
     Serve(serve::ServeArgs),
-    /// Quick share a single file
+    /// Share one file with a link, then stop when you like
+    ///
+    /// Only that file is reachable; the folder it is in is not listed. Add --qr to scan the
+    /// link with a phone, and --expires-after to end the share by itself.
     #[command(after_help = "Examples:
   blaze send ./big.iso
   blaze send ./big.iso --qr
   blaze send ./big.iso --expires-after 20m
   blaze send ./big.iso --background")]
     Send(serve::SendArgs),
-    /// SHA256 for files
+    /// Print the SHA-256 of files
+    ///
+    /// Compare it with the value a publisher gives, or save the output as a list that
+    /// `blaze verify --check` can test later.
     Checksum(ChecksumArgs),
     /// Check files against SHA-256 or SFV lists
+    ///
+    /// Says ok, FAILED, missing or skipped for each file. A checksum proves a file arrived
+    /// intact, not who made it.
     #[command(after_help = "Examples:
   blaze verify big.iso                 # uses big.iso.sha256, else SHA256SUMS
   blaze verify --check SHA256SUMS
   blaze verify --sfv release.sfv")]
     Verify(transfer::VerifyArgs),
-    /// Show version and system info
+    /// Show the version and system
     Version(VersionArgs),
-    /// Validate system environment and server configuration
+    /// Check that a folder and port are ready before serving
     #[command(after_help = "Examples:
   blaze doctor
   blaze doctor ./site --port 9000 --json
@@ -128,9 +147,15 @@ It binds and releases the port at once, so it is a point-in-time check, not a re
 
 The path is the directory you intend to serve; there is no 'serve' keyword.")]
     Doctor(doctor::DoctorArgs),
-    /// Run performance benchmark
+    /// Measure download speed
+    ///
+    /// Without --url it starts a temporary server on this computer, so the result shows what
+    /// this machine can do rather than your network.
     Benchmark(bench::BenchArgs),
-    /// Download a file, resuming a partial transfer
+    /// Download a file; run it again to resume
+    ///
+    /// Large files come down over several connections at once. A partial file is kept as
+    /// NAME.part until it is complete. --sha256 or --verify checks it before it is saved.
     #[command(after_help = "Examples:
   blaze get http://host:8000/big.iso
   blaze get http://host:8000/big.iso -o disk.iso --sha256 <digest>
@@ -139,9 +164,15 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
   blaze get http://host:8000/big.iso --limit-rate 2M   # cap total speed at 2 MiB/s
   blaze get http://host:8000/big.iso --idle-timeout 45s --max-time 30m   # give up when stalled or too slow overall")]
     Get(transfer::GetArgs),
-    /// Upload a file, resuming a partial transfer
+    /// Upload a file; run it again to resume
+    ///
+    /// The server must accept uploads (`blaze serve DIR --uploads` prints the command to
+    /// use). The file is sent in pieces and checked, and never replaces an existing one
+    /// unless you pass its current ETag with --if-match.
     Put(transfer::PutArgs),
-    /// Show background jobs started with --background
+    /// Show background jobs and their progress
+    ///
+    /// Jobs are started by adding --background to serve, send, get or put.
     #[command(after_help = "Examples:
   blaze status
   blaze status 3f9a01bc
@@ -149,19 +180,24 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
   blaze status --json")]
     Status(jobs::StatusArgs),
     /// Stop a background job
+    ///
+    /// A stopped download or upload keeps its progress; run the same command to resume.
     #[command(after_help = "Examples:
   blaze stop 3f9a01bc
   blaze stop 3f9a01bc --yes")]
     Stop(jobs::StopArgs),
-    /// Manage anonymous usage analytics
+    /// See or change anonymous usage analytics
     Telemetry(telemetry::TelemetryArgs),
     /// Report a problem to the maintainer
+    ///
+    /// Asks which recent run it is about, what happened, how to reproduce it and what you
+    /// expected, then shows exactly what will be sent before sending it.
     #[command(after_help = "Examples:
   blaze bug                        Pick a recent run, then describe the problem
   blaze bug -m 'resume restarts' --step 'blaze get URL' --step 'press Ctrl+C'
   blaze bug --log 1a2b3c4d         Attach a particular run (the ID is printed on errors)")]
     Bug(feedback::BugArgs),
-    /// Upgrade BlazeServe the way it was installed
+    /// Update BlazeServe the way it was installed
     #[command(after_help = "Examples:
   blaze upgrade --check
   blaze upgrade --check --json
@@ -171,12 +207,12 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
 A downloaded binary replaces itself after checking its SHA-256 against the release SHA256SUMS.
 pip and cargo installs run pip or cargo. Containers and package managers get instructions only.")]
     Upgrade(upgrade::UpgradeArgs),
-    /// Print a shell completion script
+    /// Print a script that completes commands with Tab
     #[command(after_help = "Examples:
   blaze completions bash > ~/.local/share/bash-completion/completions/blaze
   blaze completions powershell | Out-String | Invoke-Expression")]
     Completions(CompletionsArgs),
-    /// Print the man page
+    /// Print the manual page
     #[command(after_help = "Examples:
   blaze man > ~/.local/share/man/man1/blaze.1
   blaze man | man -l -")]
@@ -381,7 +417,16 @@ where
     parse_and_run(args)
 }
 
-fn parse_and_run(args: Vec<std::ffi::OsString>) -> u8 {
+fn parse_and_run(mut args: Vec<std::ffi::OsString>) -> u8 {
+    // Nothing after the program name, and a person to ask: offer a menu instead of help.
+    if args.len() <= 1 && prompt::person() {
+        let Some(chosen) = menu::run() else {
+            return 0;
+        };
+        args = std::iter::once("blaze".into())
+            .chain(chosen.into_iter().map(Into::into))
+            .collect();
+    }
     let parsed = Cli::command()
         .try_get_matches_from(&args)
         .and_then(|matches| Ok((Cli::from_arg_matches(&matches)?, matches)));

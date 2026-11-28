@@ -1,7 +1,8 @@
 use super::ansi::{self, Style};
 use super::live;
 use super::util::{
-    canonical, display_path, env_truthy, existing_file, existing_path, lan_ip, open_browser,
+    canonical, display_path, env_truthy, existing_file, existing_path, human_size, lan_ip,
+    open_browser,
 };
 use crate::config::{Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_SNDBUF_MB, Hide, TrustedProxy};
 use crate::usage;
@@ -15,52 +16,63 @@ pub struct Common {
     #[arg(long)]
     pub qr: bool,
     /// Serve HTTP/1.1 only, without HTTP/2
-    #[arg(long)]
+    #[arg(help_heading = "Network", long)]
     pub no_http2: bool,
     /// Bind address (IPv4/IPv6 literal ok)
-    #[arg(long, default_value = "0.0.0.0")]
+    #[arg(help_heading = "Network", long, default_value = "0.0.0.0")]
     pub host: String,
     /// Port to listen on
-    #[arg(short, long, default_value_t = 8000, value_parser = clap::value_parser!(u16).range(1..))]
+    #[arg(help_heading = "Network", short, long, default_value_t = 8000, value_parser = clap::value_parser!(u16).range(1..))]
     pub port: u16,
     /// Throttle to MB/s (omit for unlimited)
-    #[arg(long, value_parser = parse_rate, value_name = "MB/S")]
+    #[arg(help_heading = "Speed and caching", long, value_parser = parse_rate, value_name = "MB/S")]
     pub rate_mbps: Option<f64>,
     /// Enable HTTP Basic Auth
-    #[arg(long, value_name = "USER:PASS")]
+    #[arg(help_heading = "Security", long, value_name = "USER:PASS")]
     pub auth: Option<String>,
     /// Load USER:PASS from an environment variable
-    #[arg(long, value_name = "ENVVAR")]
+    #[arg(help_heading = "Security", long, value_name = "ENVVAR")]
     pub auth_env: Option<String>,
     /// TLS certificate (PEM)
-    #[arg(long, value_parser = existing_file)]
+    #[arg(help_heading = "Security", long, value_parser = existing_file)]
     pub tls_cert: Option<PathBuf>,
     /// TLS private key (PEM)
-    #[arg(long, value_parser = existing_file)]
+    #[arg(help_heading = "Security", long, value_parser = existing_file)]
     pub tls_key: Option<PathBuf>,
     /// Enable CORS
-    #[arg(long, overrides_with = "no_cors")]
+    #[arg(help_heading = "Security", long, overrides_with = "no_cors")]
     pub cors: bool,
     /// Disable CORS (default)
-    #[arg(long, overrides_with = "cors")]
+    #[arg(help_heading = "Security", long, overrides_with = "cors")]
     pub no_cors: bool,
     /// CORS allow origin
-    #[arg(long, default_value = "*")]
+    #[arg(help_heading = "Security", long, default_value = "*")]
     pub cors_origin: String,
     /// Disable HTTP caching
-    #[arg(long)]
+    #[arg(help_heading = "Speed and caching", long)]
     pub no_cache: bool,
     /// Listen backlog size
-    #[arg(long, default_value_t = 8192, value_parser = clap::value_parser!(u32).range(1..=20000))]
+    #[arg(help_heading = "Network", long, default_value_t = 8192, value_parser = clap::value_parser!(u32).range(1..=20000))]
     pub backlog: u32,
     /// Serve .gz assets when safe (default)
-    #[arg(long, overrides_with = "no_precompress")]
+    #[arg(
+        help_heading = "Speed and caching",
+        long,
+        overrides_with = "no_precompress"
+    )]
     pub precompress: bool,
     /// Never serve .gz assets
-    #[arg(long, overrides_with = "precompress")]
+    #[arg(
+        help_heading = "Speed and caching",
+        long,
+        overrides_with = "precompress"
+    )]
     pub no_precompress: bool,
-    /// Max upload size in MB (0 = uploads disabled)
-    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=1_048_576))]
+    /// Accept uploads, up to 10 GiB a file; makes a password if you give none
+    #[arg(long, help_heading = "Uploads")]
+    pub uploads: bool,
+    /// Largest upload in MB; any value above 0 also turns uploads on
+    #[arg(help_heading = "Uploads", long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=1_048_576))]
     pub max_upload_mb: u64,
     /// Emit structured JSON log records (env BLAZE_LOG_JSON)
     #[arg(long, overrides_with = "no_log_json")]
@@ -69,16 +81,16 @@ pub struct Common {
     #[arg(long, overrides_with = "log_json")]
     pub no_log_json: bool,
     /// Maximum simultaneously admitted connections
-    #[arg(long, default_value_t = 1024, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(help_heading = "Network", long, default_value_t = 1024, value_parser = clap::value_parser!(u64).range(1..))]
     pub max_connections: u64,
     /// Seconds allowed to receive complete request headers
-    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    #[arg(help_heading = "Network", long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=3600))]
     pub header_timeout: u64,
     /// Trust forwarded client identity from this proxy IP or CIDR (repeatable)
-    #[arg(long = "trust-proxy", value_name = "CIDR", value_parser = parse_proxy)]
+    #[arg(help_heading = "Network", long = "trust-proxy", value_name = "CIDR", value_parser = parse_proxy)]
     pub trust_proxy: Vec<TrustedProxy>,
     /// Maximum proxy hops walked in a forwarded chain
-    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u64).range(1..=64))]
+    #[arg(help_heading = "Network", long, default_value_t = 8, value_parser = clap::value_parser!(u64).range(1..=64))]
     pub max_proxy_hops: u64,
     #[command(flatten)]
     pub bg: super::jobs::BackgroundArgs,
@@ -217,6 +229,39 @@ fn parse_proxy(s: &str) -> Result<TrustedProxy, String> {
     TrustedProxy::parse(s).map_err(|e| e.to_string())
 }
 
+const DEFAULT_UPLOAD_MB: u64 = 10 * 1024;
+
+/// A password for this run only: letters and digits that are not easily confused.
+fn one_time_password() -> Result<String, String> {
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+    let mut raw = [0u8; 20];
+    getrandom::fill(&mut raw).map_err(|e| format!("cannot create a password: {e}"))?;
+    Ok(raw
+        .iter()
+        .map(|b| char::from(ALPHABET[usize::from(*b) % ALPHABET.len()]))
+        .collect())
+}
+
+/// `--uploads` without a password gets one, shown once at a terminal. Elsewhere it would
+/// end up in a log, so a password has to be given.
+fn protect_uploads(cfg: &mut Config, at_terminal: bool) -> Result<Option<String>, String> {
+    if cfg.auth.is_some() {
+        return Ok(None);
+    }
+    if !at_terminal || cfg.log_json {
+        return Err(
+            "--uploads needs a password here: set one with --auth-env VAR (VAR=user:password)"
+                .to_owned(),
+        );
+    }
+    let password = one_time_password()?;
+    cfg.auth = Some(
+        crate::config::Credentials::parse(&format!("blaze:{password}"))
+            .map_err(|e| e.to_string())?,
+    );
+    Ok(Some(password))
+}
+
 fn auth_env_hint(var: &str) -> String {
     format!(
         "Set it before retrying: PowerShell: $env:{var} = 'USER:PASS'; macOS/Linux: export {var}='USER:PASS'."
@@ -263,7 +308,11 @@ impl Common {
         cfg.no_cache = self.no_cache;
         cfg.backlog = self.backlog;
         cfg.precompress = !self.no_precompress;
-        cfg.max_upload_bytes = self.max_upload_mb * 1024 * 1024;
+        let limit = match self.max_upload_mb {
+            0 if self.uploads => DEFAULT_UPLOAD_MB,
+            given => given,
+        };
+        cfg.max_upload_bytes = limit * 1024 * 1024;
         cfg.log_json = self.log_json || (!self.no_log_json && env_truthy("BLAZE_LOG_JSON"));
         cfg.max_connections = usize::try_from(self.max_connections).unwrap_or(usize::MAX);
         cfg.http2 = !self.no_http2;
@@ -369,7 +418,13 @@ fn qr_block(url: &str, style: Style) -> Option<String> {
     )
 }
 
-fn banner(cfg: &Config, verbose: bool, qr: bool, expiry: Option<(Duration, SystemTime)>) -> String {
+fn banner(
+    cfg: &Config,
+    verbose: bool,
+    qr: bool,
+    expiry: Option<(Duration, SystemTime)>,
+    password: Option<&str>,
+) -> String {
     let style = Style::stdout();
     let scheme = if cfg.tls.is_some() { "https" } else { "http" };
     let port = cfg.port;
@@ -390,6 +445,33 @@ fn banner(cfg: &Config, verbose: bool, qr: bool, expiry: Option<(Duration, Syste
         let name = percent_encoding::utf8_percent_encode(&raw, PATH_SEGMENT);
         share.push_str(&name.to_string());
         rows.push(("Download", format!("blaze get {share}")));
+    }
+    if cfg.max_upload_bytes > 0 && cfg.single.is_none() {
+        rows.push((
+            "Uploads",
+            format!("on, up to {} a file", human_size(cfg.max_upload_bytes)),
+        ));
+        let credentials = match (password, &cfg.auth) {
+            (Some(password), _) => format!(" --auth blaze:{password}"),
+            (None, Some(_)) => " --auth-env YOUR_VAR".to_owned(),
+            (None, None) => String::new(),
+        };
+        rows.push(("Upload", format!("blaze put FILE {share}{credentials}")));
+        rows.push((
+            "Browser",
+            format!("open {share} and drop files on the page"),
+        ));
+        if let Some(password) = password {
+            rows.push((
+                "Sign in",
+                format!("user blaze, password {password} (this run only)"),
+            ));
+        } else if cfg.auth.is_none() {
+            rows.push((
+                "Warning",
+                "no password: anyone who can connect can upload".to_owned(),
+            ));
+        }
     }
     if let Some((after, at)) = expiry {
         let secs = at
@@ -474,6 +556,7 @@ fn run_config(
     open: bool,
     qr: bool,
     expires_after: Option<Duration>,
+    password: Option<String>,
 ) -> Result<u8, String> {
     let json_logs = cfg.log_json;
     let banner_cfg = cfg.clone();
@@ -518,7 +601,10 @@ fn run_config(
                 )),
             });
             let expiry = expires_after.map(|d| (d, SystemTime::now() + d));
-            print_status(&banner(&banner_cfg, verbose, qr, expiry), json_logs);
+            print_status(
+                &banner(&banner_cfg, verbose, qr, expiry, password.as_deref()),
+                json_logs,
+            );
             if live_allowed && let Ok(mut g) = live_in.lock() {
                 *g = live::Live::start(handle.state().clone());
             }
@@ -564,7 +650,13 @@ fn run_config(
 }
 
 pub fn serve(args: ServeArgs) -> Result<u8, String> {
-    let cfg = serve_config(&args)?;
+    let mut cfg = serve_config(&args)?;
+    let password = if args.common.uploads {
+        let at_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
+        protect_uploads(&mut cfg, at_terminal)?
+    } else {
+        None
+    };
     run_config(
         cfg,
         "serve",
@@ -572,6 +664,7 @@ pub fn serve(args: ServeArgs) -> Result<u8, String> {
         args.open_browser,
         args.common.qr,
         None,
+        password,
     )
 }
 
@@ -584,6 +677,7 @@ pub fn send(args: SendArgs) -> Result<u8, String> {
         false,
         args.common.qr,
         args.expires_after,
+        None,
     )
 }
 
@@ -751,9 +845,15 @@ mod tests {
     fn banner_shows_the_lifetime_and_expected_expiry_only_when_set() {
         let cfg = Config::default();
         let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let with = banner(&cfg, false, false, Some((Duration::from_secs(1200), at)));
+        let with = banner(
+            &cfg,
+            false,
+            false,
+            Some((Duration::from_secs(1200), at)),
+            None,
+        );
         assert!(with.contains("in 20m (at 2023-11-14T22:13:20Z)"), "{with}");
-        assert!(!banner(&cfg, false, false, None).contains("Expires"));
+        assert!(!banner(&cfg, false, false, None, None).contains("Expires"));
     }
 
     #[test]
@@ -767,13 +867,45 @@ mod tests {
             host: "127.0.0.1".into(),
             ..Config::default()
         };
-        let plain = banner(&cfg, false, false, None);
-        let with_qr = banner(&cfg, false, true, None);
+        let plain = banner(&cfg, false, false, None, None);
+        let with_qr = banner(&cfg, false, true, None, None);
         let qr = qr_block("http://localhost:8000/", Style::PLAIN).unwrap();
         assert!(!plain.contains(qr.lines().nth(2).unwrap()));
         assert!(with_qr.contains(qr.lines().nth(2).unwrap()));
         assert!(with_qr.contains("http://localhost:8000/"));
         assert!(with_qr.contains("Press Ctrl+C to stop"));
         assert!(with_qr.len() > plain.len());
+    }
+
+    #[test]
+    fn uploads_get_a_password_at_a_terminal_and_refuse_without_one_elsewhere() {
+        let mut cfg = Config::default();
+        assert!(protect_uploads(&mut cfg, false).is_err());
+        assert!(cfg.auth.is_none());
+        let password = protect_uploads(&mut cfg, true).unwrap().expect("made one");
+        assert_eq!(password.len(), 20);
+        assert!(cfg.auth.is_some());
+        assert_eq!(
+            protect_uploads(&mut cfg, false).unwrap(),
+            None,
+            "one was given"
+        );
+    }
+
+    #[test]
+    fn the_banner_says_how_to_upload() {
+        let cfg = Config {
+            host: "127.0.0.1".into(),
+            max_upload_bytes: 10 << 30,
+            auth: Some(Credentials::parse("blaze:pw").unwrap()),
+            ..Config::default()
+        };
+        let text =
+            anstream::adapter::strip_str(&banner(&cfg, false, false, None, Some("pw"))).to_string();
+        assert!(
+            text.contains("blaze put FILE http://localhost:8000/ --auth blaze:pw"),
+            "{text}"
+        );
+        assert!(text.contains("up to 10.00 GiB"), "{text}");
     }
 }

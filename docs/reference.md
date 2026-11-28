@@ -55,6 +55,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--tls-cert`, `--tls-key` | none | PEM certificate and key; give both |
 | `--no-http2` | HTTP/2 on | Serve HTTP/1.1 only |
 | `--rate-mbps N` | unlimited | Speed limit per client, in MB/s |
+| `--uploads` | off | Accept uploads up to 10 GiB a file; makes and shows a password if none is given |
 | `--max-upload-mb N` | `0` | Turn on uploads with this size limit; `0` means off |
 | `--max-connections N` | `1024` | Most connections admitted at once |
 | `--header-timeout S` | `10` | Seconds a client has to send its request |

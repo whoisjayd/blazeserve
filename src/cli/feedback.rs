@@ -1,7 +1,6 @@
 //! What a person chooses to tell the maintainer: a guided bug report, and a rating asked now
 //! and then until one is given. Everything is shown before it is sent.
 
-use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::ansi::{self, Style};
-use super::{pick, runlog};
+use super::{pick, prompt, runlog};
 use crate::usage;
 
 const MAX_TEXT: usize = 2000;
@@ -50,60 +49,6 @@ pub struct BugArgs {
     pub yes: bool,
 }
 
-struct Prompt {
-    person: bool,
-}
-
-impl Prompt {
-    fn new() -> Self {
-        Self {
-            person: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
-        }
-    }
-
-    /// One trimmed line, or `None` when there is nobody to ask or the input is closed.
-    fn ask(&self, question: &str) -> Option<String> {
-        if !self.person {
-            return None;
-        }
-        anstream::eprint!("{} ", Style::stderr().bold(question));
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        let read = std::io::stdin().lock().read_line(&mut line).ok()?;
-        (read > 0).then(|| line.trim().to_owned())
-    }
-
-    /// Numbered lines until an empty one.
-    fn list(&self, title: &str) -> Vec<String> {
-        if !self.person {
-            return Vec::new();
-        }
-        anstream::eprintln!(
-            "{} {}",
-            Style::stderr().bold(title),
-            Style::stderr().dim("(one per line, empty line to finish)")
-        );
-        let mut items = Vec::new();
-        while items.len() < 20 {
-            match self.ask(&format!("  {}.", items.len() + 1)) {
-                Some(line) if !line.is_empty() => items.push(line),
-                _ => break,
-            }
-        }
-        items
-    }
-
-    fn yes(&self, question: &str, default: bool) -> Option<bool> {
-        let hint = if default { "[Y/n]" } else { "[y/N]" };
-        let answer = self.ask(&format!("{question} {hint}"))?;
-        Some(match answer.to_ascii_lowercase().as_str() {
-            "" => default,
-            "y" | "yes" => true,
-            _ => false,
-        })
-    }
-}
-
 /// Typed text, bounded, with credentials in any URL masked and no terminal controls.
 fn clean(text: &str) -> String {
     crate::logging::redact(text.trim())
@@ -125,7 +70,7 @@ fn send(event: &str, extra: Map<String, Value>) -> Result<(), String> {
 
 /// Lets the user choose which recent run the report is about, showing it before it counts.
 /// `None` means the report goes without a run.
-fn pick_run(prompt: &Prompt) -> Option<runlog::Saved> {
+fn pick_run() -> Option<runlog::Saved> {
     let mut runs = runlog::recent(10);
     if runs.is_empty() {
         return None;
@@ -139,7 +84,7 @@ fn pick_run(prompt: &Prompt) -> Option<runlog::Saved> {
         let run = runs.get(chosen)?;
         anstream::eprintln!("\n{}", ansi::rows(style, &run.details()).trim_end());
         // A closed input counts as yes: the run can still be refused at the final question.
-        if prompt.yes("\nIs this the run you mean?", true) != Some(false) {
+        if prompt::yes("\nIs this the run you mean?", true) != Some(false) {
             anstream::eprintln!();
             return Some(runs.swap_remove(chosen));
         }
@@ -148,9 +93,9 @@ fn pick_run(prompt: &Prompt) -> Option<runlog::Saved> {
 }
 
 pub fn bug(args: BugArgs) -> Result<u8, String> {
-    let prompt = Prompt::new();
+    let person = prompt::person();
     let style = Style::stderr();
-    if prompt.person && args.message.is_none() {
+    if person && args.message.is_none() {
         anstream::eprintln!(
             "{}\n{}\n",
             style.bold("Report a problem"),
@@ -158,16 +103,15 @@ pub fn bug(args: BugArgs) -> Result<u8, String> {
         );
     }
     // Choose the run first: it is the part the user is least able to describe.
-    let picked = if prompt.person && !args.no_log && args.log.is_none() {
-        Some(pick_run(&prompt))
+    let picked = if person && !args.no_log && args.log.is_none() {
+        Some(pick_run())
     } else {
         None
     };
     let message = match &args.message {
         Some(text) => clean(text),
         None => clean(
-            &prompt
-                .ask("What went wrong?")
+            &prompt::ask("What went wrong?")
                 .ok_or("describe the problem with --message \"...\"")?,
         ),
     };
@@ -175,7 +119,7 @@ pub fn bug(args: BugArgs) -> Result<u8, String> {
         return Err("a report needs a description of what went wrong".to_owned());
     }
     let steps: Vec<String> = if args.steps.is_empty() {
-        prompt.list("Steps to reproduce it")
+        prompt::list("Steps to reproduce it")
     } else {
         args.steps.clone()
     }
@@ -185,7 +129,7 @@ pub fn bug(args: BugArgs) -> Result<u8, String> {
     let expected = args
         .expected
         .clone()
-        .or_else(|| prompt.ask("What did you expect to happen?"))
+        .or_else(|| prompt::ask("What did you expect to happen?"))
         .map(|e| clean(&e))
         .filter(|e| !e.is_empty());
 
@@ -201,7 +145,7 @@ pub fn bug(args: BugArgs) -> Result<u8, String> {
     let contact = args
         .contact
         .clone()
-        .or_else(|| prompt.ask("Email or handle for a reply? (Enter to skip)"))
+        .or_else(|| prompt::ask("Email or handle for a reply? (Enter to skip)"))
         .map(|c| clean(&c))
         .filter(|c| !c.is_empty());
 
@@ -237,7 +181,7 @@ pub fn bug(args: BugArgs) -> Result<u8, String> {
         )
     );
     if !args.yes {
-        let confirmed = prompt.yes("Send this report?", false).ok_or(
+        let confirmed = prompt::yes("Send this report?", false).ok_or(
             "nothing was sent: run in a terminal to confirm, or add --yes to send without asking",
         )?;
         if !confirmed {
@@ -309,8 +253,7 @@ fn stars(n: u8) -> String {
 /// After a successful transfer at a terminal: now and then asks how BlazeServe is doing.
 /// Once an answer is given it never asks again.
 pub(super) fn maybe_ask_rating() {
-    let prompt = Prompt::new();
-    let Some(path) = state_path().filter(|_| prompt.person) else {
+    let Some(path) = state_path().filter(|_| prompt::person()) else {
         return;
     };
     let mut state: Asking = std::fs::read(&path)
@@ -341,16 +284,13 @@ pub(super) fn maybe_ask_rating() {
         style.yellow("★"),
         style.bold("How is BlazeServe working for you?")
     );
-    let answer = prompt
-        .ask("  1 (poor) to 5 (great), Enter to skip:")
-        .unwrap_or_default();
+    let answer = prompt::ask("  1 (poor) to 5 (great), Enter to skip:").unwrap_or_default();
     let Some(rating) = answer.parse::<u8>().ok().filter(|n| (1..=5).contains(n)) else {
         state.skips += 1;
         save(&state);
         return;
     };
-    let comment = prompt
-        .ask("  Anything to add? (Enter to skip)")
+    let comment = prompt::ask("  Anything to add? (Enter to skip)")
         .map(|c| clean(&c))
         .filter(|c| !c.is_empty());
     state.rated = true;
