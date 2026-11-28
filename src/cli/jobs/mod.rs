@@ -82,15 +82,15 @@ pub struct BackgroundArgs {
 }
 
 /// Runs `body` as the command itself, as a background launch, or as the background worker.
-pub fn run(
+pub fn run<E: std::fmt::Display + From<String>>(
     kind: Kind,
     bg: &BackgroundArgs,
-    body: impl FnOnce() -> Result<u8, String>,
-) -> Result<u8, String> {
+    body: impl FnOnce() -> Result<u8, E>,
+) -> Result<u8, E> {
     if let Some(id) = &bg.background_worker {
         worker::run(id, kind, body)
     } else if bg.background {
-        launch::launch(kind)
+        Ok(launch::launch(kind)?)
     } else {
         body()
     }

@@ -5,6 +5,7 @@ use super::download::{
     Download, MAX_RESTARTS, Meta, allocated, check_free_space, parse_content_range,
     write_atomic_with,
 };
+use super::error::TransferError;
 use super::http::{
     cannot_write, describe_error, describe_io, header, http_failure, retry_hint, transient_error,
     transient_status, write_failure,
@@ -13,6 +14,7 @@ use super::limits;
 use super::retry::{jitter, plan_wait, retry_note};
 use crate::cli::ansi::announce;
 use crate::cli::util::{Progress, backoff, human_size, transfer_title};
+use crate::platform::write_all_at;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
@@ -116,27 +118,6 @@ fn probe(d: &Download<'_>) -> Option<Probe> {
     })
 }
 
-fn write_at(file: &File, buf: &[u8], offset: u64) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::FileExt::write_all_at(file, buf, offset)
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::FileExt;
-        let (mut buf, mut offset) = (buf, offset);
-        while !buf.is_empty() {
-            let n = file.seek_write(buf, offset)?;
-            if n == 0 {
-                return Err(std::io::ErrorKind::WriteZero.into());
-            }
-            buf = &buf[n..];
-            offset += n as u64;
-        }
-        Ok(())
-    }
-}
-
 /// Written to a temporary file first so an interrupt never leaves a torn sidecar.
 fn save_sidecar(d: &Download<'_>, probe: &Probe, file: &File, done: &BTreeSet<u64>) {
     let meta = Meta {
@@ -168,7 +149,7 @@ enum SegError {
         progressed: bool,
         retry_after: Option<Duration>,
     },
-    Fatal(String),
+    Fatal(TransferError),
 }
 
 struct Shared<'a> {
@@ -179,7 +160,7 @@ struct Shared<'a> {
     next: AtomicUsize,
     stop: AtomicBool,
     changed: AtomicBool,
-    error: Mutex<Option<String>>,
+    error: Mutex<Option<TransferError>>,
     /// Set when a worker gave up on a transient failure, which fewer connections may avoid.
     retry_fewer: AtomicBool,
     done: Mutex<(BTreeSet<u64>, Instant)>,
@@ -224,9 +205,9 @@ impl Shared<'_> {
         }
     }
 
-    fn fail(&self, msg: String) {
+    fn fail(&self, err: TransferError) {
         if let Ok(mut e) = self.error.lock() {
-            e.get_or_insert(msg);
+            e.get_or_insert(err);
         }
         self.stop.store(true, Ordering::SeqCst);
     }
@@ -262,7 +243,7 @@ impl Shared<'_> {
                     retry_after: None,
                 });
             }
-            Err(e) => return Err(SegError::Fatal(describe_error(&e))),
+            Err(e) => return Err(SegError::Fatal(TransferError::Network(describe_error(&e)))),
         };
         match resp.status().as_u16() {
             206 => {}
@@ -297,7 +278,7 @@ impl Shared<'_> {
                         self.progress.dec(counted);
                         return Err(SegError::Fatal(why));
                     }
-                    if let Err(e) = write_at(&self.file, &buf[..n], pos) {
+                    if let Err(e) = write_all_at(&self.file, &buf[..n], pos) {
                         self.progress.dec(counted);
                         return Err(SegError::Fatal(write_failure(&e)));
                     }
@@ -321,7 +302,9 @@ impl Shared<'_> {
         if pos != end + 1 {
             self.progress.dec(counted);
             if self.stopped() {
-                return Err(SegError::Fatal("stopped".to_owned()));
+                return Err(SegError::Fatal(TransferError::Interrupted(
+                    "stopped".to_owned(),
+                )));
             }
             return Err(SegError::Transient {
                 msg: format!(
@@ -353,10 +336,10 @@ impl Shared<'_> {
                     self.stop.store(true, Ordering::SeqCst);
                     return;
                 }
-                Err(SegError::Fatal(msg)) => {
+                Err(SegError::Fatal(err)) => {
                     // A worker interrupted by another's failure reports nothing of its own.
                     if !self.stopped() {
-                        self.fail(msg);
+                        self.fail(err);
                     }
                     return;
                 }
@@ -368,14 +351,18 @@ impl Shared<'_> {
                     fails = if progressed { 1 } else { fails + 1 };
                     if fails > self.retries {
                         self.retry_fewer.store(true, Ordering::SeqCst);
-                        return self.fail(format!(
+                        return self.fail(TransferError::Network(format!(
                             "download failed after {} retries: {msg}",
                             self.retries
-                        ));
+                        )));
                     }
                     let wait = match plan_wait(fails, retry_after, jitter()) {
                         Ok(w) => w,
-                        Err(why) => return self.fail(format!("download failed: {msg}; {why}")),
+                        Err(why) => {
+                            return self.fail(TransferError::Network(format!(
+                                "download failed: {msg}; {why}"
+                            )));
+                        }
                     };
                     if let Err(why) = limits::fits(wait) {
                         return self.fail(why);
@@ -519,17 +506,18 @@ fn attempt(
         save_sidecar(d, probe, &file, &done);
         return Err(Failure {
             retry_fewer: retry_fewer.load(Ordering::SeqCst),
-            msg: failure.unwrap_or_else(|| "download interrupted".to_owned()),
+            err: failure
+                .unwrap_or_else(|| TransferError::Interrupted("download interrupted".to_owned())),
         });
     }
     file.sync_data().map_err(|e| write_failure(&e))?;
     drop(file);
     if d.part_len() != probe.total {
-        return Err(format!(
+        return Err(TransferError::Unstable(format!(
             "downloaded file is {} but the server announced {}",
             human_size(d.part_len()),
             human_size(probe.total)
-        )
+        ))
         .into());
     }
     Ok(Outcome::Done)
@@ -538,14 +526,14 @@ fn attempt(
 /// Why an attempt ended. `retry_fewer` marks a transient failure that a smaller number of
 /// connections may get past, such as a server capping connections per client.
 struct Failure {
-    msg: String,
+    err: TransferError,
     retry_fewer: bool,
 }
 
-impl From<String> for Failure {
-    fn from(msg: String) -> Self {
+impl From<TransferError> for Failure {
+    fn from(err: TransferError) -> Self {
         Self {
-            msg,
+            err,
             retry_fewer: false,
         }
     }
@@ -558,7 +546,7 @@ fn fewer(conns: usize) -> usize {
 
 /// Runs the segmented download when the origin qualifies. `Ok(false)` means the caller
 /// should use the single-stream path.
-pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, String> {
+pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, TransferError> {
     // A partial from the single-stream path is finished there, never mixed with segments.
     if d.resume
         && d.part_len() > 0
@@ -581,12 +569,12 @@ pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, 
                 let next = fewer(conns);
                 announce(
                     "Fewer connections",
-                    &format!("{}; trying {next} instead of {conns}", f.msg),
+                    &format!("{}; trying {next} instead of {conns}", f.err),
                 );
                 conns = next;
                 continue;
             }
-            Err(f) => return Err(f.msg),
+            Err(f) => return Err(f.err),
         };
         match outcome {
             Outcome::Done => return Ok(true),

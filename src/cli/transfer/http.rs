@@ -1,6 +1,8 @@
 //! Shared HTTP client setup, auth header, error wording and retry classification.
 
+use super::error::TransferError;
 use super::limits;
+use crate::cli::exit;
 use crate::cli::serve::resolve_auth;
 use base64::Engine as _;
 use std::time::Duration;
@@ -24,21 +26,25 @@ pub(super) fn agent() -> ureq::Agent {
 pub(super) fn basic_header(
     auth: Option<&str>,
     auth_env: Option<&str>,
-) -> Result<Option<String>, String> {
-    Ok(resolve_auth(auth, auth_env)?.map(|c| {
-        let raw = format!("{}:{}", c.user, c.password);
-        format!(
-            "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(raw)
-        )
-    }))
+) -> Result<Option<String>, TransferError> {
+    Ok(resolve_auth(auth, auth_env)
+        .map_err(TransferError::Usage)?
+        .map(|c| {
+            let raw = format!("{}:{}", c.user, c.password);
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(raw)
+            )
+        }))
 }
 
-pub(super) fn http_url(url: &str) -> Result<(), String> {
+pub(super) fn http_url(url: &str) -> Result<(), TransferError> {
     if url.starts_with("http://") || url.starts_with("https://") {
         Ok(())
     } else {
-        Err("URL must start with http:// or https://".to_owned())
+        Err(TransferError::Usage(
+            "URL must start with http:// or https://".to_owned(),
+        ))
     }
 }
 
@@ -110,12 +116,7 @@ pub(super) fn transient_status(code: u16) -> bool {
 }
 
 /// A refusal the user can act on, never just a bare status code.
-pub(super) fn http_failure(code: u16, upload: bool) -> String {
-    match code {
-        401 | 403 => crate::cli::exit::record(crate::cli::exit::AUTH),
-        422 => crate::cli::exit::record(crate::cli::exit::INTEGRITY),
-        _ => {}
-    }
+pub(super) fn http_failure(code: u16, upload: bool) -> TransferError {
     let hint = match code {
         400 => "the server rejected the request as malformed",
         401 => "authentication is required; pass --auth USER:PASS or --auth-env VAR",
@@ -139,7 +140,12 @@ pub(super) fn http_failure(code: u16, upload: bool) -> String {
         422 => "the content did not match the checksum sent with it",
         _ => "the server refused the request",
     };
-    format!("server returned HTTP {code}: {hint}")
+    let msg = format!("server returned HTTP {code}: {hint}");
+    match code {
+        401 | 403 => TransferError::Auth(msg),
+        422 => TransferError::Integrity(msg),
+        _ => TransferError::Http(msg),
+    }
 }
 
 /// The server's requested pause, honoured only for `429` and `503` as RFC 9110 intends.
@@ -153,16 +159,24 @@ pub(super) fn retry_hint(
     super::retry::parse_retry_after(&header(resp, "retry-after")?, std::time::SystemTime::now())
 }
 
-/// A write error, noting a full disk for the exit code.
-pub(super) fn write_failure(e: &std::io::Error) -> String {
-    crate::cli::exit::note_io(e);
-    format!("write failed: {e}")
+/// A write error, classifying a full disk as [`TransferError::NoSpace`].
+pub(super) fn write_failure(e: &std::io::Error) -> TransferError {
+    let msg = format!("write failed: {e}");
+    if exit::is_disk_full(e) {
+        TransferError::NoSpace(msg)
+    } else {
+        TransferError::Io(msg)
+    }
 }
 
 /// Like [`write_failure`] for a failure to open or size a file.
-pub(super) fn cannot_write(path: &std::path::Path, e: &std::io::Error) -> String {
-    crate::cli::exit::note_io(e);
-    format!("cannot write {}: {e}", path.display())
+pub(super) fn cannot_write(path: &std::path::Path, e: &std::io::Error) -> TransferError {
+    let msg = format!("cannot write {}: {e}", path.display());
+    if exit::is_disk_full(e) {
+        TransferError::NoSpace(msg)
+    } else {
+        TransferError::Io(msg)
+    }
 }
 
 pub(super) fn header(resp: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
@@ -189,10 +203,22 @@ mod tests {
 
     #[test]
     fn http_failures_explain_the_next_step() {
-        assert!(http_failure(403, false).contains("--auth"));
-        assert!(http_failure(403, true).contains("--max-upload-mb"));
-        assert!(http_failure(401, false).contains("--auth-env"));
-        assert!(http_failure(404, false).starts_with("server returned HTTP 404"));
-        assert!(http_failure(418, false).contains("HTTP 418"));
+        assert!(http_failure(403, false).to_string().contains("--auth"));
+        assert!(
+            http_failure(403, true)
+                .to_string()
+                .contains("--max-upload-mb")
+        );
+        assert!(http_failure(401, false).to_string().contains("--auth-env"));
+        assert!(
+            http_failure(404, false)
+                .to_string()
+                .starts_with("server returned HTTP 404")
+        );
+        assert!(http_failure(418, false).to_string().contains("HTTP 418"));
+        assert_eq!(http_failure(401, false).code(), exit::AUTH);
+        assert_eq!(http_failure(403, true).code(), exit::AUTH);
+        assert_eq!(http_failure(422, true).code(), exit::INTEGRITY);
+        assert_eq!(http_failure(404, false).code(), exit::OTHER);
     }
 }

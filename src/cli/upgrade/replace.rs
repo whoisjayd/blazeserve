@@ -12,7 +12,6 @@ pub fn backup_path(exe: &Path) -> PathBuf {
 
 /// Windows refuses to overwrite a running executable but allows renaming it. Move the old
 /// one aside, move the new one in, and move the old one back if that second step fails.
-#[cfg_attr(not(windows), allow(dead_code))]
 fn swap_with_backup(
     target: &Path,
     staged: &Path,
@@ -40,12 +39,10 @@ fn swap_with_backup(
 
 /// Replaces `target` with `staged`, which must sit on the same file system.
 pub fn replace_executable(target: &Path, staged: &Path) -> Result<(), String> {
-    #[cfg(windows)]
-    {
+    if crate::platform::IS_WINDOWS {
+        // A running program can be renamed but not overwritten.
         swap_with_backup(target, staged, &|a, b| std::fs::rename(a, b))
-    }
-    #[cfg(not(windows))]
-    {
+    } else {
         // One rename is atomic: a failure leaves the old program untouched.
         std::fs::rename(staged, target).map_err(|e| format!("cannot install the new program: {e}"))
     }
@@ -53,7 +50,7 @@ pub fn replace_executable(target: &Path, staged: &Path) -> Result<(), String> {
 
 /// Deletes the previous executable that a Windows upgrade left beside the current one.
 pub fn remove_stale_backup() {
-    if !cfg!(windows) {
+    if !crate::platform::IS_WINDOWS {
         return;
     }
     let Ok(exe) = std::env::current_exe() else {

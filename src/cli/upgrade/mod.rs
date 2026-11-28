@@ -117,8 +117,11 @@ fn detect_context(interactive: bool) -> Result<Context, String> {
         .ok_or_else(|| format!("the built-in version {} is not valid", crate::VERSION))?;
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate this program: {e}"))?;
     // A symlinked install must replace the real file, not the link.
-    #[cfg(unix)]
-    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let exe = if crate::platform::IS_WINDOWS {
+        exe
+    } else {
+        std::fs::canonicalize(&exe).unwrap_or(exe)
+    };
     let env = |name: &str| std::env::var(name).ok();
     let channel = channel::detect(&env, &exe);
     let python = env("BLAZE_PYTHON")
@@ -428,24 +431,10 @@ fn install_binary(ctx: &Context, source: &dyn Source, target: &Version) -> Resul
     out.flush()
         .map_err(|e| format!("cannot write the new program: {e}"))?;
     drop(out);
-    copy_permissions(&ctx.exe, &staged)?;
+    crate::platform::copy_executable_permissions(&ctx.exe, &staged)
+        .map_err(|e| format!("cannot make the new program executable: {e}"))?;
 
     replace::replace_executable(&ctx.exe, &staged)
-}
-
-#[cfg(unix)]
-fn copy_permissions(from: &Path, to: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(from)
-        .map(|m| m.permissions().mode() & 0o7777)
-        .unwrap_or(0o755);
-    std::fs::set_permissions(to, std::fs::Permissions::from_mode(mode | 0o111))
-        .map_err(|e| format!("cannot make the new program executable: {e}"))
-}
-
-#[cfg(not(unix))]
-fn copy_permissions(_from: &Path, _to: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(test)]

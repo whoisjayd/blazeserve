@@ -13,6 +13,7 @@ use hatchzip_core::archive::storage::Reads;
 use hatchzip_core::engine::{self, Outcome, Progress as EngineProgress, Run};
 use hatchzip_core::session::{self, State};
 
+use super::error::TransferError;
 use crate::cli::ansi::{Style, announce};
 use crate::cli::util::{Progress, human_size};
 
@@ -29,18 +30,20 @@ pub(super) struct Options {
     pub keep_free: u64,
 }
 
-fn failure<E: std::fmt::Display>(e: E) -> String {
-    format!("{e:#}")
+fn failure<E: std::fmt::Display>(e: E) -> TransferError {
+    TransferError::Extract(format!("{e:#}"))
 }
 
 /// Extracts `archive` next to itself, into a folder named after it. Returns that folder.
-pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, String> {
+pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, TransferError> {
     let (primary, paths) = session::locate(archive).map_err(failure)?;
     let reads = Arc::new(Reads::default());
     let state = session::open(&primary, &paths, None, true, None, &reads).map_err(|e| {
         if e.is::<PasswordNeeded>() {
-            "the archive is encrypted; extract it with hatchzip, which can ask for the password"
-                .to_owned()
+            TransferError::Extract(
+                "the archive is encrypted; extract it with hatchzip, which can ask for the password"
+                    .to_owned(),
+            )
         } else {
             failure(e)
         }
@@ -64,17 +67,17 @@ pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, String>
             if let Some(why) = job.in_place_refusal()
                 && !opts.keep_archive
             {
-                return Err(format!(
+                return Err(TransferError::Extract(format!(
                     "{why}; run again with --keep-archive to extract it and keep the archive"
-                ));
+                )));
             }
             let found = session::existing(&job, &out).map_err(failure)?;
             if !found.is_empty() {
-                return Err(format!(
+                return Err(TransferError::Extract(format!(
                     "{} of its files already exist in {}; move them away first",
                     found.len(),
                     out.display()
-                ));
+                )));
             }
             ensure_fits(&job, &out, false, opts.keep_free, opts.keep_archive)?;
             if opts.verify_first && !opts.keep_archive {
@@ -119,7 +122,9 @@ pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, String>
         bar.finish(total);
     }
 
-    match outcome.map_err(|e| format!("{} Run the same command again to resume.", failure(e)))? {
+    match outcome.map_err(|e| {
+        TransferError::Extract(format!("{e:#} Run the same command again to resume."))
+    })? {
         Outcome::Finished(warning) => {
             if let Some(warning) = warning {
                 announce("Warning", &warning);
@@ -138,14 +143,14 @@ pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, String>
             );
             Ok(output)
         }
-        Outcome::Paused => {
-            Err("extraction paused; run the same command again to resume".to_owned())
-        }
+        Outcome::Paused => Err(TransferError::Interrupted(
+            "extraction paused; run the same command again to resume".to_owned(),
+        )),
     }
 }
 
 /// Reads every unit and lets the decoders check their checksums. Writes nothing.
-fn verify(job: &hatchzip_core::engine::Job, archive: &Path) -> Result<(), String> {
+fn verify(job: &hatchzip_core::engine::Job, archive: &Path) -> Result<(), TransferError> {
     let name = archive
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -160,11 +165,9 @@ fn verify(job: &hatchzip_core::engine::Job, archive: &Path) -> Result<(), String
         bar.finish(0);
     }
     result.map_err(|e| {
-        crate::cli::exit::record(crate::cli::exit::INTEGRITY);
-        format!(
-            "the archive is damaged, so nothing was extracted and the download was kept: {}",
-            failure(e)
-        )
+        TransferError::Integrity(format!(
+            "the archive is damaged, so nothing was extracted and the download was kept: {e:#}"
+        ))
     })
 }
 
@@ -174,12 +177,11 @@ fn ensure_fits(
     resuming: bool,
     keep_free: u64,
     keep_archive: bool,
-) -> Result<(), String> {
+) -> Result<(), TransferError> {
     let plan = session::plan(job, out, resuming, keep_free, keep_archive).map_err(failure)?;
     if plan.fits {
         return Ok(());
     }
-    crate::cli::exit::record(crate::cli::exit::NO_SPACE);
     let short = (plan.needed + plan.keep_free).saturating_sub(plan.free);
     let mut message = format!(
         "not enough free disk space to extract: {} more is needed ({} available, {} required plus {} kept free). Free some space or lower --keep-free",
@@ -192,5 +194,5 @@ fn ensure_fits(
         message
             .push_str("; without --keep-archive the archive is consumed as it extracts and fits");
     }
-    Err(message)
+    Err(TransferError::NoSpace(message))
 }

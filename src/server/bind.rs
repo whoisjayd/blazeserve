@@ -33,9 +33,7 @@ pub(super) async fn resolve_bind_addr(host: &str, port: u16) -> Result<SocketAdd
 
 pub(super) fn bind_listener(addr: SocketAddr, config: &Config) -> io::Result<TcpListener> {
     let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
-    // On Windows SO_REUSEADDR lets another process bind the same port and steal traffic.
-    #[cfg(not(windows))]
-    socket.set_reuse_address(true)?;
+    crate::platform::set_reuse_address(&socket)?;
     if addr.is_ipv6() && addr.ip().is_unspecified() {
         let _ = socket.set_only_v6(false);
     }

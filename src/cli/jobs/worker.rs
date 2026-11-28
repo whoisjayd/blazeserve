@@ -160,26 +160,13 @@ pub fn ready(info: impl FnOnce() -> Info) {
     w.publish(&rec);
 }
 
-#[cfg(unix)]
-fn ignore_hangup() {
-    // Registering a handler replaces the default action, which would end the process when
-    // the terminal goes away. The handler stays installed after the runtime is dropped.
-    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        rt.block_on(async {
-            let _ = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup());
-        });
-    }
-}
-
-#[cfg(not(unix))]
-fn ignore_hangup() {}
-
-pub fn run(id: &str, kind: Kind, body: impl FnOnce() -> Result<u8, String>) -> Result<u8, String> {
+pub fn run<E: std::fmt::Display + From<String>>(
+    id: &str,
+    kind: Kind,
+    body: impl FnOnce() -> Result<u8, E>,
+) -> Result<u8, E> {
     if !valid_id(id) {
-        return Err(format!("'{id}' is not a job ID"));
+        return Err(format!("'{id}' is not a job ID").into());
     }
     let store = Store::open()?;
     let log = store.log_path(id).display().to_string();
@@ -187,7 +174,7 @@ pub fn run(id: &str, kind: Kind, body: impl FnOnce() -> Result<u8, String>) -> R
     store
         .write(&rec)
         .map_err(|e| format!("cannot write the job record: {e}"))?;
-    ignore_hangup();
+    crate::platform::ignore_hangup();
     let worker = WORKER.get_or_init(|| Worker {
         store,
         id: id.to_owned(),
@@ -221,7 +208,7 @@ pub fn run(id: &str, kind: Kind, body: impl FnOnce() -> Result<u8, String>) -> R
                 0
             }
             Err(e) => {
-                worker.conclude(State::Failed, scrub(&e));
+                worker.conclude(State::Failed, scrub(&e.to_string()));
                 1
             }
         };

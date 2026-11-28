@@ -118,8 +118,8 @@ fn from_path(exe: &Path) -> Channel {
             command: "nix profile upgrade blazeserve",
         };
     }
-    #[cfg(unix)]
-    if exe.is_absolute()
+    if !crate::platform::IS_WINDOWS
+        && exe.is_absolute()
         && matches!(
             parts.first().map(String::as_str),
             Some("usr" | "bin" | "sbin")

@@ -30,7 +30,7 @@ pub(super) fn decode_components(raw: &str) -> Result<Vec<String>, PathError> {
             "" | "." => {}
             ".." => return Err(PathError::Traversal),
             p => {
-                if cfg!(windows) {
+                if crate::platform::WINDOWS_NAMES {
                     windows_component_ok(p)?;
                 }
                 out.push(p.to_owned());

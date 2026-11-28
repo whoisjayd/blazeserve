@@ -26,9 +26,9 @@ pub fn config_dir(env: &Env) -> Option<PathBuf> {
     if let Some(dir) = env("BLAZE_CONFIG_DIR").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(dir));
     }
-    let base = if cfg!(windows) {
+    let base = if crate::platform::IS_WINDOWS {
         PathBuf::from(env("APPDATA").filter(|v| !v.is_empty())?)
-    } else if cfg!(target_os = "macos") {
+    } else if crate::platform::IS_MACOS {
         PathBuf::from(env("HOME").filter(|v| !v.is_empty())?).join("Library/Application Support")
     } else {
         match env("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {

@@ -2,6 +2,7 @@
 
 use super::READ_BUF;
 use super::discover::{self, ServerDigest};
+use super::error::TransferError;
 use super::filename::suggested_name;
 use super::http::{
     agent, basic_header, cannot_write, describe_error, describe_io, header, http_failure, http_url,
@@ -193,14 +194,13 @@ fn available_space(path: &Path) -> std::io::Result<u64> {
     fs4::available_space(existing_ancestor(path))
 }
 
-fn ensure_space_fits(remaining: u64, free: u64) -> Result<(), String> {
+fn ensure_space_fits(remaining: u64, free: u64) -> Result<(), TransferError> {
     if remaining > free {
-        crate::cli::exit::record(crate::cli::exit::NO_SPACE);
-        return Err(format!(
+        return Err(TransferError::NoSpace(format!(
             "not enough free disk space: {} needed, {} available; free some space or choose another --output",
             human_size(remaining),
             human_size(free),
-        ));
+        )));
     }
     Ok(())
 }
@@ -214,7 +214,7 @@ pub(super) fn allocated(path: &Path) -> u64 {
 
 /// Checks free disk space for `remaining` bytes before writing a partial file.
 /// Probe errors fall through so an unqueryable filesystem does not block a download.
-pub(super) fn check_free_space(dest: &Path, remaining: u64) -> Result<(), String> {
+pub(super) fn check_free_space(dest: &Path, remaining: u64) -> Result<(), TransferError> {
     let Ok(free) = available_space(dest) else {
         return Ok(());
     };
@@ -235,7 +235,7 @@ fn server_file_name(agent: &ureq::Agent, url: &str, auth: Option<&str>) -> Optio
     suggested_name(&header(&resp, "content-disposition")?)
 }
 
-fn default_destination(url: &str) -> Result<PathBuf, String> {
+fn default_destination(url: &str) -> Result<PathBuf, TransferError> {
     let without_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = without_scheme.split(['?', '#']).next().unwrap_or("");
     let last = path
@@ -251,7 +251,9 @@ fn default_destination(url: &str) -> Result<PathBuf, String> {
         decoded
     };
     if name == "." || name == ".." || name.contains(['/', '\\']) || name.contains(':') {
-        return Err("Cannot derive a safe file name from the URL; pass --output".to_owned());
+        return Err(TransferError::Usage(
+            "Cannot derive a safe file name from the URL; pass --output".to_owned(),
+        ));
     }
     Ok(PathBuf::from(name))
 }
@@ -300,9 +302,10 @@ impl Download<'_> {
             .map_or(READ_BUF, |t| t.chunk(READ_BUF))
     }
 
-    pub(super) fn pace(&self, bytes: usize) -> Result<(), String> {
+    pub(super) fn pace(&self, bytes: usize) -> Result<(), TransferError> {
         if let Some(t) = &self.throttle {
-            t.throttle(bytes).map_err(|e| e.to_string())?;
+            t.throttle(bytes)
+                .map_err(|e| TransferError::Network(e.to_string()))?;
         }
         limits::check()
     }
@@ -329,7 +332,7 @@ impl Download<'_> {
         Ok(())
     }
 
-    fn step(&self) -> Result<Step, String> {
+    fn step(&self) -> Result<Step, TransferError> {
         let known = self
             .load_meta()
             .filter(|m| m.url == self.url && m.seg.is_none());
@@ -366,7 +369,7 @@ impl Download<'_> {
                     retry_after: None,
                 });
             }
-            Err(e) => return Err(describe_error(&e)),
+            Err(e) => return Err(TransferError::Network(describe_error(&e))),
         };
         let status = resp.status().as_u16();
 
@@ -453,7 +456,7 @@ impl Download<'_> {
                     if tracker::cancelled() {
                         let _ = file.sync_data();
                         progress.finish(have);
-                        return Err(tracker::INTERRUPTED.to_owned());
+                        return Err(TransferError::Interrupted(tracker::INTERRUPTED.to_owned()));
                     }
                     if let Err(why) = self.pace(n) {
                         progress.finish(have);
@@ -503,18 +506,24 @@ fn complete(
     dest: &Path,
     args: &GetArgs,
     server: Option<&ServerDigest>,
-) -> Result<u8, String> {
+) -> Result<u8, TransferError> {
     let expected = server.map_or(args.sha256.as_deref(), |s| Some(s.sha256.as_str()));
     let code = finish_download(d, dest, expected, server.map(|s| s.size))?;
     if code == 0 && args.extract {
-        extract_archive(dest, args)
-            .map_err(|e| format!("downloaded {}, but extraction failed: {e}", dest.display()))?;
+        extract_archive(dest, args).map_err(|e| {
+            e.map_message(|why| {
+                format!(
+                    "downloaded {}, but extraction failed: {why}",
+                    dest.display()
+                )
+            })
+        })?;
     }
     Ok(code)
 }
 
 #[cfg(feature = "extract")]
-fn extract_archive(dest: &Path, args: &GetArgs) -> Result<(), String> {
+fn extract_archive(dest: &Path, args: &GetArgs) -> Result<(), TransferError> {
     let options = super::extract::Options {
         keep_archive: args.keep_archive,
         verify_first: !args.no_verify_first,
@@ -524,8 +533,10 @@ fn extract_archive(dest: &Path, args: &GetArgs) -> Result<(), String> {
 }
 
 #[cfg(not(feature = "extract"))]
-fn extract_archive(_dest: &Path, _args: &GetArgs) -> Result<(), String> {
-    Err("this build of blaze was made without extraction support".to_owned())
+fn extract_archive(_dest: &Path, _args: &GetArgs) -> Result<(), TransferError> {
+    Err(TransferError::Extract(
+        "this build of blaze was made without extraction support".to_owned(),
+    ))
 }
 
 fn finish_download(
@@ -533,38 +544,37 @@ fn finish_download(
     dest: &Path,
     sha256: Option<&str>,
     size: Option<u64>,
-) -> Result<u8, String> {
+) -> Result<u8, TransferError> {
     tracker::set_phase(jobs::Phase::Finalizing);
     if let Some(expected) = size
         && d.part_len() != expected
     {
         let actual = d.part_len();
         d.reset();
-        crate::cli::exit::record(crate::cli::exit::INTEGRITY);
-        return Err(format!(
+        return Err(TransferError::Integrity(format!(
             "size mismatch: the server hashed {expected} bytes but the download has {actual}; the file may have changed"
-        ));
+        )));
     }
     if let Some(expected) = sha256 {
         let actual = sha256_file_within(&d.part, limits::check_io).map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
-                e.to_string()
+                TransferError::Network(e.to_string())
             } else {
-                format!("cannot hash download: {e}")
+                TransferError::Io(format!("cannot hash download: {e}"))
             }
         })?;
         if !actual.eq_ignore_ascii_case(expected) {
             d.reset();
-            crate::cli::exit::record(crate::cli::exit::INTEGRITY);
-            return Err(format!(
+            return Err(TransferError::Integrity(format!(
                 "SHA-256 mismatch: expected {expected}, got {actual}"
-            ));
+            )));
         }
     }
     limits::check()?;
     let size = d.part_len();
-    rename_with_retry(&d.part, dest)
-        .map_err(|e| format!("cannot move download to {}: {e}", dest.display()))?;
+    rename_with_retry(&d.part, dest).map_err(|e| {
+        TransferError::Io(format!("cannot move download to {}: {e}", dest.display()))
+    })?;
     let _ = std::fs::remove_file(sibling(&d.meta_path, ".tmp"));
     if let Err(e) = remove_with_retry(&d.meta_path) {
         announce(
@@ -585,12 +595,14 @@ fn finish_download(
     Ok(0)
 }
 
-pub fn get(args: GetArgs) -> Result<u8, String> {
+pub fn get(args: GetArgs) -> Result<u8, TransferError> {
     http_url(&args.url)?;
     if let Some(h) = &args.sha256
         && (h.len() != 64 || !h.chars().all(|c| c.is_ascii_hexdigit()))
     {
-        return Err("--sha256 must be 64 hexadecimal characters".to_owned());
+        return Err(TransferError::Usage(
+            "--sha256 must be 64 hexadecimal characters".to_owned(),
+        ));
     }
     let auth = basic_header(args.auth.as_deref(), args.auth_env.as_deref())?;
     limits::install(&args.timeouts);
@@ -603,10 +615,10 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
         },
     };
     if dest.exists() && !args.force {
-        return Err(format!(
+        return Err(TransferError::Usage(format!(
             "{} already exists; use --force to replace it",
             dest.display()
-        ));
+        )));
     }
     jobs::ready(|| jobs::Info {
         label: dest
@@ -660,7 +672,9 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
             Step::Restart => {
                 restarts += 1;
                 if restarts > MAX_RESTARTS {
-                    return Err("server keeps changing the file; giving up".to_owned());
+                    return Err(TransferError::Unstable(
+                        "server keeps changing the file; giving up".to_owned(),
+                    ));
                 }
             }
             Step::Transient {
@@ -670,13 +684,14 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
             } => {
                 fails = if progressed { 1 } else { fails + 1 };
                 if fails > args.retries {
-                    return Err(format!(
+                    return Err(TransferError::Network(format!(
                         "download failed after {} retries: {msg}",
                         args.retries
-                    ));
+                    )));
                 }
-                let wait = plan_wait(fails, retry_after, jitter())
-                    .map_err(|why| format!("download failed: {msg}; {why}"))?;
+                let wait = plan_wait(fails, retry_after, jitter()).map_err(|why| {
+                    TransferError::Network(format!("download failed: {msg}; {why}"))
+                })?;
                 limits::fits(wait)?;
                 announce(
                     "Retrying",
@@ -685,7 +700,7 @@ pub fn get(args: GetArgs) -> Result<u8, String> {
                         retry_note(wait, retry_after, fails, args.retries)
                     ),
                 );
-                tracker::retry_wait(wait)?;
+                tracker::retry_wait(wait).map_err(TransferError::Interrupted)?;
             }
         }
     }
@@ -826,6 +841,8 @@ mod tests {
         assert!(ensure_space_fits(1024, 1024).is_ok());
         assert!(ensure_space_fits(0, 0).is_ok());
         let err = ensure_space_fits(2 * 1024 * 1024, 1024 * 1024).unwrap_err();
+        assert_eq!(err.code(), crate::cli::exit::NO_SPACE);
+        let err = err.to_string();
         assert!(err.contains("2.00 MiB"), "{err}");
         assert!(err.contains("1.00 MiB"), "{err}");
     }

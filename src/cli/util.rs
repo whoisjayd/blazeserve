@@ -93,11 +93,11 @@ pub fn lan_ip() -> String {
 
 pub fn open_browser(url: &str) {
     use std::process::{Command, Stdio};
-    let mut cmd = if cfg!(windows) {
+    let mut cmd = if crate::platform::IS_WINDOWS {
         let mut c = Command::new("cmd");
         c.args(["/C", "start", "", url]);
         c
-    } else if cfg!(target_os = "macos") {
+    } else if crate::platform::IS_MACOS {
         let mut c = Command::new("open");
         c.arg(url);
         c

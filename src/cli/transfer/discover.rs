@@ -1,5 +1,6 @@
 //! `blaze get --verify server-sha256`: ask the server for the file's SHA-256 before downloading.
 
+use super::error::TransferError;
 use super::http::{describe_error, header, http_failure};
 use base64::Engine as _;
 use std::time::Duration;
@@ -25,8 +26,13 @@ pub(super) fn hash_url(url: &str) -> String {
     format!("{base}{sep}hash")
 }
 
-pub(super) fn parse_digest(body: &[u8], repr_digest: Option<&str>) -> Result<ServerDigest, String> {
-    let bad = |why: &str| format!("the server's hash reply is not usable: {why}");
+pub(super) fn parse_digest(
+    body: &[u8],
+    repr_digest: Option<&str>,
+) -> Result<ServerDigest, TransferError> {
+    let bad = |why: &str| {
+        TransferError::Unstable(format!("the server's hash reply is not usable: {why}"))
+    };
     let value: serde_json::Value =
         serde_json::from_slice(body).map_err(|_| bad("it is not valid JSON"))?;
     let sha256 = value
@@ -57,7 +63,7 @@ pub(super) fn parse_digest(body: &[u8], repr_digest: Option<&str>) -> Result<Ser
     Ok(ServerDigest { sha256, size })
 }
 
-pub(super) fn discover(url: &str, auth: Option<&str>) -> Result<ServerDigest, String> {
+pub(super) fn discover(url: &str, auth: Option<&str>) -> Result<ServerDigest, TransferError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(None)
@@ -71,25 +77,26 @@ pub(super) fn discover(url: &str, auth: Option<&str>) -> Result<ServerDigest, St
     if let Some(a) = auth {
         req = req.header("Authorization", a);
     }
-    let resp = req.call().map_err(|e| describe_error(&e))?;
+    let resp = req
+        .call()
+        .map_err(|e| TransferError::Network(describe_error(&e)))?;
     let status = resp.status().as_u16();
     if status != 200 {
-        let why = match status {
-            404 | 405 | 501 => {
-                "the server does not offer a SHA-256 for this URL; --verify server-sha256 needs a BlazeServe server"
-                    .to_owned()
-            }
-            _ => http_failure(status, false),
-        };
-        return Err(format!("cannot get the server's SHA-256: {why}"));
+        if matches!(status, 404 | 405 | 501) {
+            return Err(TransferError::Network(
+                "cannot get the server's SHA-256: the server does not offer a SHA-256 for this URL; --verify server-sha256 needs a BlazeServe server".to_owned(),
+            ));
+        }
+        return Err(http_failure(status, false)
+            .map_message(|why| format!("cannot get the server's SHA-256: {why}")));
     }
     let is_json =
         header(&resp, "content-type").is_some_and(|v| v.to_ascii_lowercase().contains("json"));
     if !is_json {
-        return Err(
+        return Err(TransferError::Unstable(
             "cannot get the server's SHA-256: the server did not answer with JSON; --verify server-sha256 needs a BlazeServe server"
                 .to_owned(),
-        );
+        ));
     }
     let repr = header(&resp, "repr-digest");
     let body = resp
@@ -97,7 +104,11 @@ pub(super) fn discover(url: &str, auth: Option<&str>) -> Result<ServerDigest, St
         .with_config()
         .limit(MAX_BODY)
         .read_to_vec()
-        .map_err(|_| "the server's hash reply is too large or was cut short".to_owned())?;
+        .map_err(|_| {
+            TransferError::Network(
+                "the server's hash reply is too large or was cut short".to_owned(),
+            )
+        })?;
     parse_digest(&body, repr.as_deref())
 }
 

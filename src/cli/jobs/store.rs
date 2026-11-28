@@ -57,23 +57,8 @@ fn private_file(create_new: bool) -> OpenOptions {
     } else {
         o.create(true).append(true);
     }
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    crate::platform::owner_only(&mut o);
     o
-}
-
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut b = std::fs::DirBuilder::new();
-    b.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    b.create(dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
 }
 
 pub struct Listing {
@@ -90,14 +75,14 @@ impl Store {
     pub fn open() -> Result<Self, String> {
         let dir = resolve_dir(
             |k| std::env::var_os(k),
-            cfg!(windows),
-            cfg!(target_os = "macos"),
+            crate::platform::IS_WINDOWS,
+            crate::platform::IS_MACOS,
         )?;
         Self::at(dir)
     }
 
     pub fn at(dir: PathBuf) -> Result<Self, String> {
-        create_private_dir(&dir)
+        crate::platform::create_private_dir(&dir)
             .map_err(|e| format!("cannot use the job store {}: {e}", dir.display()))?;
         Ok(Self { dir })
     }
@@ -143,8 +128,7 @@ impl Store {
         let result = (|| {
             let mut o = OpenOptions::new();
             o.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+            crate::platform::owner_only(&mut o);
             let mut f = o.open(&tmp)?;
             f.write_all(&raw)?;
             f.sync_all()?;

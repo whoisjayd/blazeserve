@@ -89,7 +89,6 @@ pub enum ResolveError {
     Escape,
 }
 
-#[cfg(windows)]
 fn is_windows_reserved(segment: &str) -> bool {
     let stem = segment
         .split('.')
@@ -120,8 +119,11 @@ pub fn resolve_under(base: &Path, rel: &str) -> Result<PathBuf, ResolveError> {
             "" | "." => {}
             ".." => return Err(ResolveError::Escape),
             s => {
-                #[cfg(windows)]
-                if s.contains(':') || s.ends_with('.') || s.ends_with(' ') || is_windows_reserved(s)
+                if crate::platform::WINDOWS_NAMES
+                    && (s.contains(':')
+                        || s.ends_with('.')
+                        || s.ends_with(' ')
+                        || is_windows_reserved(s))
                 {
                     return Err(ResolveError::Invalid);
                 }
@@ -204,11 +206,7 @@ pub fn create_upload_file(base: &Path, target: &Path) -> io::Result<File> {
     }
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
+    crate::platform::owner_only(&mut opts);
     let file = match opts.open(target) {
         Ok(f) => f,
         Err(e) => {
@@ -243,12 +241,8 @@ pub fn open_existing_for_append(base: &Path, path: &Path) -> io::Result<(File, u
     }
     let mut file = OpenOptions::new().write(true).open(path)?;
     let after = file.metadata()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if before.dev() != after.dev() || before.ino() != after.ino() {
-            return Err(unsafe_io("file changed during open"));
-        }
+    if !crate::platform::same_file(&before, &after) {
+        return Err(unsafe_io("file changed during open"));
     }
     if !after.is_file() || !parent_contained(&real_base, parent) {
         return Err(unsafe_io("not a regular file"));

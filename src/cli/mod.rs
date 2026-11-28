@@ -245,33 +245,63 @@ fn version(args: VersionArgs) -> Result<u8, String> {
     Ok(0)
 }
 
-fn dispatch(command: Command) -> Result<u8, String> {
+/// A failed command: what to print and the status to exit with.
+struct Failure {
+    message: String,
+    code: u8,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            code: exit::OTHER,
+        }
+    }
+}
+
+impl From<transfer::TransferError> for Failure {
+    fn from(e: transfer::TransferError) -> Self {
+        Self {
+            code: e.code(),
+            message: e.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+fn dispatch(command: Command) -> Result<u8, Failure> {
     match command {
         Command::Serve(a) => {
             let bg = a.common.bg.clone();
-            jobs::run(jobs::Kind::Serve, &bg, move || serve::serve(a))
+            Ok(jobs::run(jobs::Kind::Serve, &bg, move || serve::serve(a))?)
         }
         Command::Send(a) => {
             let bg = a.common.bg.clone();
-            jobs::run(jobs::Kind::Send, &bg, move || serve::send(a))
+            Ok(jobs::run(jobs::Kind::Send, &bg, move || serve::send(a))?)
         }
-        Command::Checksum(a) => checksum(a),
-        Command::Version(a) => version(a),
-        Command::Doctor(a) => doctor::run(a),
-        Command::Benchmark(a) => bench::run(a),
+        Command::Checksum(a) => Ok(checksum(a)?),
+        Command::Version(a) => Ok(version(a)?),
+        Command::Doctor(a) => Ok(doctor::run(a)?),
+        Command::Benchmark(a) => Ok(bench::run(a)?),
         Command::Get(a) => {
             let bg = a.bg.clone();
-            jobs::run(jobs::Kind::Get, &bg, move || transfer::get(a))
+            jobs::run(jobs::Kind::Get, &bg, move || Ok(transfer::get(a)?))
         }
         Command::Put(a) => {
             let bg = a.bg.clone();
-            jobs::run(jobs::Kind::Put, &bg, move || transfer::put(a))
+            jobs::run(jobs::Kind::Put, &bg, move || Ok(transfer::put(a)?))
         }
-        Command::Status(a) => jobs::status(a),
-        Command::Stop(a) => jobs::stop(a),
-        Command::Telemetry(a) => telemetry::run(a),
-        Command::Upgrade(a) => upgrade::run(a),
-        Command::Completions(a) => completions(a),
+        Command::Status(a) => Ok(jobs::status(a)?),
+        Command::Stop(a) => Ok(jobs::stop(a)?),
+        Command::Telemetry(a) => Ok(telemetry::run(a)?),
+        Command::Upgrade(a) => Ok(upgrade::run(a)?),
+        Command::Completions(a) => Ok(completions(a)?),
     }
 }
 
@@ -322,14 +352,13 @@ where
 
 fn run(cli: Cli) -> u8 {
     cli.color.apply();
-    exit::reset();
     jobs::clear_stop();
     upgrade::remove_stale_backup();
     match dispatch(cli.command) {
         Ok(code) => code,
-        Err(message) => {
-            anstream::eprintln!("{} {message}", Style::stderr().red("error:"));
-            exit::failure()
+        Err(failure) => {
+            anstream::eprintln!("{} {failure}", Style::stderr().red("error:"));
+            failure.code
         }
     }
 }

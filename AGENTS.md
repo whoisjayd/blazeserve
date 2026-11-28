@@ -31,6 +31,7 @@ A handbook for contributors and coding agents working on BlazeServe, a Rust HTTP
 | `src/handler/`, `src/range.rs`, `src/cache.rs` | HTTP behaviour: ranges, validators, status routes, CORS, authentication, headers. `handler/mod.rs` routes; `auth`, `ops`, `resolve`, `files`, `pump`, `response` and `scope` each own one concern |
 | `src/upload/`, `src/zip_stream/` | Uploads (`request`, `target`, `stream`, `publish`, `plain`, `resumable`) and streaming ZIPs (`writer`, `crc32`, `archive`) |
 | `src/security.rs` | Canonical path containment, race-resistant file creation, reserved staging names, request IDs |
+| `src/platform/` | Everything that differs between operating systems. `.github/scripts/platform-guard.sh` fails when other code asks which one it is built for |
 | `src/limiter.rs`, `src/metrics.rs`, `src/logging.rs`, `src/ui.rs` | Throttling, counters, logs, the directory listing page |
 | `src/telemetry/`, `src/usage/` | OpenTelemetry export (`settings`, `transport`, `exporter`) and the anonymous usage report (`payload`, `gate`, `settings`, `session`) |
 | `src/python.rs`, `python/blazeserve/`, `tests_py/` | PyO3 bindings (feature `python`), the thin Python package with its type stubs, and the pytest suite run against the built wheel |
@@ -48,7 +49,8 @@ cli -> config, server, logging, usage
 server -> handler, limiter, metrics, config, telemetry
 handler -> security, upload, zip_stream, ui, range, cache, limiter, metrics, config, telemetry
 upload, zip_stream -> security, metrics, config
-config, security, limiter, metrics, logging, ui, range, cache, usage -> leaves
+config, security, limiter, metrics, logging, ui, range, cache, usage -> platform
+platform -> leaf
 ```
 
 - CLI concerns stay in `cli`. Startup, sockets, TLS, admission and shutdown stay in `server`. Protocol behaviour stays in `handler`.
@@ -119,7 +121,7 @@ CI also enforces 80 percent line coverage with `cargo llvm-cov`, runs `cargo den
 
 ## Conventions
 
-- Windows, Linux and macOS are all first-class. Use `std::path`, never split paths by hand, and never assume separators, drive letters, case sensitivity, symlink support or POSIX permissions. Guard Unix-only code with `cfg`, tolerate unsupported socket options, and keep `TCP_QUICKACK` Linux-only.
+- Windows, Linux and macOS are all first-class. Use `std::path`, never split paths by hand, and never assume separators, drive letters, case sensitivity, symlink support or POSIX permissions. Code that differs by system goes in `src/platform/`, tolerate unsupported socket options, and keep `TCP_QUICKACK` Linux-only.
 - The crate has no system-library dependencies and TLS uses rustls. A new dependency must build on all three platforms without system libraries. `hatchzip-core` (feature `extract`, on by default) builds a bundled zstd C source through `zip`, so building from source needs a C compiler; do not add other dependencies that need one. Prefer the standard library or an existing dependency.
 - Commit `Cargo.toml` and `Cargo.lock` together and never edit the lock by hand. Run `cargo deny check` after dependency changes, and review action, Docker base and pre-commit pins as separate supply-chain changes.
 - Do not replace a transfer path without measurements on the affected platforms.

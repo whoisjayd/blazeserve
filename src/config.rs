@@ -131,7 +131,7 @@ pub struct Hide {
 
 impl Hide {
     pub fn new<S: AsRef<str>>(patterns: &[S]) -> Result<Self, ConfigError> {
-        let fold = cfg!(any(windows, target_os = "macos"));
+        let fold = crate::platform::CASE_FOLDS;
         let (mut names, mut paths) = (GlobSetBuilder::new(), GlobSetBuilder::new());
         let mut kept = Vec::new();
         for raw in patterns {
@@ -188,7 +188,7 @@ impl Hide {
         let mut joined = String::new();
         for part in rel {
             // Windows opens `name.` and `name ` as `name`.
-            let part = if cfg!(windows) {
+            let part = if crate::platform::WINDOWS_NAMES {
                 part.as_ref().trim_end_matches(['.', ' '])
             } else {
                 part.as_ref()
@@ -399,10 +399,7 @@ mod tests {
         assert!(h.matches(&["docs", "a.draft"]));
         assert!(!h.matches(&["docs", "x", "a.draft"]));
         assert!(!h.matches(&["a", "secrets"]) && !h.matches(&["ok.txt"]));
-        assert_eq!(
-            h.matches(&["PROD.ENV"]),
-            cfg!(any(windows, target_os = "macos"))
-        );
+        assert_eq!(h.matches(&["PROD.ENV"]), crate::platform::CASE_FOLDS);
     }
 
     #[test]

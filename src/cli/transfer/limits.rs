@@ -1,5 +1,6 @@
 //! Time limits shared by `blaze get` and `blaze put`: connection setup, idle time and one overall budget.
 
+use super::error::TransferError;
 use crate::cli::serve::{format_span, parse_span};
 use clap::Args;
 use std::sync::RwLock;
@@ -94,10 +95,10 @@ fn expired_message(a: &Active) -> String {
 }
 
 /// The overall budget has run out.
-pub(super) fn check() -> Result<(), String> {
+pub(super) fn check() -> Result<(), TransferError> {
     let a = active();
     match remaining() {
-        Some(left) if left.is_zero() => Err(expired_message(&a)),
+        Some(left) if left.is_zero() => Err(TransferError::Network(expired_message(&a))),
         _ => Ok(()),
     }
 }
@@ -108,13 +109,13 @@ pub(super) fn check_io() -> std::io::Result<()> {
 }
 
 /// A wait of `wait` must end before the overall budget does, else it is not worth starting.
-pub(super) fn fits(wait: Duration) -> Result<(), String> {
+pub(super) fn fits(wait: Duration) -> Result<(), TransferError> {
     match remaining() {
-        Some(left) if wait >= left => Err(format!(
+        Some(left) if wait >= left => Err(TransferError::Network(format!(
             "{}; waiting {}s more would not leave time to retry",
             expired_message(&active()),
             wait.as_secs().max(1)
-        )),
+        ))),
         _ => Ok(()),
     }
 }

@@ -71,6 +71,8 @@ jobs:
           shared-key: blaze
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
+      - name: Keep operating system code in src/platform
+        run: sh .github/scripts/platform-guard.sh
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:

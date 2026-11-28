@@ -1,6 +1,7 @@
 //! Chunked `blaze put` with server-offset resync and content digests.
 
 use super::READ_BUF;
+use super::error::TransferError;
 use super::http::{
     agent, basic_header, describe_error, header, http_failure, http_url, retry_hint,
     transient_error, transient_status,
@@ -78,7 +79,7 @@ fn parse_etag(raw: &str) -> Result<String, String> {
     Ok(tag.to_owned())
 }
 
-fn upload_target(url: &str, file: &Path) -> Result<String, String> {
+fn upload_target(url: &str, file: &Path) -> Result<String, TransferError> {
     http_url(url)?;
     if url.contains("/__upload__/") {
         return Ok(url.to_owned());
@@ -86,7 +87,7 @@ fn upload_target(url: &str, file: &Path) -> Result<String, String> {
     let name = file
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| "file name is not valid UTF-8".to_owned())?;
+        .ok_or_else(|| TransferError::Usage("file name is not valid UTF-8".to_owned()))?;
     Ok(format!(
         "{}/__upload__/{}",
         url.trim_end_matches('/'),
@@ -102,8 +103,9 @@ fn digest_header(bytes: &[u8]) -> String {
     )
 }
 
-fn whole_file_digest(path: &Path) -> Result<String, String> {
-    let fail = |e: std::io::Error| format!("cannot hash {}: {e}", path.display());
+fn whole_file_digest(path: &Path) -> Result<String, TransferError> {
+    let fail =
+        |e: std::io::Error| TransferError::Io(format!("cannot hash {}: {e}", path.display()));
     let mut file = File::open(path).map_err(fail)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; READ_BUF];
@@ -154,24 +156,26 @@ impl Upload<'_> {
 
     /// `staged_is_ours` says this run already sent a chunk, so a staged partial can only be
     /// its own. A replacement never adopts a staged partial it cannot identify.
-    fn remote_offset(&self, staged_is_ours: bool) -> Result<Probed, String> {
+    fn remote_offset(&self, staged_is_ours: bool) -> Result<Probed, TransferError> {
         let resp = match limits::bound(self.authorize(self.agent.head(self.url))).call() {
             Ok(r) => r,
             Err(e) if transient_error(&e) => return Ok(Err((describe_error(&e), None))),
-            Err(e) => return Err(describe_error(&e)),
+            Err(e) => return Err(TransferError::Network(describe_error(&e))),
         };
         if self.if_match.is_some() {
             return match resp.status().as_u16() {
-                404 => Err("nothing to replace: the destination does not exist".to_owned()),
+                404 => Err(TransferError::Http(
+                    "nothing to replace: the destination does not exist".to_owned(),
+                )),
                 200 if header(&resp, "upload-complete").as_deref() == Some("?1") => Ok(Ok(0)),
                 200 => match header(&resp, "upload-offset").and_then(|v| v.parse().ok()) {
                     Some(0) => Ok(Ok(0)),
                     Some(n) if staged_is_ours => Ok(Ok(n)),
-                    _ => Err(
+                    _ => Err(TransferError::Unstable(
                         "a partial upload of unknown origin is staged at the destination; \
                               finish or discard it, then retry"
                             .to_owned(),
-                    ),
+                    )),
                 },
                 code if transient_status(code) => Ok(Err((
                     format!("server returned HTTP {code}"),
@@ -184,7 +188,9 @@ impl Upload<'_> {
             404 => Ok(Ok(0)),
             200 => match header(&resp, "upload-offset").and_then(|v| v.parse().ok()) {
                 Some(n) => Ok(Ok(n)),
-                None => Err("destination already exists on the server".to_owned()),
+                None => Err(TransferError::Http(
+                    "destination already exists on the server".to_owned(),
+                )),
             },
             code if transient_status(code) => Ok(Err((
                 format!("server returned HTTP {code}"),
@@ -194,7 +200,7 @@ impl Upload<'_> {
         }
     }
 
-    fn send(&self, offset: u64, chunk: &[u8]) -> Result<Sent, String> {
+    fn send(&self, offset: u64, chunk: &[u8]) -> Result<Sent, TransferError> {
         let end = offset + chunk.len() as u64;
         let last = end >= self.total;
         let mut req = self
@@ -236,7 +242,7 @@ impl Upload<'_> {
                     retry_after: None,
                 });
             }
-            Err(e) => return Err(describe_error(&e)),
+            Err(e) => return Err(TransferError::Network(describe_error(&e))),
         };
         match resp.status().as_u16() {
             200 | 201 | 204 if last => Ok(Sent::Done),
@@ -261,12 +267,12 @@ impl Upload<'_> {
     }
 }
 
-pub fn put(args: PutArgs) -> Result<u8, String> {
+pub fn put(args: PutArgs) -> Result<u8, TransferError> {
     let url = upload_target(&args.url, &args.file)?;
     let auth = basic_header(args.auth.as_deref(), args.auth_env.as_deref())?;
     limits::install(&args.timeouts);
     let total = std::fs::metadata(&args.file)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| TransferError::Io(e.to_string()))?
         .len();
     jobs::ready(|| jobs::Info {
         label: args
@@ -287,8 +293,8 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
         throttle: args.limit_rate.map(Throttle::new),
     };
 
-    let mut file =
-        File::open(&args.file).map_err(|e| format!("cannot open {}: {e}", args.file.display()))?;
+    let mut file = File::open(&args.file)
+        .map_err(|e| TransferError::Io(format!("cannot open {}: {e}", args.file.display())))?;
     let chunk_size = (args.chunk_mb * 1024 * 1024) as usize;
     let mut buf = vec![0u8; chunk_size.min(total.max(1) as usize)];
     let mut offset = 0u64;
@@ -299,7 +305,7 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
 
     loop {
         limits::check()?;
-        tracker::check()?;
+        tracker::check().map_err(TransferError::Interrupted)?;
         if need_sync {
             match up.remote_offset(sent_any)? {
                 Ok(n) => {
@@ -317,9 +323,9 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
 
         let want = ((total - offset) as usize).min(buf.len());
         file.seek(SeekFrom::Start(offset))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TransferError::Io(e.to_string()))?;
         file.read_exact(&mut buf[..want])
-            .map_err(|e| format!("read failed: {e}"))?;
+            .map_err(|e| TransferError::Io(format!("read failed: {e}")))?;
 
         if offset + want as u64 >= total {
             tracker::set_phase(jobs::Phase::Finalizing);
@@ -356,18 +362,25 @@ pub fn put(args: PutArgs) -> Result<u8, String> {
 
 /// Fails once the retries are spent or the server asks for more time than is accepted,
 /// otherwise announces and sits out the wait.
-fn pause(fails: u32, retries: u32, msg: &str, retry_after: Option<Duration>) -> Result<(), String> {
+fn pause(
+    fails: u32,
+    retries: u32,
+    msg: &str,
+    retry_after: Option<Duration>,
+) -> Result<(), TransferError> {
     if fails > retries {
-        return Err(format!("upload failed after {retries} retries: {msg}"));
+        return Err(TransferError::Network(format!(
+            "upload failed after {retries} retries: {msg}"
+        )));
     }
     let wait = plan_wait(fails, retry_after, jitter())
-        .map_err(|why| format!("upload failed: {msg}; {why}"))?;
+        .map_err(|why| TransferError::Network(format!("upload failed: {msg}; {why}")))?;
     limits::fits(wait)?;
     announce(
         "Retrying",
         &format!("{}: {msg}", retry_note(wait, retry_after, fails, retries)),
     );
-    tracker::retry_wait(wait)
+    tracker::retry_wait(wait).map_err(TransferError::Interrupted)
 }
 
 #[cfg(test)]

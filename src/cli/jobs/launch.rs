@@ -41,44 +41,8 @@ fn spawn_detached(args: &[OsString], log: &File) -> Result<Child, String> {
             .stderr(Stdio::from(log.try_clone()?));
         Ok(c)
     };
-    let fail = |e: std::io::Error| format!("cannot start the background worker: {e}");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-        // Leave a job object that would end the worker with the terminal; if the job
-        // forbids breakaway, fall back to a plain detached start.
-        let first = build()
-            .map_err(fail)?
-            .creation_flags(base | CREATE_BREAKAWAY_FROM_JOB)
-            .spawn();
-        match first {
-            Ok(child) => Ok(child),
-            Err(_) => build()
-                .map_err(fail)?
-                .creation_flags(base)
-                .spawn()
-                .map_err(fail),
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // A process group of its own keeps terminal signals away; the worker also ignores
-        // hangups itself.
-        build()
-            .map_err(fail)?
-            .process_group(0)
-            .spawn()
-            .map_err(fail)
-    }
-    #[cfg(not(any(windows, unix)))]
-    {
-        build().map_err(fail)?.spawn().map_err(fail)
-    }
+    crate::platform::spawn_detached(build)
+        .map_err(|e| format!("cannot start the background worker: {e}"))
 }
 
 enum Seen {
@@ -100,36 +64,12 @@ fn inspect(store: &Store, id: &str) -> Seen {
     }
 }
 
-/// CreateProcess hands the worker every inheritable handle, including this process's own
-/// output pipes. A caller capturing our output (`id=$(blaze get ... --background)`) would then
-/// wait until the job ends. The worker gets its own log handles explicitly instead.
-#[cfg(windows)]
-fn stop_inheriting_std_handles() {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
-    let handles = [
-        std::io::stdin().as_raw_handle(),
-        std::io::stdout().as_raw_handle(),
-        std::io::stderr().as_raw_handle(),
-    ];
-    for handle in handles.into_iter().filter(|h| !h.is_null()) {
-        // SAFETY: the handle is one of this process's standard handles, which stay open for
-        // its whole life; clearing the inherit flag changes nothing else about it.
-        unsafe {
-            SetHandleInformation(handle.cast(), HANDLE_FLAG_INHERIT, 0);
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn stop_inheriting_std_handles() {}
-
 pub fn launch(kind: Kind) -> Result<u8, String> {
     let store = Store::open()?;
     store.sweep(now());
     let (id, log) = store.reserve()?;
     let args = worker_args(super::invocation_args(), &id);
-    stop_inheriting_std_handles();
+    crate::platform::stop_inheriting_std_handles();
     let mut child = match spawn_detached(&args, &log) {
         Ok(c) => c,
         Err(e) => {

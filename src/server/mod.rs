@@ -177,7 +177,7 @@ pub fn run_until(
         };
         let interrupt = async {
             tokio::select! {
-                () = shutdown_signal() => {}
+                () = crate::platform::shutdown_signal() => {}
                 () = stop => {}
             }
         };
@@ -188,27 +188,6 @@ pub fn run_until(
     // Blocking-pool threads (file I/O) must not delay process exit.
     rt.shutdown_timeout(Duration::from_secs(1));
     result
-}
-
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut term = signal(SignalKind::terminate()).ok();
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            () = async {
-                match term.as_mut() {
-                    Some(t) => { t.recv().await; }
-                    None => std::future::pending::<()>().await,
-                }
-            } => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
 }
 
 /// Resolves once shutdown is requested; the watch guard must not live across awaits.

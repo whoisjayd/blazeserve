@@ -2,6 +2,7 @@
 
 mod discover;
 mod download;
+mod error;
 #[cfg(feature = "extract")]
 mod extract;
 mod filename;
@@ -15,6 +16,7 @@ mod upload;
 #[cfg(fuzzing)]
 pub use discover::parse_digest_for_fuzz;
 pub use download::{GetArgs, get};
+pub use error::TransferError;
 #[cfg(fuzzing)]
 pub use filename::suggested_name_for_fuzz;
 pub use upload::{PutArgs, put};

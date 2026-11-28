@@ -1,3 +1,4 @@
+use crate::platform::read_at;
 use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
@@ -32,16 +33,6 @@ pub(super) struct Pump {
     pub(super) zeros: Bytes,
     pub(super) limiter: Option<Arc<TokenBucket>>,
     pub(super) failed: bool,
-}
-
-#[cfg(unix)]
-pub(super) fn read_at(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    std::os::unix::fs::FileExt::read_at(file, buf, offset)
-}
-
-#[cfg(windows)]
-pub(super) fn read_at(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    std::os::windows::fs::FileExt::seek_read(file, buf, offset)
 }
 
 pub(super) async fn read_chunk(

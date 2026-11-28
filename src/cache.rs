@@ -24,16 +24,6 @@ pub fn mtime_secs(meta: &Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(unix)]
-fn file_id(meta: &Metadata) -> u64 {
-    std::os::unix::fs::MetadataExt::ino(meta)
-}
-
-#[cfg(not(unix))]
-fn file_id(_meta: &Metadata) -> u64 {
-    0
-}
-
 /// Strong validator derived from mtime, size and inode of the file actually served,
 /// so a precompressed sibling gets its own tag.
 pub fn etag_for(meta: &Metadata) -> String {
@@ -41,7 +31,9 @@ pub fn etag_for(meta: &Metadata) -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let digest = Sha256::digest(format!("{nanos}-{}-{}", meta.len(), file_id(meta)).as_bytes());
+    let digest = Sha256::digest(
+        format!("{nanos}-{}-{}", meta.len(), crate::platform::file_id(meta)).as_bytes(),
+    );
     let mut tag = String::with_capacity(22);
     tag.push('"');
     for byte in &digest[..10] {

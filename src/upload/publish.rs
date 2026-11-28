@@ -96,7 +96,7 @@ fn publish_replace(
     crate::testknobs::crash_point("upload-before-rename");
     let rename = || std::fs::rename(staging, target);
     // Elsewhere a refusal is final, and waiting would only hold up other publishes.
-    let renamed = if cfg!(windows) {
+    let renamed = if crate::platform::IS_WINDOWS {
         security::retry_sharing(rename)
     } else {
         rename()

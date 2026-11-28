@@ -1352,3 +1352,26 @@ async fn get_counts_a_replaced_partial_as_free_space() {
     assert!(std::fs::read(&dest).unwrap() == data);
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_with_refused_credentials_exits_5() {
+    let served = tempfile::tempdir().unwrap();
+    let config = Config {
+        host: "127.0.0.1".into(),
+        port: 0,
+        base: canonical(served.path()),
+        max_upload_bytes: MIB as u64,
+        auth: Some(blazeserve::config::Credentials::parse("alice:pw").unwrap()),
+        ..Config::default()
+    };
+    let server = blazeserve::server::start(config).await.unwrap();
+    let url = format!("http://{}", server.local_addr());
+    let local = tempfile::tempdir().unwrap();
+    let file = local.path().join("up.bin");
+    std::fs::write(&file, b"data").unwrap();
+
+    let out = blaze_async(vec!["put".into(), s(&file), url]).await;
+    assert_eq!(code(&out), 5, "{}", stderr(&out));
+    assert!(!served.path().join("up.bin").exists());
+    server.shutdown().await;
+}
