@@ -1,22 +1,28 @@
 //! A short, redacted record of each run, kept on this machine for debugging and attached to
 //! a bug report only when the user says so. `BLAZE_RUN_LOG=0` turns it off.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use crate::usage;
 
 const KEEP: usize = 20;
-const MAX_LINES: usize = 200;
+const MAX_LINES: usize = 500;
 
-static NOTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static NOTES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
 /// Keeps a line of what the command said, for the log of this run.
-pub(super) fn note(line: &str) {
-    if let Ok(mut notes) = NOTES.lock()
-        && notes.len() < MAX_LINES
-    {
-        notes.push(redact(line));
+pub(crate) fn note(line: &str) {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let at = START.get_or_init(Instant::now).elapsed().as_secs_f64();
+    if let Ok(mut notes) = NOTES.lock() {
+        // The latest lines matter most when something goes wrong.
+        if notes.len() == MAX_LINES {
+            notes.pop_front();
+        }
+        notes.push_back(format!("{at:>8.3}s {}", redact(line)));
     }
 }
 
@@ -109,6 +115,7 @@ impl Saved {
     pub(super) fn details(&self) -> Vec<(&'static str, String)> {
         let mut rows = Vec::new();
         for (label, field) in [
+            ("Name", "name"),
             ("Command", "command"),
             ("Options", "options"),
             ("Ended", "ended"),
@@ -147,9 +154,10 @@ impl Saved {
             format!("failed ({})", self.field("error kind").unwrap_or("error"))
         };
         format!(
-            "{when}  {:<10} {outcome:<20} {}",
+            "{when}  {:<10} {outcome:<20} {}  {}",
             self.field("command").unwrap_or("?"),
-            self.id
+            self.id,
+            self.field("name").unwrap_or("")
         )
     }
 }
@@ -197,6 +205,9 @@ pub(super) fn save(id: &str, header: &[(&str, String)]) {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
+    if let Some(name) = crate::cli::run_name() {
+        text.push_str(&format!("name: {name}\n"));
+    }
     for (key, value) in header {
         text.push_str(&format!("{key}: {value}\n"));
     }

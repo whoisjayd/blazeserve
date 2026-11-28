@@ -7,7 +7,11 @@ mod error;
 mod extract;
 mod filename;
 mod http;
+mod info;
 mod limits;
+#[cfg(feature = "extract")]
+mod nested;
+mod pace;
 mod retry;
 mod segmented;
 mod throttle;
@@ -20,6 +24,7 @@ pub use download::{GetArgs, get};
 pub use error::TransferError;
 #[cfg(fuzzing)]
 pub use filename::suggested_name_for_fuzz;
+pub use info::{InfoArgs, info};
 pub use upload::{PutArgs, put};
 #[cfg(fuzzing)]
 pub use verify::parse_lists_for_fuzz;

@@ -406,7 +406,12 @@ async fn get_falls_back_when_the_origin_does_not_advertise_ranges() {
     .await;
 
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(!stderr(&out).contains("parts"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains(" parts ("), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("one connection: "),
+        "{}",
+        stderr(&out)
+    );
     assert_eq!(std::fs::read(&dest).unwrap(), data);
 }
 
@@ -1373,5 +1378,136 @@ async fn put_with_refused_credentials_exits_5() {
     let out = blaze_async(vec!["put".into(), s(&file), url]).await;
     assert_eq!(code(&out), 5, "{}", stderr(&out));
     assert!(!served.path().join("up.bin").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dry_run_describes_the_download_and_quiet_prints_nothing() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("f.bin"), pattern(2048)).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/f.bin", server.local_addr());
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = s(&out_dir.path().join("f.bin"));
+
+    let plan = blaze_async(vec![
+        "get".into(),
+        url.clone(),
+        "-o".into(),
+        dest.clone(),
+        "--dry-run".into(),
+    ])
+    .await;
+    assert_eq!(code(&plan), 0, "{}", stderr(&plan));
+    let text = stdout(&plan);
+    assert!(
+        text.contains("2.00 KiB") && text.contains("supported"),
+        "{text}"
+    );
+    assert!(!out_dir.path().join("f.bin").exists());
+
+    let quiet = blaze_async(vec!["get".into(), url, "-o".into(), dest, "-q".into()]).await;
+    assert_eq!(code(&quiet), 0, "{}", stderr(&quiet));
+    assert_eq!(stdout(&quiet), "");
+    assert_eq!(stderr(&quiet), "");
+    assert!(out_dir.path().join("f.bin").exists());
+    server.shutdown().await;
+}
+
+fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, body) in entries {
+        zip.start_file(*name, options).unwrap();
+        zip.write_all(body).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nested_extraction_goes_one_level_and_leaves_lookalikes() {
+    let served = tempfile::tempdir().unwrap();
+    let deepest = zip_bytes(&[("deep.txt", b"deep")]);
+    let inner = zip_bytes(&[("in.txt", b"inner"), ("deeper.zip", &deepest)]);
+    let jar = zip_bytes(&[("C.class", b"x")]);
+    let outer = zip_bytes(&[("inner.zip", &inner), ("lib.jar", &jar)]);
+    std::fs::write(served.path().join("outer.zip"), outer).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/outer.zip", server.local_addr());
+    let out_dir = tempfile::tempdir().unwrap();
+
+    let out = blaze_async(vec![
+        "get".into(),
+        url,
+        "-o".into(),
+        s(&out_dir.path().join("outer.zip")),
+        "--extract".into(),
+        "--nested".into(),
+        "--keep-free".into(),
+        "0".into(),
+    ])
+    .await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let root = out_dir.path().join("outer");
+    assert_eq!(
+        std::fs::read(root.join("inner").join("in.txt")).unwrap(),
+        b"inner"
+    );
+    assert!(root.join("lib.jar").is_file(), "a jar is left alone");
+    assert!(
+        root.join("inner").join("deeper.zip").is_file(),
+        "only one level"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn json_progress_is_only_json_lines() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("f.bin"), pattern(MIB)).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/f.bin", server.local_addr());
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = blaze_async(vec![
+        "get".into(),
+        url,
+        "-o".into(),
+        s(&out_dir.path().join("f.bin")),
+        "--progress".into(),
+        "json".into(),
+    ])
+    .await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    for line in stderr(&out).lines() {
+        let event: serde_json::Value = serde_json::from_str(line).expect(line);
+        assert_eq!(event["event"], "progress");
+    }
+    let done: serde_json::Value = serde_json::from_str(stdout(&out).trim()).unwrap();
+    assert_eq!(done["event"], "done");
+    assert_eq!(done["bytes"], MIB as u64);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn info_describes_a_download_without_making_one() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("big.bin"), pattern(9 * MIB)).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let out = blaze_async(vec!["info".into(), url, "--json".into()]).await;
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let about: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(about["name"], "big.bin");
+    assert_eq!(about["size"], 9 * MIB as u64);
+    assert_eq!(about["resume"], true);
+    assert_eq!(about["parts"], true);
+    assert_eq!(server.state().metrics.bytes_sent(), 0);
+
+    let missing = format!("http://{}/nothing", server.local_addr());
+    let out = blaze_async(vec!["info".into(), missing]).await;
+    assert_ne!(code(&out), 0);
     server.shutdown().await;
 }

@@ -113,6 +113,9 @@ pub struct Record {
     /// A job that ends without it failed to launch.
     pub ready_at: Option<u64>,
     pub label: String,
+    /// Given by the user with `--name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub remote: Option<String>,
     pub direction: Option<Direction>,
     pub phase: Option<Phase>,
@@ -136,6 +139,7 @@ impl Record {
             updated_at: now,
             ready_at: None,
             label: String::new(),
+            name: None,
             remote: None,
             direction: None,
             phase: (!kind.is_server()).then_some(Phase::Preparing),

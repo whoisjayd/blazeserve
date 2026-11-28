@@ -30,10 +30,17 @@ pub(super) fn run(args: &BenchArgs) -> Result<u8, String> {
         anstream::println!("{text}");
     } else {
         let style = Style::stdout();
-        anstream::println!("{}\n", style.bold("Benchmark complete"));
+        let mut plain = format!("{}\n\n", style.bold("Benchmark complete"));
         for w in &artifact.workloads {
-            anstream::println!("{}", summary_line(w));
+            plain.push_str(&summary_line(w));
+            plain.push('\n');
         }
+        let framed: String = artifact
+            .workloads
+            .iter()
+            .map(|w| summary_card(style, w))
+            .collect();
+        crate::cli::ansi::card("Benchmark complete", &framed, &plain);
         if let Some(path) = &args.output {
             anstream::println!("\nArtifact  {}", path.display());
         }
@@ -59,6 +66,23 @@ pub(super) fn run(args: &BenchArgs) -> Result<u8, String> {
 
 fn counts_failed(c: &Counts) -> bool {
     c.failed + c.incomplete > 0
+}
+
+fn summary_card(style: Style, w: &Workload) -> String {
+    let s = &w.summary;
+    let speed = |v: Option<f64>| v.map_or_else(|| "n/a".to_owned(), |v| format!("{v:.2} MiB/s"));
+    crate::cli::ansi::rows(
+        style,
+        &[
+            ("Workload", format!("{}  ", w.id)),
+            (
+                "Samples",
+                format!("{} of {} ok  ", w.counts.ok, w.samples.len()),
+            ),
+            ("Median", format!("{}  ", style.bold(&speed(s.median)))),
+            ("Range", format!("{} to {}  ", speed(s.min), speed(s.max))),
+        ],
+    )
 }
 
 fn summary_line(w: &Workload) -> String {

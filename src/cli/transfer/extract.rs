@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicBool;
 
 use hatchzip_core::archive::PasswordNeeded;
 use hatchzip_core::archive::storage::Reads;
+use hatchzip_core::archive::{Damaged, WrongPassword};
 use hatchzip_core::engine::{self, Outcome, Progress as EngineProgress, Run};
 use hatchzip_core::session::{self, State};
 
@@ -28,6 +29,8 @@ pub(super) struct Options {
     pub verify_first: bool,
     /// Free space that must remain untouched, in bytes.
     pub keep_free: u64,
+    /// For an encrypted archive. Never printed or logged.
+    pub password: Option<String>,
 }
 
 fn failure<E: std::fmt::Display>(e: E) -> TransferError {
@@ -38,12 +41,17 @@ fn failure<E: std::fmt::Display>(e: E) -> TransferError {
 pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, TransferError> {
     let (primary, paths) = session::locate(archive).map_err(failure)?;
     let reads = Arc::new(Reads::default());
-    let state = session::open(&primary, &paths, None, true, None, &reads).map_err(|e| {
+    let password = opts.password.as_deref();
+    let state = session::open(&primary, &paths, None, true, password, &reads).map_err(|e| {
         if e.is::<PasswordNeeded>() {
-            TransferError::Extract(
-                "the archive is encrypted; extract it with hatchzip, which can ask for the password"
+            TransferError::Auth(
+                "the archive is encrypted; set its password in a variable and pass --password-env VAR"
                     .to_owned(),
             )
+        } else if e.is::<WrongPassword>() {
+            TransferError::Auth("the archive password is wrong".to_owned())
+        } else if e.is::<Damaged>() {
+            TransferError::Integrity(format!("the archive is damaged: {e:#}"))
         } else {
             failure(e)
         }
@@ -138,7 +146,7 @@ pub(super) fn extract(archive: &Path, opts: &Options) -> Result<PathBuf, Transfe
                 "Extracted",
                 &format!(
                     "{} ({note})",
-                    Style::stdout().bold(&output.display().to_string())
+                    Style::stdout().bold(&crate::cli::util::friendly_path(&output))
                 ),
             );
             Ok(output)

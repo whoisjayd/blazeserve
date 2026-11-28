@@ -82,6 +82,34 @@ pub fn display_path(p: &Path) -> String {
     s.strip_prefix(r"\\?\").map(str::to_owned).unwrap_or(s)
 }
 
+/// A path as people read it: relative to here, or from `~`. Piped output keeps the whole
+/// path, which a script may need.
+pub fn friendly_path(p: &Path) -> String {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return display_path(p);
+    }
+    let plain = |p: &Path| std::path::PathBuf::from(display_path(p));
+    shorten(
+        &plain(p),
+        std::env::current_dir().ok().map(|d| plain(&d)).as_deref(),
+        std::env::home_dir().as_deref(),
+    )
+}
+
+fn shorten(p: &Path, here: Option<&Path>, home: Option<&Path>) -> String {
+    let under = |root: Option<&Path>| {
+        root.and_then(|root| p.strip_prefix(root).ok())
+            .filter(|rest| !rest.as_os_str().is_empty())
+    };
+    if let Some(rest) = under(here) {
+        return rest.display().to_string();
+    }
+    match under(home) {
+        Some(rest) => Path::new("~").join(rest).display().to_string(),
+        None => p.display().to_string(),
+    }
+}
+
 pub fn lan_ip() -> String {
     // Connecting a UDP socket sends nothing; it only selects the outbound interface.
     UdpSocket::bind("0.0.0.0:0")
@@ -113,6 +141,50 @@ pub fn open_browser(url: &str) {
         .spawn();
 }
 
+/// The line under a finished transfer: how long it took, how fast, and what was checked.
+pub fn transfer_summary(bytes: u64, millis: u64, connections: u64, verified: bool) -> String {
+    let seconds = millis as f64 / 1000.0;
+    let mut parts = vec![if seconds < 60.0 {
+        format!("{seconds:.1}s")
+    } else {
+        super::jobs::span(millis / 1000)
+    }];
+    if millis > 0 {
+        let rate = (u128::from(bytes) * 1000 / u128::from(millis)).min(u128::from(u64::MAX));
+        parts.push(format!("{}/s", human_size(rate as u64)));
+    }
+    if connections > 1 {
+        parts.push(format!("{connections} connections"));
+    }
+    if verified {
+        parts.push("SHA-256 verified".to_owned());
+    }
+    parts.join("  \u{b7}  ")
+}
+
+/// Prints [`transfer_summary`] for the run's recorded timings, at a terminal only.
+pub fn print_summary(bytes: u64, verified: bool) {
+    if super::ansi::quiet() || !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        return;
+    }
+    let recorded = crate::usage::trace::peek();
+    let number = |key: &str| recorded.get(key).and_then(serde_json::Value::as_u64);
+    let connections = match recorded
+        .get("segmented")
+        .and_then(serde_json::Value::as_bool)
+    {
+        Some(true) => number("connections").unwrap_or(1),
+        _ => 1,
+    };
+    let line = transfer_summary(
+        bytes,
+        number("transfer_ms").unwrap_or(0),
+        connections,
+        verified,
+    );
+    anstream::eprintln!("  {}", super::ansi::Style::stderr().dim(&line));
+}
+
 pub fn backoff(fails: u32) -> Duration {
     Duration::from_millis(500u64.saturating_mul(1 << fails.saturating_sub(1).min(4)))
         .min(Duration::from_secs(8))
@@ -131,23 +203,89 @@ pub fn transfer_title(arrow: &str, path: &std::path::Path) -> String {
 /// so logs never fill with redraws.
 pub struct Progress {
     bar: ProgressBar,
+    extra: std::sync::Arc<Extra>,
+    /// When the last JSON progress line went out, in milliseconds since the start.
+    reported: std::sync::atomic::AtomicU64,
+    started: std::time::Instant,
 }
 
-const BAR_LINE: &str = "{bar:40.green/dim} {percent:>3}%  {binary_bytes:>9} / {binary_total_bytes}";
-const STATS_LINE: &str =
-    "{binary_bytes_per_sec:>11}  ·  ETA {eta}  ·  {elapsed_precise} elapsed  {msg:.dim}";
-
-fn progress_template(titled: bool, known_total: bool) -> String {
-    let head = if titled { "  {prefix:.bold}\n" } else { "" };
-    if !known_total {
-        return format!(
-            "{head}  {{spinner}} {{binary_bytes}}  {{binary_bytes_per_sec}}  ·  {{elapsed_precise}} elapsed  {{msg:.dim}}"
-        );
-    }
-    if titled {
-        format!("{head}  {BAR_LINE}\n  {STATS_LINE}")
+fn progress_template(known_total: bool) -> &'static str {
+    if known_total {
+        "  {bar:40.green/dim} {percent:>3}%  {binary_bytes:>9} / {binary_total_bytes}  {binary_bytes_per_sec:>11}  ETA {eta}"
     } else {
-        format!("  {BAR_LINE}  {{binary_bytes_per_sec:>11}}  ETA {{eta}}")
+        "  {spinner} {binary_bytes}  {binary_bytes_per_sec}  ·  {elapsed_precise} elapsed"
+    }
+}
+
+/// What the live view shows beside the numbers the bar already keeps.
+#[derive(Default)]
+struct Extra {
+    note: std::sync::Mutex<String>,
+    map: std::sync::OnceLock<std::sync::Arc<super::blocks::BlockMap>>,
+    /// When the speed was last sampled, and the samples.
+    speeds: std::sync::Mutex<(Option<std::time::Instant>, std::collections::VecDeque<u64>)>,
+}
+
+impl Extra {
+    /// The framed view of a transfer, drawn again at every refresh.
+    fn view(&self, title: &str, state: &indicatif::ProgressState) -> String {
+        use super::panel::{self, field};
+        let style = super::ansi::Style::stderr();
+        let speed = state.per_sec() as u64;
+        let graph = self.speeds.lock().map_or_else(
+            |_| String::new(),
+            |mut s| {
+                if s.0
+                    .is_none_or(|at| at.elapsed() >= Duration::from_millis(500))
+                {
+                    s.0 = Some(std::time::Instant::now());
+                    if s.1.len() == panel::HISTORY {
+                        s.1.pop_front();
+                    }
+                    s.1.push_back(speed);
+                }
+                panel::graph(&s.1)
+            },
+        );
+        let span = |d: Duration| super::jobs::span(d.as_secs());
+        let mut rows = vec![String::new()];
+        let left = match state.len() {
+            Some(total) if total > 0 => {
+                let done = state.pos().min(total);
+                let filled = (u128::from(done) * 40 / u128::from(total)) as usize;
+                rows.push(format!(
+                    "{}{} {:>3}%",
+                    style.green(&"█".repeat(filled)),
+                    style.dim(&"░".repeat(40 - filled)),
+                    u128::from(done) * 100 / u128::from(total)
+                ));
+                rows.push(format!("{} of {}", human_size(done), human_size(total)));
+                span(state.eta())
+            }
+            _ => {
+                rows.push(format!("{} so far", human_size(state.pos())));
+                "unknown".to_owned()
+            }
+        };
+        let note = self.note.lock().map(|n| n.clone()).unwrap_or_default();
+        let speed = format!(
+            "{:<16}{}",
+            format!("{}/s", human_size(speed)),
+            style.green(&graph)
+        );
+        rows.push(String::new());
+        rows.push(field(style, "Speed", &speed));
+        rows.push(field(style, "Time left", &left));
+        rows.push(field(style, "Elapsed", &span(state.elapsed())));
+        if !note.is_empty() {
+            rows.push(field(style, "Using", &note));
+        }
+        if let Some(map) = self.map.get() {
+            rows.push(String::new());
+            rows.extend((0..map.rows()).map(|i| map.row(i, style)));
+            rows.push(map.legend(style));
+        }
+        panel::frame(title, &rows, style)
     }
 }
 
@@ -169,21 +307,44 @@ impl Progress {
     }
 
     fn build(title: Option<&str>, total: Option<u64>, base: u64) -> Self {
-        let target = ProgressDrawTarget::stderr_with_hz(20);
+        let target = if super::ansi::quiet() || super::ansi::json_progress() {
+            ProgressDrawTarget::hidden()
+        } else {
+            ProgressDrawTarget::stderr_with_hz(20)
+        };
         let reported = total;
         let total = total.filter(|t| *t > 0);
-        let template = progress_template(title.is_some(), total.is_some());
-        let style = ProgressStyle::with_template(&template)
+        let extra = std::sync::Arc::new(Extra::default());
+        let template = match title {
+            Some(_) => "{view}",
+            None => progress_template(total.is_some()),
+        };
+        let mut style = ProgressStyle::with_template(template)
             .unwrap_or_else(|_| ProgressStyle::default_bar())
             .progress_chars("━╸─");
-        let bar = ProgressBar::with_draw_target(total, target).with_style(style);
         if let Some(title) = title {
-            bar.set_prefix(title.to_owned());
+            let (title, extra) = (title.to_owned(), extra.clone());
+            style = style.with_key(
+                "view",
+                move |state: &indicatif::ProgressState, out: &mut dyn std::fmt::Write| {
+                    let _ = out.write_str(&extra.view(&title, state));
+                },
+            );
+        }
+        let bar = ProgressBar::with_draw_target(total, target).with_style(style);
+        if title.is_some() {
+            // Keeps the time and speed moving while nothing arrives.
+            bar.enable_steady_tick(Duration::from_millis(250));
         }
         bar.set_position(base);
         super::ansi::set_active_bar(Some(bar.clone()));
         super::jobs::tracker::begin(reported, base);
-        Self { bar }
+        Self {
+            bar,
+            extra,
+            reported: std::sync::atomic::AtomicU64::new(0),
+            started: std::time::Instant::now(),
+        }
     }
 
     /// The position moved to `pos` without those bytes being transferred now, such as an
@@ -195,11 +356,47 @@ impl Progress {
 
     fn publish(&self) {
         super::jobs::tracker::set_done(self.bar.position());
+        if super::ansi::json_progress() {
+            self.json_line(false);
+        }
     }
 
-    /// Text shown at the end of the stats line, updated in place.
+    /// At most two lines a second, plus a last one when `always`.
+    fn json_line(&self, always: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let last = self.reported.load(Relaxed);
+        if !always && now.saturating_sub(last) < 500 {
+            return;
+        }
+        // Parts report from several threads; one of them writes.
+        if self
+            .reported
+            .compare_exchange(last, now, Relaxed, Relaxed)
+            .is_ok()
+        {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "event": "progress",
+                    "bytes": self.bar.position(),
+                    "total": self.bar.length(),
+                    "elapsed_ms": now,
+                })
+            );
+        }
+    }
+
+    /// Adds `map` to the view; it is read again at every redraw.
+    pub fn show_map(&self, map: &std::sync::Arc<super::blocks::BlockMap>) {
+        let _ = self.extra.map.set(map.clone());
+    }
+
+    /// Says what the transfer is using, such as the connection count.
     pub fn set_note(&self, note: &str) {
-        self.bar.set_message(format!("·  {note}"));
+        if let Ok(mut current) = self.extra.note.lock() {
+            note.clone_into(&mut current);
+        }
     }
 
     pub fn update(&mut self, done: u64) {
@@ -221,13 +418,29 @@ impl Progress {
     pub fn finish(&mut self, done: u64) {
         super::ansi::set_active_bar(None);
         self.bar.set_position(done);
-        self.publish();
+        super::jobs::tracker::set_done(self.bar.position());
+        if super::ansi::json_progress() {
+            self.json_line(true);
+        }
         self.bar.finish_and_clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn paths_are_shortened_from_here_then_from_home() {
+        let home = Path::new("home").join("sam");
+        let here = home.join("projects");
+        let short = |p: &Path| shorten(p, Some(&here), Some(&home));
+        assert_eq!(short(&here.join("site")), "site");
+        assert_eq!(
+            short(&home.join("other")),
+            Path::new("~").join("other").display().to_string()
+        );
+        assert_eq!(short(Path::new("elsewhere")), "elsewhere");
+    }
+
     use super::*;
 
     #[test]
@@ -240,13 +453,8 @@ mod tests {
 
     #[test]
     fn every_progress_template_parses() {
-        for titled in [false, true] {
-            for known in [false, true] {
-                assert!(
-                    ProgressStyle::with_template(&progress_template(titled, known)).is_ok(),
-                    "titled={titled} known={known}"
-                );
-            }
+        for known in [true, false] {
+            assert!(ProgressStyle::with_template(progress_template(known)).is_ok());
         }
     }
 
@@ -258,6 +466,16 @@ mod tests {
             transfer_title("↑", std::path::Path::new("a.txt")),
             "↑ a.txt"
         );
+    }
+
+    #[test]
+    fn the_summary_reads_like_a_sentence_of_facts() {
+        assert_eq!(
+            transfer_summary(200 * 1024 * 1024, 2000, 4, true),
+            "2.0s  ·  100.00 MiB/s  ·  4 connections  ·  SHA-256 verified"
+        );
+        assert_eq!(transfer_summary(10, 0, 1, false), "0.0s");
+        assert!(transfer_summary(0, 90_000, 1, false).starts_with("1m 30s"));
     }
 
     #[test]

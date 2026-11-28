@@ -1,8 +1,8 @@
 use super::ansi::{self, Style};
 use super::live;
 use super::util::{
-    canonical, display_path, env_truthy, existing_file, existing_path, human_size, lan_ip,
-    open_browser,
+    canonical, display_path, env_truthy, existing_file, existing_path, friendly_path, human_size,
+    lan_ip, open_browser,
 };
 use crate::config::{
     Config, Credentials, DEFAULT_CHUNK_MB, DEFAULT_PORT, DEFAULT_SNDBUF_MB, Hide, TrustedProxy,
@@ -23,9 +23,9 @@ pub struct Common {
     /// Bind address (IPv4/IPv6 literal ok)
     #[arg(help_heading = "Network", long, default_value = "0.0.0.0")]
     pub host: String,
-    /// Port to listen on
-    #[arg(help_heading = "Network", short, long, default_value_t = DEFAULT_PORT, value_parser = clap::value_parser!(u16).range(1..))]
-    pub port: u16,
+    /// Port to listen on [default: 5949, or the next free one]
+    #[arg(help_heading = "Network", short, long, value_parser = clap::value_parser!(u16).range(1..))]
+    pub port: Option<u16>,
     /// Throttle to MB/s (omit for unlimited)
     #[arg(help_heading = "Speed and caching", long, value_parser = parse_rate, value_name = "MB/S")]
     pub rate_mbps: Option<f64>,
@@ -264,6 +264,25 @@ fn protect_uploads(cfg: &mut Config, at_terminal: bool) -> Result<Option<String>
     Ok(Some(password))
 }
 
+/// How far past the default port to look for a free one.
+const PORT_TRIES: u16 = 50;
+
+/// Without `--port`, a busy default port moves on to the next free one, so several shares
+/// and background jobs can run side by side. A port that was asked for is never changed.
+fn settle_port(cfg: &mut Config, asked: Option<u16>) {
+    if asked.is_some() {
+        return;
+    }
+    let free = (cfg.port..cfg.port.saturating_add(PORT_TRIES))
+        .find(|&port| crate::server::probe_bind(&cfg.host, port).is_ok());
+    if let Some(port) = free
+        && port != cfg.port
+    {
+        super::ansi::announce("Port", &format!("{} is in use; using {port}", cfg.port));
+        cfg.port = port;
+    }
+}
+
 fn auth_env_hint(var: &str) -> String {
     format!(
         "Set it before retrying: PowerShell: $env:{var} = 'USER:PASS'; macOS/Linux: export {var}='USER:PASS'."
@@ -296,7 +315,7 @@ pub fn resolve_auth(
 impl Common {
     fn apply(&self, cfg: &mut Config) -> Result<(), String> {
         cfg.host = self.host.clone();
-        cfg.port = self.port;
+        cfg.port = self.port.unwrap_or(DEFAULT_PORT);
         cfg.rate_mbps = self.rate_mbps;
         cfg.auth = resolve_auth(self.auth.as_deref(), self.auth_env.as_deref())?;
         cfg.tls = Config::tls_pair(self.tls_cert.clone(), self.tls_key.clone())
@@ -432,7 +451,7 @@ fn banner(
     let port = cfg.port;
     let target = cfg.single.as_deref().unwrap_or(&cfg.base);
     let mut rows = vec![
-        ("Serving", display_path(target)),
+        ("Serving", friendly_path(target)),
         ("Local", format!("{scheme}://localhost:{port}/")),
     ];
     let network = (!loopback_host(&cfg.host)).then(|| format!("{scheme}://{}:{port}/", lan_ip()));
@@ -521,11 +540,24 @@ fn banner(
     )
 }
 
+/// At a terminal the banner's rows sit in a card; elsewhere it prints as built.
+fn frame_banner(text: &str) -> Option<String> {
+    let term = console::Term::stdout();
+    if !term.is_term() {
+        return None;
+    }
+    let (title, rest) = text.split_once("\n\n")?;
+    let (rows, tail) = rest.split_once("\n\n").unwrap_or((rest, ""));
+    let title = console::strip_ansi_codes(title);
+    let card = ansi::boxed(Style::stdout(), &title, rows, usize::from(term.size().1))?;
+    Some(format!("{card}\n{tail}"))
+}
+
 fn print_status(text: &str, json_logs: bool) {
     if json_logs {
         anstream::eprint!("{text}");
     } else {
-        anstream::print!("{text}");
+        anstream::print!("{}", frame_banner(text).as_deref().unwrap_or(text));
     }
 }
 
@@ -653,6 +685,7 @@ fn run_config(
 
 pub fn serve(args: ServeArgs) -> Result<u8, String> {
     let mut cfg = serve_config(&args)?;
+    settle_port(&mut cfg, args.common.port);
     let password = if args.common.uploads {
         let at_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
         protect_uploads(&mut cfg, at_terminal)?
@@ -671,7 +704,8 @@ pub fn serve(args: ServeArgs) -> Result<u8, String> {
 }
 
 pub fn send(args: SendArgs) -> Result<u8, String> {
-    let cfg = send_config(&args)?;
+    let mut cfg = send_config(&args)?;
+    settle_port(&mut cfg, args.common.port);
     run_config(
         cfg,
         "send",
@@ -877,6 +911,21 @@ mod tests {
         assert!(with_qr.contains("http://localhost:5949/"));
         assert!(with_qr.contains("Press Ctrl+C to stop"));
         assert!(with_qr.len() > plain.len());
+    }
+
+    #[test]
+    fn a_busy_default_port_moves_on_but_an_asked_one_stays() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = held.local_addr().unwrap().port();
+        let mut cfg = Config {
+            host: "127.0.0.1".into(),
+            port: busy,
+            ..Config::default()
+        };
+        settle_port(&mut cfg, Some(busy));
+        assert_eq!(cfg.port, busy);
+        settle_port(&mut cfg, None);
+        assert_ne!(cfg.port, busy);
     }
 
     #[test]

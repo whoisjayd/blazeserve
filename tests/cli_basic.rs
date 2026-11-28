@@ -464,3 +464,15 @@ fn uploads_without_a_password_are_refused_off_a_terminal() {
     assert_eq!(code(&out), 1, "{}", stderr(&out));
     assert!(stderr(&out).contains("--auth-env"), "{}", stderr(&out));
 }
+
+#[test]
+fn stop_without_a_job_off_a_terminal_says_how_to_find_one() {
+    let state = tempfile::tempdir().unwrap();
+    let out = blaze()
+        .arg("stop")
+        .env("BLAZE_STATE_DIR", state.path())
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 1);
+    assert!(stderr(&out).contains("blaze status"), "{}", stderr(&out));
+}

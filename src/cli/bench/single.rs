@@ -158,21 +158,19 @@ pub(super) fn run(args: &BenchArgs) -> Result<u8, String> {
         return Ok(0);
     }
 
-    anstream::println!("{}\n", style.bold("Benchmark complete"));
-    anstream::print!(
-        "{}",
-        ansi::rows(
-            style,
-            &[
-                (
-                    "Downloaded",
-                    format!("{:.2} MB", downloaded as f64 / (1024.0 * 1024.0))
-                ),
-                ("Time", format!("{elapsed:.2} seconds")),
-                ("Speed", format!("{mib_per_second:.2} MB/s")),
-            ],
-        )
+    let body = ansi::rows(
+        style,
+        &[
+            (
+                "Downloaded",
+                format!("{:.2} MB", downloaded as f64 / (1024.0 * 1024.0)),
+            ),
+            ("Time", format!("{elapsed:.2} seconds")),
+            ("Speed", format!("{mib_per_second:.2} MB/s")),
+        ],
     );
+    let plain = format!("{}\n\n{body}", style.bold("Benchmark complete"));
+    ansi::card("Benchmark complete", &body, &plain);
     Ok(0)
 }
 

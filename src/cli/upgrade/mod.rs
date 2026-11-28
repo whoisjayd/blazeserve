@@ -180,17 +180,15 @@ pub fn run(args: UpgradeArgs) -> Result<u8, String> {
         );
     } else if args.check {
         let style = Style::stdout();
-        anstream::print!(
-            "{}",
-            ansi::rows(
-                style,
-                &[
-                    ("Installed", report.current.clone()),
-                    ("Latest", report.latest.clone().unwrap_or_default()),
-                    ("Install", report.channel.to_owned()),
-                ]
-            )
+        let body = ansi::rows(
+            style,
+            &[
+                ("Installed", report.current.clone()),
+                ("Latest", report.latest.clone().unwrap_or_default()),
+                ("Install", report.channel.to_owned()),
+            ],
         );
+        ansi::card("Updates", &body, &body);
         anstream::println!("\n{}", report.message);
     } else {
         anstream::println!("{}", report.message);
@@ -339,8 +337,13 @@ pub fn execute(opts: &Opts, ctx: &Context, deps: &Deps) -> Result<Report, String
             if let Some(v) = &opts.version {
                 args.extend(["--version".to_owned(), v.to_string()]);
             }
-            if !deps.runner.run(Path::new("cargo"), &args)? {
-                return Err("cargo did not finish the upgrade (its messages are above)".to_owned());
+            let done =
+                replace::while_aside(&ctx.exe, || deps.runner.run(Path::new("cargo"), &args))?;
+            if !done {
+                return Err(
+                    "cargo did not finish the upgrade (its messages are above). If the build failed, `cargo binstall blazeserve --force` installs the prebuilt program"
+                        .to_owned(),
+                );
             }
         }
         Channel::Binary => install_binary(ctx, deps.source, &target)?,

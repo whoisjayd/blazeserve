@@ -14,7 +14,7 @@ use super::segmented::{self, SegMeta};
 use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::jobs::{self, tracker};
-use crate::cli::util::{Progress, human_size, sha256_file_within, transfer_title};
+use crate::cli::util::{Progress, human_size, print_summary, sha256_file_within, transfer_title};
 use crate::security::retry_sharing;
 use crate::usage::{self, trace};
 use clap::Args;
@@ -100,6 +100,9 @@ pub struct GetArgs {
     /// Replace an existing destination file
     #[arg(long)]
     pub force: bool,
+    /// Show what would be downloaded, and whether it fits, without downloading
+    #[arg(long)]
+    pub dry_run: bool,
     /// Parallel connections for large files: 1 to 128 or `max` (1 downloads in a single stream)
     #[arg(short = 'c', long, value_name = "N", default_value_t = 4, value_parser = parse_connections)]
     pub connections: u16,
@@ -119,6 +122,12 @@ pub struct GetArgs {
     /// With --extract, skip the check of the whole archive that runs before it is consumed
     #[arg(long, requires = "extract")]
     pub no_verify_first: bool,
+    /// With --extract, unpack archives found inside it too, one level deep
+    #[arg(long, requires = "extract")]
+    pub nested: bool,
+    /// With --extract, read the password of an encrypted archive from this variable
+    #[arg(long, value_name = "ENVVAR", requires = "extract")]
+    pub password_env: Option<String>,
     /// With --extract, free space to leave untouched, e.g. 500M or 2G [default: 1G]
     #[arg(long, value_name = "SIZE", requires = "extract", value_parser = parse_free_space)]
     pub keep_free: Option<u64>,
@@ -241,7 +250,7 @@ fn probed_name(agent: &ureq::Agent, url: &str, auth: Option<&str>) -> Option<Str
     server_file_name(agent, url, auth)
 }
 
-fn default_destination(url: &str) -> Result<PathBuf, TransferError> {
+pub(super) fn default_destination(url: &str) -> Result<PathBuf, TransferError> {
     let without_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = without_scheme.split(['?', '#']).next().unwrap_or("");
     let last = path
@@ -532,12 +541,28 @@ fn complete(
 
 #[cfg(feature = "extract")]
 fn extract_archive(dest: &Path, args: &GetArgs) -> Result<(), TransferError> {
+    let password = match &args.password_env {
+        Some(name) => Some(
+            std::env::var(name)
+                .ok()
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    TransferError::Usage(format!("--password-env: {name} is not set or is empty"))
+                })?,
+        ),
+        None => None,
+    };
     let options = super::extract::Options {
         keep_archive: args.keep_archive,
         verify_first: !args.no_verify_first,
         keep_free: args.keep_free.unwrap_or(1 << 30),
+        password,
     };
-    super::extract::extract(dest, &options).map(|_| ())
+    let output = super::extract::extract(dest, &options)?;
+    if args.nested {
+        super::nested::extract_all(&output, &options)?;
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "extract"))]
@@ -596,12 +621,85 @@ fn finish_download(
             ),
         );
     }
-    anstream::println!(
-        "{} {} ({})",
-        Style::stdout().green("Saved"),
-        dest.display(),
-        human_size(size)
-    );
+    crate::cli::ansi::done_event(dest, size);
+    if !crate::cli::ansi::quiet() && !crate::cli::ansi::json_progress() {
+        anstream::println!(
+            "{} {} ({})",
+            Style::stdout().green("Saved"),
+            dest.display(),
+            human_size(size)
+        );
+        print_summary(size, sha256.is_some());
+    }
+    Ok(0)
+}
+
+/// `--dry-run`: asks the server with a `HEAD` and reports the plan. Exits 3 when the file
+/// would not fit.
+fn preview(
+    agent: &ureq::Agent,
+    args: &GetArgs,
+    dest: &Path,
+    auth: Option<&str>,
+) -> Result<u8, TransferError> {
+    let mut req = agent.head(&args.url);
+    if let Some(a) = auth {
+        req = req.header("Authorization", a);
+    }
+    let resp = limits::bound(req)
+        .call()
+        .map_err(|e| TransferError::Network(describe_error(&e)))?;
+    let status = resp.status().as_u16();
+    if status != 200 {
+        return Err(http_failure(status, false));
+    }
+    let size = header(&resp, "content-length").and_then(|v| v.parse::<u64>().ok());
+    let ranges =
+        header(&resp, "accept-ranges").is_some_and(|v| v.to_ascii_lowercase().contains("bytes"));
+    let parallel = args.connections > 1 && ranges && size.is_some_and(segmented::worth_splitting);
+    let free = available_space(dest).ok();
+    let fits = size.zip(free).map(|(size, free)| size <= free);
+
+    let unknown = || "unknown".to_owned();
+    let rows = [
+        ("File", dest.display().to_string()),
+        ("Size", size.map_or_else(unknown, human_size)),
+        (
+            "Resume",
+            if ranges {
+                "supported"
+            } else {
+                "not supported by this server"
+            }
+            .to_owned(),
+        ),
+        (
+            "Connections",
+            if parallel {
+                format!("{}, in parts", args.connections)
+            } else {
+                "1".to_owned()
+            },
+        ),
+        ("Free space", free.map_or_else(unknown, human_size)),
+        (
+            "Destination",
+            match (dest.exists(), args.force) {
+                (true, false) => "exists: add --force to replace it",
+                (true, true) => "exists and will be replaced",
+                (false, _) => "new",
+            }
+            .to_owned(),
+        ),
+    ];
+    let body = crate::cli::ansi::rows(Style::stdout(), &rows);
+    crate::cli::ansi::card("Download plan", &body, &body);
+    if fits == Some(false) {
+        return Err(TransferError::NoSpace(
+            "not enough free disk space for this download".to_owned(),
+        ));
+    }
+    anstream::println!("Nothing was downloaded.");
     Ok(0)
 }
 
@@ -624,6 +722,9 @@ pub fn get(args: GetArgs) -> Result<u8, TransferError> {
             None => default_destination(&args.url)?,
         },
     };
+    if args.dry_run {
+        return preview(&agent, &args, &dest, auth.as_deref());
+    }
     if dest.exists() && !args.force {
         return Err(TransferError::Usage(format!(
             "{} already exists; use --force to replace it",

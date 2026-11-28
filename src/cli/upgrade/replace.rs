@@ -37,6 +37,31 @@ fn swap_with_backup(
     Ok(())
 }
 
+/// Runs `install`, a tool that writes a new program at `exe`, while this one runs. Windows
+/// would refuse to overwrite it, so it waits aside and comes back if nothing replaced it.
+pub fn while_aside(
+    exe: &Path,
+    install: impl FnOnce() -> Result<bool, String>,
+) -> Result<bool, String> {
+    if !crate::platform::IS_WINDOWS || !exe.is_file() {
+        return install();
+    }
+    let backup = backup_path(exe);
+    let _ = std::fs::remove_file(&backup);
+    std::fs::rename(exe, &backup)
+        .map_err(|e| format!("cannot move the current program aside: {e}"))?;
+    let outcome = install();
+    if !exe.exists() {
+        std::fs::rename(&backup, exe).map_err(|e| {
+            format!(
+                "cannot restore the old program ({e}); it is saved as {}",
+                backup.display()
+            )
+        })?;
+    }
+    outcome
+}
+
 /// Replaces `target` with `staged`, which must sit on the same file system.
 pub fn replace_executable(target: &Path, staged: &Path) -> Result<(), String> {
     if crate::platform::IS_WINDOWS {
@@ -76,6 +101,25 @@ mod tests {
         std::fs::write(&target, b"old").unwrap();
         std::fs::write(&staged, b"new").unwrap();
         (dir, target, staged)
+    }
+
+    #[test]
+    fn an_installer_can_write_the_program_that_is_running() {
+        let (_dir, target, _) = setup();
+        let done = while_aside(&target, || {
+            assert_eq!(target.exists(), !crate::platform::IS_WINDOWS);
+            std::fs::write(&target, b"new").unwrap();
+            Ok(true)
+        });
+        assert_eq!(done, Ok(true));
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+    }
+
+    #[test]
+    fn an_installer_that_fails_leaves_the_old_program() {
+        let (_dir, target, _) = setup();
+        assert_eq!(while_aside(&target, || Ok(false)), Ok(false));
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
     }
 
     #[test]

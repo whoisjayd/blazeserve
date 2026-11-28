@@ -4,12 +4,45 @@ use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style as Paint};
 use indicatif::ProgressBar;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const STATUS_WIDTH: usize = 12;
 
 /// The transfer dashboard currently on screen, so notices can be printed above it without
 /// tearing its redraw.
 static ACTIVE_BAR: Mutex<Option<ProgressBar>> = Mutex::new(None);
+
+/// `--quiet`: only errors and warnings. Process-wide because one process runs one command.
+static QUIET: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_quiet(quiet: bool) {
+    QUIET.store(quiet, Ordering::Relaxed);
+}
+
+pub(crate) fn quiet() -> bool {
+    QUIET.load(Ordering::Relaxed)
+}
+
+/// `--progress json`: progress and the result as JSON lines for programs.
+static JSON: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_json_progress(json: bool) {
+    JSON.store(json, Ordering::Relaxed);
+}
+
+pub(crate) fn json_progress() -> bool {
+    JSON.load(Ordering::Relaxed)
+}
+
+/// The last line of a JSON run, on standard output.
+pub(crate) fn done_event(path: &std::path::Path, bytes: u64) {
+    if json_progress() {
+        println!(
+            "{}",
+            serde_json::json!({ "event": "done", "path": path.display().to_string(), "bytes": bytes })
+        );
+    }
+}
 
 pub(super) fn set_active_bar(bar: Option<ProgressBar>) {
     if let Ok(mut slot) = ACTIVE_BAR.lock() {
@@ -78,6 +111,56 @@ impl Style {
     }
 }
 
+/// `body` in a titled box, or `None` when it would not fit `width` columns.
+pub fn boxed(style: Style, title: &str, body: &str, width: usize) -> Option<String> {
+    let lines: Vec<&str> = body.trim_end().lines().collect();
+    let measure = console::measure_text_width;
+    let inner = lines
+        .iter()
+        .map(|l| measure(l))
+        .chain([measure(title) + 1])
+        .max()?
+        + 2;
+    if inner + 2 > width {
+        return None;
+    }
+    let edge = |s: &str| style.dim(s);
+    let mut out = format!(
+        "{} {} {}\n",
+        edge("\u{256d}\u{2500}"),
+        style.bold(title),
+        edge(&format!(
+            "{}\u{256e}",
+            "\u{2500}".repeat(inner.saturating_sub(measure(title) + 3))
+        ))
+    );
+    for line in lines {
+        out.push_str(&format!(
+            "{}{line}{}{}\n",
+            edge("\u{2502}"),
+            " ".repeat(inner - measure(line)),
+            edge("\u{2502}")
+        ));
+    }
+    out.push_str(&edge(&format!(
+        "\u{2570}{}\u{256f}",
+        "\u{2500}".repeat(inner)
+    )));
+    out.push('\n');
+    Some(out)
+}
+
+/// Prints `body` as a titled card at a terminal wide enough for it, else prints `plain`
+/// exactly, so piped output never changes shape.
+pub fn card(title: &str, body: &str, plain: &str) {
+    let term = console::Term::stdout();
+    let framed = term
+        .is_term()
+        .then(|| boxed(Style::stdout(), title, body, usize::from(term.size().1)))
+        .flatten();
+    anstream::print!("{}", framed.as_deref().unwrap_or(plain));
+}
+
 pub fn rows(style: Style, rows: &[(&str, String)]) -> String {
     let width = rows
         .iter()
@@ -100,6 +183,10 @@ pub fn status_line(style: Style, verb: &str, message: &str) -> String {
 
 pub fn announce(verb: &str, message: &str) {
     super::runlog::note(&format!("{verb} {message}"));
+    // JSON runs keep standard error to JSON lines.
+    if (quiet() || json_progress()) && verb != "Warning" {
+        return;
+    }
     let line = status_line(Style::stderr(), verb, message);
     let bar = ACTIVE_BAR.lock().ok().and_then(|slot| slot.clone());
     match bar {
@@ -127,6 +214,20 @@ mod tests {
         );
         assert_eq!(status_line(plain, "Downloading", "x"), " Downloading x");
         assert_eq!(status_line(plain, "Verification", "ok"), "Verification ok");
+    }
+
+    #[test]
+    fn a_card_lines_up_whatever_the_colour_codes() {
+        for style in [Style::PLAIN, Style::COLOR] {
+            let body = format!("  {}  one\n  longer label  two\n", style.dim("a"));
+            let card = boxed(style, "Title", &body, 80).unwrap();
+            let widths: Vec<usize> = card.lines().map(console::measure_text_width).collect();
+            assert!(
+                widths.windows(2).all(|w| w[0] == w[1]),
+                "{widths:?}\n{card}"
+            );
+        }
+        assert!(boxed(Style::PLAIN, "Title", &"x".repeat(100), 80).is_none());
     }
 
     #[test]

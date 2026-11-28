@@ -74,9 +74,14 @@ fn status() -> String {
         rows.push(("Waiting", format!("{waiting} events not yet sent")));
     }
     if let Some(p) = usage::settings_path(&env) {
-        rows.push(("Settings", p.display().to_string()));
+        rows.push(("Settings", crate::cli::util::friendly_path(&p)));
     }
     ansi::rows(Style::stdout(), &rows)
+}
+
+fn show_status() {
+    let body = status();
+    ansi::card("Usage analytics", &body, &body);
 }
 
 fn preview() -> Result<String, String> {
@@ -93,15 +98,15 @@ fn preview() -> Result<String, String> {
 
 pub fn run(args: TelemetryArgs) -> Result<u8, String> {
     match args.action {
-        Action::Status => anstream::print!("{}", status()),
+        Action::Status => show_status(),
         Action::Enable => {
             save(true)?;
-            anstream::print!("{}", status());
+            show_status();
         }
         Action::Disable => {
             save(false)?;
             usage::clear_queue(&usage::process_env);
-            anstream::print!("{}", status());
+            show_status();
         }
         Action::Reset => {
             let path = settings_path()?;

@@ -40,7 +40,7 @@ Each `blaze` command is a function with the same name. Positional values come fi
 blazeserve.get("http://host:5949/big.iso", connections=8, extract=True)
 blazeserve.put("backup.tar", "http://host:5949", limit_rate="2M", max_time="2h")
 blazeserve.send("report.pdf", expires_after="20m")
-blazeserve.get("http://host:5949/big.iso", background=True)   # prints the job ID
+blazeserve.get("http://host:5949/big.iso", background=True)   # starts a job and says how to follow it
 blazeserve.status(json=True)
 blazeserve.run("get", "http://host:5949/big.iso", connections=8)   # the same, by name
 blazeserve.commands()    # {"serve": "...", "get": "...", ...}

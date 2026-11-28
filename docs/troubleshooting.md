@@ -10,7 +10,7 @@ It checks the folder, the port and what your system supports, and exits with cod
 
 ## The server will not start
 
-**The port is taken.** Another program is using port 5949. Pick another with `--port`, or stop the other program. `doctor` reports this. By default it tests `127.0.0.1`; give it the same `--host` you give `serve`, for example `blaze doctor ./site --host 0.0.0.0 --port 5949`, to test the address you will really use.
+**The port is taken.** Without `--port`, BlazeServe moves to the next free one and says which. With `--port`, pick another or stop the program using it. `doctor` reports this. By default it tests `127.0.0.1`; give it the same `--host` you give `serve`, for example `blaze doctor ./site --host 0.0.0.0 --port 5949`, to test the address you will really use.
 
 **It complains about `--auth-env`.** The environment variable you named is not set, or it is empty. BlazeServe refuses to start rather than run without a password. Set it as `USER:PASS`, and in PowerShell remember that `$env:BLAZE_AUTH = "alice:s3cret"` only lasts for that window.
 

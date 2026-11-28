@@ -3,7 +3,7 @@
 
 use super::record::{Kind, State};
 use super::store::{Store, now};
-use crate::cli::ansi::announce;
+use crate::cli::ansi::{Style, announce};
 use std::ffi::OsString;
 use std::fs::File;
 use std::process::{Child, Command, Stdio};
@@ -64,6 +64,31 @@ fn inspect(store: &Store, id: &str) -> Seen {
     }
 }
 
+/// Says a job is running: its bare ID for a script, what to do with it for a person.
+fn started(kind: Kind, id: &str) {
+    let person = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if !person || crate::cli::ansi::quiet() || crate::cli::ansi::json_progress() {
+        anstream::println!("{id}");
+        announce(
+            "Started",
+            &format!("{} job {id}; check it with: blaze status {id}", kind.name()),
+        );
+        return;
+    }
+    crate::cli::runlog::note(&format!("Started {} job {id}", kind.name()));
+    let style = Style::stdout();
+    let body = crate::cli::ansi::rows(
+        style,
+        &[
+            ("Watch", "blaze status --watch".to_owned()),
+            ("Attach", format!("blaze attach {id}")),
+            ("Stop", format!("blaze stop {id}")),
+        ],
+    );
+    let title = format!("Started {} job {id} in the background", kind.name());
+    crate::cli::ansi::card(&title, &format!("{body}  "), &body);
+}
+
 pub fn launch(kind: Kind) -> Result<u8, String> {
     let store = Store::open()?;
     store.sweep(now());
@@ -83,11 +108,7 @@ pub fn launch(kind: Kind) -> Result<u8, String> {
     let failure = loop {
         match inspect(&store, &id) {
             Seen::Ready => {
-                anstream::println!("{id}");
-                announce(
-                    "Started",
-                    &format!("{} job {id}; check it with: blaze status {id}", kind.name()),
-                );
+                started(kind, &id);
                 return Ok(0);
             }
             Seen::LaunchFailed(why) => break why,

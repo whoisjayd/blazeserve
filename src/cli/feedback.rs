@@ -253,7 +253,7 @@ fn stars(n: u8) -> String {
 /// After a successful transfer at a terminal: now and then asks how BlazeServe is doing.
 /// Once an answer is given it never asks again.
 pub(super) fn maybe_ask_rating() {
-    let Some(path) = state_path().filter(|_| prompt::person()) else {
+    let Some(path) = state_path().filter(|_| prompt::person() && !ansi::quiet()) else {
         return;
     };
     let mut state: Asking = std::fs::read(&path)

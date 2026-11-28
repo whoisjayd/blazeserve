@@ -284,6 +284,16 @@ impl Tally {
 
     /// A mismatch outranks a file that could not be checked: it means bad data.
     fn code(&self) -> u8 {
+        if self.mismatched + self.unchecked == 0
+            && self.total > 1
+            && !crate::cli::ansi::quiet()
+            && std::io::IsTerminal::is_terminal(&std::io::stdout())
+        {
+            anstream::println!(
+                "{}",
+                Style::stdout().bold(&format!("All {} files match.", self.total))
+            );
+        }
         if self.mismatched + self.unchecked > 0 {
             anstream::eprintln!(
                 "{} {} of {} did not match, {} could not be checked",

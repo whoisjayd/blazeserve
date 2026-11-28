@@ -11,7 +11,7 @@ use super::retry::{jitter, plan_wait, retry_note};
 use super::throttle::{Paced, Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::jobs::{self, tracker};
-use crate::cli::util::{Progress, existing_file, human_size, transfer_title};
+use crate::cli::util::{Progress, existing_file, human_size, print_summary, transfer_title};
 use crate::usage::{self, trace};
 use base64::Engine as _;
 use clap::Args;
@@ -155,6 +155,18 @@ impl Upload<'_> {
         req
     }
 
+    /// The server says what it stored; a different digest means the copy is not the file.
+    fn check_stored(&self, stored: Option<&str>) -> Result<(), TransferError> {
+        match stored {
+            Some(stored) if stored.starts_with("sha-256=") && stored != self.repr_digest => {
+                Err(TransferError::Integrity(
+                    "the server stored something other than the file that was sent".to_owned(),
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// `staged_is_ours` says this run already sent a chunk, so a staged partial can only be
     /// its own. A replacement never adopts a staged partial it cannot identify.
     fn remote_offset(&self, staged_is_ours: bool) -> Result<Probed, TransferError> {
@@ -246,7 +258,10 @@ impl Upload<'_> {
             Err(e) => return Err(TransferError::Network(describe_error(&e))),
         };
         match resp.status().as_u16() {
-            200 | 201 | 204 if last => Ok(Sent::Done),
+            200 | 201 | 204 if last => {
+                self.check_stored(header(&resp, "content-digest").as_deref())?;
+                Ok(Sent::Done)
+            }
             200..=299 => {
                 let next = header(&resp, "upload-offset")
                     .and_then(|v| v.parse().ok())
@@ -308,7 +323,7 @@ pub fn put(args: PutArgs) -> Result<u8, TransferError> {
     let mut need_sync = true;
     let mut sent_any = false;
     let mut progress = Progress::titled(&transfer_title("↑", &args.file), Some(total), 0);
-    let _transferring = trace::phase("transfer_ms");
+    let mut transferring = Some(trace::phase("transfer_ms"));
     let mut retries = 0u32;
 
     loop {
@@ -342,12 +357,17 @@ pub fn put(args: PutArgs) -> Result<u8, TransferError> {
         match up.send(offset, &buf[..want])? {
             Sent::Done => {
                 progress.finish(total);
-                anstream::println!(
-                    "{} {} ({})",
-                    Style::stdout().green("Uploaded"),
-                    args.file.display(),
-                    human_size(total)
-                );
+                drop(transferring.take());
+                if !crate::cli::ansi::quiet() && !crate::cli::ansi::json_progress() {
+                    anstream::println!(
+                        "{} {} ({})",
+                        Style::stdout().green("Uploaded"),
+                        args.file.display(),
+                        human_size(total)
+                    );
+                    print_summary(total, true);
+                }
+                crate::cli::ansi::done_event(&args.file, total);
                 return Ok(0);
             }
             Sent::Advanced(next) => {
@@ -405,6 +425,23 @@ mod tests {
             upload_target("http://h/__upload__/x", Path::new("y")).unwrap(),
             "http://h/__upload__/x"
         );
+    }
+
+    #[test]
+    fn a_different_stored_digest_is_an_integrity_failure() {
+        let up = Upload {
+            agent: agent(),
+            url: "http://h",
+            auth: None,
+            total: 0,
+            repr_digest: digest_header(b""),
+            if_match: None,
+            throttle: None,
+        };
+        assert!(up.check_stored(Some(&digest_header(b""))).is_ok());
+        assert!(up.check_stored(None).is_ok(), "older servers send none");
+        let err = up.check_stored(Some(&digest_header(b"x"))).unwrap_err();
+        assert_eq!(err.code(), crate::cli::exit::INTEGRITY);
     }
 
     #[test]

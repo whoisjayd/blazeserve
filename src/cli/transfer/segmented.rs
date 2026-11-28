@@ -11,12 +11,15 @@ use super::http::{
     transient_status, write_failure,
 };
 use super::limits;
+use super::pace::Pace;
 use super::retry::{jitter, plan_wait, retry_note};
 use crate::cli::ansi::announce;
+use crate::cli::blocks::{BlockMap, Part};
+use crate::cli::runlog;
 use crate::cli::util::{Progress, backoff, human_size, transfer_title};
 use crate::platform::write_all_at;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::sync::Mutex;
@@ -36,7 +39,7 @@ pub(super) struct SegMeta {
     done: Vec<[u64; 2]>,
 }
 
-struct Probe {
+pub(super) struct Probe {
     total: u64,
     etag: Option<String>,
     last_modified: Option<String>,
@@ -85,37 +88,60 @@ fn decode_runs(runs: &[[u64; 2]], count: u64) -> Option<BTreeSet<u64>> {
     Some(done)
 }
 
-fn probe(d: &Download<'_>) -> Option<Probe> {
+/// Whether a file of this size is downloaded in parts.
+pub(super) fn worth_splitting(total: u64) -> bool {
+    total >= MIN_SEGMENTED
+}
+
+/// Why a file cannot come in parts. `None` is a file too small to be worth it.
+pub(super) type Refusal = Option<&'static str>;
+
+fn probe(d: &Download<'_>) -> Result<Probe, Refusal> {
     let mut req = d.agent.head(d.url);
     if let Some(a) = &d.auth {
         req = req.header("Authorization", a);
     }
-    let resp = limits::bound(req).call().ok()?;
+    let no_head = Some("the server does not answer a size check (HEAD)");
+    let resp = limits::bound(req).call().map_err(|_| no_head)?;
+    assess(&resp)
+}
+
+/// What the answer to a `HEAD` allows.
+pub(super) fn assess(resp: &ureq::http::Response<ureq::Body>) -> Result<Probe, Refusal> {
     if resp.status().as_u16() != 200 {
-        return None;
+        return Err(Some("the server does not answer a size check (HEAD)"));
     }
-    let total = header(&resp, "content-length")?.parse::<u64>().ok()?;
+    let total = header(resp, "content-length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or(Some("the server does not say how big the file is"))?;
     if total < MIN_SEGMENTED {
-        return None;
+        return Err(None);
     }
-    if !header(&resp, "accept-ranges")?
-        .to_ascii_lowercase()
-        .contains("bytes")
-    {
-        return None;
+    if !header(resp, "accept-ranges").is_some_and(|v| v.to_ascii_lowercase().contains("bytes")) {
+        return Err(Some(
+            "the server does not offer parts of a file (no Accept-Ranges)",
+        ));
     }
-    let etag = header(&resp, "etag");
-    let last_modified = header(&resp, "last-modified");
+    let etag = header(resp, "etag");
+    let last_modified = header(resp, "last-modified");
     let validator = etag
         .clone()
         .filter(|e| !e.starts_with("W/"))
-        .or_else(|| last_modified.clone())?;
-    Some(Probe {
+        .or_else(|| last_modified.clone())
+        .ok_or(Some(
+            "the server sends no ETag or Last-Modified, so parts could not be matched safely",
+        ))?;
+    Ok(Probe {
         total,
         etag,
         last_modified,
         validator,
     })
+}
+
+/// Says why a download that asked for several connections uses one.
+fn one_connection(why: &str) {
+    announce("Note", &format!("one connection: {why}"));
 }
 
 /// Written to a temporary file first so an interrupt never leaves a torn sidecar.
@@ -156,8 +182,10 @@ struct Shared<'a> {
     d: &'a Download<'a>,
     probe: &'a Probe,
     file: File,
-    pending: Vec<u64>,
-    next: AtomicUsize,
+    pending: Mutex<VecDeque<u64>>,
+    /// Parts being fetched, which may yet come back to the queue.
+    in_flight: AtomicUsize,
+    pace: Mutex<Pace>,
     stop: AtomicBool,
     changed: AtomicBool,
     error: Mutex<Option<TransferError>>,
@@ -165,6 +193,7 @@ struct Shared<'a> {
     retry_fewer: AtomicBool,
     done: Mutex<(BTreeSet<u64>, Instant)>,
     progress: Progress,
+    map: std::sync::Arc<BlockMap>,
     retries: u32,
     /// No worker starts a request before this instant. Set by a server-directed wait.
     cooldown: Mutex<Option<Instant>>,
@@ -194,7 +223,33 @@ impl Shared<'_> {
         }
     }
 
+    fn mark(&self, index: u64, part: Part) {
+        self.map
+            .set(usize::try_from(index).unwrap_or(usize::MAX), part);
+    }
+
+    fn pace(&self) -> std::sync::MutexGuard<'_, Pace> {
+        self.pace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The live count, under the bar and in the run log.
+    fn show_connections(&self, limit: usize) {
+        self.progress.set_note(&format!(
+            "{limit} connection{}",
+            if limit == 1 { "" } else { "s" }
+        ));
+        runlog::note(&format!("connections now {limit}"));
+    }
+
     fn complete(&self, index: u64) {
+        let grown = self.pace().succeeded();
+        if let Some(limit) = grown {
+            announce("More connections", &format!("trying {limit}"));
+            self.show_connections(limit);
+        }
+        self.mark(index, Part::Done);
         let Ok(mut guard) = self.done.lock() else {
             return;
         };
@@ -329,7 +384,12 @@ impl Shared<'_> {
             if let Err(why) = limits::check() {
                 return self.fail(why);
             }
-            match self.fetch(index) {
+            self.mark(index, Part::Arriving);
+            let fetched = self.fetch(index);
+            if fetched.is_err() {
+                self.mark(index, Part::Waiting);
+            }
+            match fetched {
                 Ok(()) => return self.complete(index),
                 Err(SegError::Changed) => {
                     self.changed.store(true, Ordering::SeqCst);
@@ -348,6 +408,17 @@ impl Shared<'_> {
                     progressed,
                     retry_after,
                 }) => {
+                    runlog::note(&format!("part {index}: {msg}"));
+                    // The connection just added did not fit: give it up and requeue the part.
+                    let without = self.pace().failed();
+                    if let Some(limit) = without {
+                        announce("Fewer connections", &format!("{msg}; back to {limit}"));
+                        self.show_connections(limit);
+                        if let Ok(mut pending) = self.pending.lock() {
+                            pending.push_front(index);
+                        }
+                        return;
+                    }
                     fails = if progressed { 1 } else { fails + 1 };
                     if fails > self.retries {
                         self.retry_fewer.store(true, Ordering::SeqCst);
@@ -384,13 +455,30 @@ impl Shared<'_> {
         }
     }
 
-    fn worker(&self) {
+    fn worker(&self, id: usize) {
         while !self.stopped() {
-            let slot = self.next.fetch_add(1, Ordering::SeqCst);
-            let Some(&index) = self.pending.get(slot) else {
-                return;
+            let allowed = id < self.pace().limit();
+            let next = {
+                let Ok(mut pending) = self.pending.lock() else {
+                    return;
+                };
+                if pending.is_empty() && self.in_flight.load(Ordering::SeqCst) == 0 {
+                    return;
+                }
+                let next = if allowed { pending.pop_front() } else { None };
+                if next.is_some() {
+                    self.in_flight.fetch_add(1, Ordering::SeqCst);
+                }
+                next
             };
-            self.fetch_with_retries(index);
+            match next {
+                Some(index) => {
+                    self.fetch_with_retries(index);
+                    self.in_flight.fetch_sub(1, Ordering::SeqCst);
+                }
+                // Waiting for room, or for a part that may come back.
+                None => std::thread::sleep(Duration::from_millis(50)),
+            }
         }
     }
 }
@@ -423,7 +511,8 @@ fn trusted_progress(d: &Download<'_>, probe: &Probe, count: u64) -> Option<BTree
 fn attempt(
     d: &Download<'_>,
     probe: &Probe,
-    conns: usize,
+    pace: Pace,
+    requested_workers: usize,
     retries: u32,
     first: bool,
 ) -> Result<Outcome, Failure> {
@@ -449,7 +538,9 @@ fn attempt(
         crate::usage::trace::note("resumed", true);
         announce("Resuming", &format!("at {}", human_size(base)));
     }
-    let workers = conns.min(pending.len()).max(1);
+    let conns = pace.limit();
+    // Idle workers wait for the limit to grow towards what was asked.
+    let workers = requested_workers.min(pending.len()).max(1);
     let name = d.part.file_name().map_or_else(String::new, |n| {
         let n = n.to_string_lossy();
         n.strip_suffix(".part").unwrap_or(&n).to_owned()
@@ -457,35 +548,48 @@ fn attempt(
     if first {
         announce(
             "Downloading",
-            &format!("{name} in {workers} parts ({})", human_size(probe.total)),
+            &format!(
+                "{name} in {} parts ({})",
+                conns.min(workers),
+                human_size(probe.total)
+            ),
         );
     }
 
+    let map = std::sync::Arc::new(BlockMap::new(
+        usize::try_from(count).unwrap_or(0),
+        done.iter().filter_map(|&i| usize::try_from(i).ok()),
+    ));
     let shared = Shared {
         d,
         probe,
         file,
-        next: AtomicUsize::new(0),
+        in_flight: AtomicUsize::new(0),
+        pace: Mutex::new(pace),
         stop: AtomicBool::new(false),
         changed: AtomicBool::new(false),
         error: Mutex::new(None),
         retry_fewer: AtomicBool::new(false),
         done: Mutex::new((done, Instant::now())),
         progress: Progress::titled(&transfer_title("↓", &d.part), Some(probe.total), base),
+        map: map.clone(),
         retries,
         cooldown: Mutex::new(None),
-        pending,
+        pending: Mutex::new(pending.into_iter().collect()),
     };
-    shared.progress.set_note(&format!(
-        "{workers} connection{}",
-        if workers == 1 { "" } else { "s" }
-    ));
+    shared.progress.show_map(&map);
+    shared.show_connections(conns.min(workers));
     std::thread::scope(|scope| {
-        for _ in 0..workers {
-            scope.spawn(|| shared.worker());
+        let shared = &shared;
+        for id in 0..workers {
+            scope.spawn(move || shared.worker(id));
         }
     });
 
+    let (reached, patience) = {
+        let pace = shared.pace();
+        (pace.limit(), pace.patience())
+    };
     let Shared {
         file,
         error,
@@ -507,6 +611,8 @@ fn attempt(
         save_sidecar(d, probe, &file, &done);
         return Err(Failure {
             retry_fewer: retry_fewer.load(Ordering::SeqCst),
+            reached,
+            patience,
             err: failure
                 .unwrap_or_else(|| TransferError::Interrupted("download interrupted".to_owned())),
         });
@@ -529,6 +635,9 @@ fn attempt(
 struct Failure {
     err: TransferError,
     retry_fewer: bool,
+    /// The connection count and patience reached, to continue from.
+    reached: usize,
+    patience: usize,
 }
 
 impl From<TransferError> for Failure {
@@ -536,6 +645,8 @@ impl From<TransferError> for Failure {
         Self {
             err,
             retry_fewer: false,
+            reached: 1,
+            patience: 0,
         }
     }
 }
@@ -554,25 +665,36 @@ pub(super) fn run(d: &Download<'_>, conns: usize, retries: u32) -> Result<bool, 
         && d.load_meta()
             .is_some_and(|m| m.url == d.url && m.seg.is_none())
     {
+        one_connection("finishing a partial file that was started that way");
         return Ok(false);
     }
+    let requested = conns;
     let mut restarts = 0u32;
     let mut conns = conns;
+    let mut patience = 0;
     loop {
         limits::check()?;
-        let Some(probe) = probe(d) else {
-            return Ok(false);
+        let probe = match probe(d) {
+            Ok(probe) => probe,
+            Err(why) => {
+                if let Some(why) = why {
+                    one_connection(why);
+                }
+                return Ok(false);
+            }
         };
-        let outcome = match attempt(d, &probe, conns, retries, restarts == 0) {
+        let pace = Pace::new(conns, requested).with_patience(patience);
+        let outcome = match attempt(d, &probe, pace, requested, retries, restarts == 0) {
             Ok(outcome) => outcome,
             // Finished segments are kept in the sidecar, so the next attempt carries on.
-            Err(f) if f.retry_fewer && conns > 1 => {
-                let next = fewer(conns);
+            Err(f) if f.retry_fewer && f.reached > 1 => {
+                let next = fewer(f.reached);
                 announce(
                     "Fewer connections",
-                    &format!("{}; trying {next} instead of {conns}", f.err),
+                    &format!("{}; trying {next} instead of {}", f.err, f.reached),
                 );
                 conns = next;
+                patience = f.patience * 2;
                 continue;
             }
             Err(f) => return Err(f.err),

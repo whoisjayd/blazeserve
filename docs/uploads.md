@@ -23,6 +23,7 @@ The address `/__upload__/big.iso` puts the file at `big.iso` in the served folde
 
 ## How uploads behave
 
+- **The stored copy is checked.** `blaze put` compares the SHA-256 the server reports for the finished file with its own and exits `4` if they differ.
 - **Nothing is overwritten.** If the file already exists, the server answers `409 Conflict`. To replace a file on purpose, send an `If-Match` header with the file's current `ETag`. If the tag is out of date, the server answers `412 Precondition Failed`, which means someone changed the file since you last looked. With the client, read the tag with `curl -I http://host:5949/big.iso` and pass it along:
 
   ```console

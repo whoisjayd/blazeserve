@@ -1,7 +1,8 @@
 //! `blaze status`: a read-only view of the job registry.
 
-use super::record::{Kind, Record, SCHEMA_VERSION, valid_id};
+use super::record::{Kind, Record, SCHEMA_VERSION, State, escape_control, valid_id};
 use super::store::{RETENTION_SECS, Store, now};
+use crate::cli::ansi::Style;
 use crate::cli::util::human_size;
 use clap::Args;
 use serde::Serialize;
@@ -32,6 +33,7 @@ pub struct Snapshot {
 
 pub fn snapshot(store: &Store, at: u64, job: Option<&str>, all: bool) -> Result<Snapshot, String> {
     if let Some(id) = job {
+        let id = &super::resolve(store, id)?;
         if !valid_id(id) {
             return Err(format!(
                 "'{id}' is not a job ID (expected 8 characters, 0-9 and a-f)"
@@ -125,6 +127,9 @@ pub(super) fn describe(r: &Record, at: u64, detail: bool) -> String {
     }
     out.push_str(&format!("{head}  pid {}\n", r.pid));
 
+    if let Some(name) = &r.name {
+        out.push_str(&format!("  name {name}\n"));
+    }
     let mut who = if r.label.is_empty() {
         "(starting)".to_owned()
     } else {
@@ -199,7 +204,7 @@ pub fn render(snap: &Snapshot, at: u64, detail: bool) -> String {
     }
     if snap.hidden > 0 {
         out.push_str(&format!(
-            "\n{} finished {} kept; show with --all or by ID.\n",
+            "\n{} finished {} kept: see them with `blaze status --all`.\n",
             snap.hidden,
             if snap.hidden == 1 {
                 "job is"
@@ -222,6 +227,100 @@ pub fn render(snap: &Snapshot, at: u64, detail: bool) -> String {
     out
 }
 
+const GAUGE: usize = 20;
+
+/// The list as a person reads it: a mark, the name, progress, then where it goes.
+fn overview(snap: &Snapshot, at: u64, style: Style) -> String {
+    let mut out = String::new();
+    for r in &snap.records {
+        let mark = match r.state {
+            State::Failed => style.red("\u{2717}"),
+            s if s.is_active() => style.green("\u{25cf}"),
+            _ => style.dim("\u{2713}"),
+        };
+        let name = r.name.clone().unwrap_or_else(|| {
+            if r.label.is_empty() {
+                "(starting)".to_owned()
+            } else {
+                escape_control(&r.label)
+            }
+        });
+        let age = match uptime(r, at) {
+            Some(up) => format!("up {}", span(up)),
+            None => format!("started {} ago", span(at.saturating_sub(r.started_at))),
+        };
+        let facts = format!(
+            "{} {} \u{b7} {} \u{b7} {age}",
+            r.kind.name(),
+            r.id,
+            r.state.name()
+        );
+        out.push_str(&format!(
+            "\n  {mark} {}   {}  \n",
+            style.bold(&name),
+            style.dim(&facts)
+        ));
+
+        let mut target = escape_control(&r.label);
+        if let Some(remote) = &r.remote {
+            let word = if r.kind == Kind::Put { "to" } else { "from" };
+            target = format!("{target} {word} {}", escape_control(remote));
+        }
+        if let Some(listen) = &r.listen {
+            target = format!("{target} on {listen}");
+        }
+        if !r.kind.is_server() && (r.ready_at.is_some() || r.bytes_done > 0) {
+            let mut parts = Vec::new();
+            if let Some(p) = r.percent() {
+                let filled = ((p / 100.0) * GAUGE as f64)
+                    .round()
+                    .clamp(0.0, GAUGE as f64) as usize;
+                parts.push(format!(
+                    "{}{} {p:>3.0}%",
+                    style.green(&"\u{2588}".repeat(filled)),
+                    style.dim(&"\u{2591}".repeat(GAUGE - filled))
+                ));
+            }
+            parts.push(match r.bytes_total {
+                Some(total) if r.state.is_active() => {
+                    format!("{} of {}", human_size(r.bytes_done), human_size(total))
+                }
+                _ => human_size(r.bytes_done),
+            });
+            if r.state.is_active() {
+                if let Some(speed) = r.speed_bps {
+                    parts.push(format!("{}/s", human_size(speed)));
+                }
+                if let Some(eta) = r.eta_secs() {
+                    parts.push(format!("ETA {}", span(eta)));
+                }
+            }
+            out.push_str(&format!("    {}  \n", parts.join("  ")));
+        }
+        out.push_str(&format!("    {}  \n", style.dim(&target)));
+        if r.state == State::Failed
+            && let Some(result) = &r.result
+        {
+            out.push_str(&format!("    {}  \n", style.red(&escape_control(result))));
+        }
+    }
+    if snap.records.is_empty() {
+        out.push_str("\n  No active background jobs.  \n");
+    }
+    if snap.hidden > 0 {
+        let jobs = if snap.hidden == 1 { "job" } else { "jobs" };
+        out.push_str(&format!(
+            "\n  {}  \n",
+            style.dim(&format!(
+                "{} finished {jobs} not shown: blaze status --all",
+                snap.hidden
+            ))
+        ));
+    }
+    out.push('\n');
+    out
+}
+
 pub fn run(args: StatusArgs) -> Result<u8, String> {
     let store = Store::open()?;
     store.sweep(now());
@@ -231,10 +330,29 @@ pub fn run(args: StatusArgs) -> Result<u8, String> {
         anstream::println!("{}", to_json(&snap, at)?);
         return Ok(0);
     }
+    // At a terminal, watching is the interactive dashboard.
+    if args.watch && crate::cli::prompt::person() {
+        super::dashboard::run(&store, args.job.as_deref())?;
+        return Ok(0);
+    }
     if !args.watch {
         let at = now();
         let snap = snapshot(&store, at, args.job.as_deref(), args.all)?;
-        anstream::print!("{}", render(&snap, at, args.job.is_some()));
+        let text = render(&snap, at, args.job.is_some());
+        let title = format!("Background jobs ({})", snap.records.len());
+        if args.job.is_none() {
+            let framed = overview(&snap, at, Style::stdout());
+            crate::cli::ansi::card(&title, &framed, &text);
+        } else {
+            crate::cli::ansi::card(&title, &text, &text);
+        }
+        if !snap.records.is_empty() && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            anstream::println!(
+                "{}",
+                Style::stdout()
+                    .dim("Live view: blaze status --watch  \u{b7}  one job: blaze attach ID")
+            );
+        }
         return Ok(0);
     }
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
@@ -258,7 +376,7 @@ pub fn run(args: StatusArgs) -> Result<u8, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::record::{Direction, Phase, State};
+    use super::super::record::{Direction, Phase};
     use super::*;
 
     fn transfer(state: State) -> Record {
@@ -335,6 +453,21 @@ mod tests {
             !text.contains("ETA") && !text.contains("of unknown size"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_overview_leads_with_the_name_and_says_how_to_see_the_rest() {
+        let mut r = transfer(State::Running);
+        r.name = Some("nightly".into());
+        r.bytes_total = Some(2048);
+        r.bytes_done = 1024;
+        let mut shown = snap(vec![r]);
+        shown.hidden = 1;
+        let text = overview(&shown, 1_105, Style::PLAIN);
+        assert!(text.contains("nightly   get 0123abcd"), "{text}");
+        assert!(text.contains("50%"), "{text}");
+        assert!(text.contains("archive.tar from http://host:5949"), "{text}");
+        assert!(text.contains("blaze status --all"), "{text}");
     }
 
     #[test]

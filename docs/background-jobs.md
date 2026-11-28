@@ -9,7 +9,7 @@ blaze serve ./shared --background
 blaze send ./report.pdf --background
 ```
 
-Each command prints a job ID, such as `3f9a01bc`, and returns. The work continues after you close the terminal.
+Each command returns at once with a job ID, such as `3f9a01bc`: at a terminal with the commands to watch, attach to or stop the job, and in a script as the bare ID on standard output. The work continues after you close the terminal.
 
 ```console
 blaze status              # active jobs
@@ -85,3 +85,11 @@ Passwords given on the command line with `--auth` are visible in the process lis
 - A job whose clock or computer sleeps for more than 30 seconds can briefly show as `failed`. It corrects itself at its next update.
 - `--background` needs the `blaze` program. It is not available when BlazeServe is called as a Python library.
 - There is no queue, no pause and no web page. `--json` and `--watch` cannot be combined.
+
+## Watch and manage them
+
+`blaze status --watch` opens a dashboard at a terminal: every job with its progress, speed and time left, the details and log of the one selected, and keys to move (arrows), stop (`s`, then `y`) and leave (`q`). `blaze attach` (or `blaze fg`) opens the same view on one job.
+
+Give jobs names to find them again: `blaze get URL --background --name nightly`, then `blaze attach nightly` or `blaze stop nightly`.
+
+A background job has no terminal of its own, so attaching shows and controls it; leaving the view never stops it.

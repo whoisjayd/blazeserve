@@ -149,6 +149,7 @@ pub fn ready(info: impl FnOnce() -> Info) {
     let info = info();
     let mut rec = w.lock();
     rec.label = label(&info.label);
+    rec.name = crate::cli::run_name().map(super::record::escape_control);
     rec.remote = info.url.as_deref().and_then(origin);
     rec.direction = info.direction;
     rec.listen = info.listen.as_deref().map(super::record::escape_control);

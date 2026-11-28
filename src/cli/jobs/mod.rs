@@ -4,6 +4,7 @@
 //! the command, and keeps one small JSON record per job in a private per-user folder. The
 //! other commands only read that folder, or drop a stop request into it.
 
+mod dashboard;
 mod launch;
 mod record;
 mod status;
@@ -120,10 +121,67 @@ pub(super) fn clear_stop() {
     tracker::clear_cancel();
 }
 
+pub(crate) use status::span;
+
 pub fn status(args: StatusArgs) -> Result<u8, String> {
     status::run(args)
 }
 
 pub fn stop(args: StopArgs) -> Result<u8, String> {
     stop::run(args)
+}
+
+#[derive(Args, Debug)]
+pub struct AttachArgs {
+    /// Job ID or --name from `blaze status`; the newest running job when left out
+    pub job: Option<String>,
+}
+
+/// The ID meant by `job`, which is either an ID or the name given with `--name`.
+fn resolve(store: &store::Store, job: &str) -> Result<String, String> {
+    if record::valid_id(job) && store.read(job)?.is_some() {
+        return Ok(job.to_owned());
+    }
+    let named: Vec<record::Record> = store
+        .list()?
+        .records
+        .into_iter()
+        .map(|r| r.effective(store::now()))
+        .filter(|r| r.name.as_deref() == Some(job))
+        .collect();
+    // Running jobs first: a finished one of the same name is rarely meant.
+    let running: Vec<&record::Record> = named.iter().filter(|r| r.state.is_active()).collect();
+    let matches = if running.is_empty() {
+        named.iter().collect()
+    } else {
+        running
+    };
+    match matches.as_slice() {
+        [one] => Ok(one.id.clone()),
+        [] if record::valid_id(job) => Ok(job.to_owned()),
+        [] => Err(format!(
+            "no job with the ID or name '{job}'; `blaze status --all` lists them"
+        )),
+        several => Err(format!(
+            "{} jobs are named '{job}'; use one of their IDs: {}",
+            several.len(),
+            several
+                .iter()
+                .map(|r| r.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// Brings a background job to the front as a live view.
+pub fn attach(args: AttachArgs) -> Result<u8, String> {
+    if !crate::cli::prompt::person() {
+        return Err("`blaze attach` needs a terminal; use `blaze status JOB` here".to_owned());
+    }
+    let store = store::Store::open()?;
+    store.sweep(store::now());
+    let job = args.job.map(|job| resolve(&store, &job)).transpose()?;
+    dashboard::run(&store, job.as_deref())?;
+    Ok(0)
 }

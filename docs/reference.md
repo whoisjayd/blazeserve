@@ -10,8 +10,9 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze send FILE` | Share one file, with the folder listing off. Accepts the network, access, limit, proxy options of `serve`, plus `--expires-after DURATION` |
 | `blaze get URL` | Download with resume |
 | `blaze put FILE URL` | Upload with resume. A bare server address uploads under `/__upload__/` |
-| `blaze status [JOB]` | Show background jobs. `--watch` refreshes, `--json` prints one snapshot, `--all` adds finished jobs |
-| `blaze stop JOB` | Stop a background job after confirmation. `--yes` skips the question |
+| `blaze status [JOB]` | Show background jobs. `--watch` opens a live dashboard at a terminal, `--json` prints one snapshot, `--all` adds finished jobs |
+| `blaze attach [JOB]` | Bring a background job to the front: a live view with its log. Also `blaze fg`. Leaving it does not stop the job |
+| `blaze stop [JOB]` | Stop a background job after confirmation; without a job, choose one from a list. `--yes` skips the question |
 | `blaze checksum FILES...` | SHA-256 of one or more files |
 | `blaze verify` | Check files against a checksum list. See [`blaze verify`](#blaze-verify) |
 | `blaze doctor [PATH]` | Check the folder, the port and system capabilities |
@@ -23,7 +24,7 @@ Every command, option, address and setting in one place. For explanations, use t
 | `blaze man` | Print the man page, for `man -l -` or a `man1` folder |
 | `blaze version` | Version and platform. Add `--json` for scripts |
 
-The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose` or `--log-json`, which write their own lines.
+The global `-q`/`--quiet` option prints only errors and warnings. The global `--progress json` option makes `get` and `put` print `{"event":"progress","bytes":N,"total":N,"elapsed_ms":N}` lines to standard error, at most two a second, and `{"event":"done","path":...,"bytes":N}` to standard output. The global `--name NAME` option labels a run: `status`, the dashboard, `stop`, `attach` and `bug` show it, and `stop` and `attach` accept it in place of an ID. Names stay on your machine. The global `--color auto|always|never` option controls colour. `NO_COLOR` and `CLICOLOR_FORCE` are respected. Progress bars and status lines go to standard error and only appear in a terminal, so piped output stays clean. While `serve` or `send` runs in a terminal, one status line under the startup banner shows active and total requests, bytes sent and the current speed. It is not drawn with `--verbose` or `--log-json`, which write their own lines.
 
 ## Exit codes
 
@@ -43,7 +44,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | Option | Default | Meaning |
 | :--- | :--- | :--- |
 | `PATH` | `.` | Folder or file to serve |
-| `--host`, `-p/--port` | `0.0.0.0`, `5949` | Address (IPv4 or IPv6) and port |
+| `--host`, `-p/--port` | `0.0.0.0`, `5949` | Address (IPv4 or IPv6) and port. Without `--port`, a busy 5949 moves on to the next free port, so several shares run side by side; a port you ask for is never changed |
 | `--single FILE` | none | Serve exactly this file |
 | `--no-listing` | listing on | Turn off the folder listing |
 | `--index NAME` | `index.html`, `index.htm` | Extra index file names; repeatable |
@@ -80,6 +81,7 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--sha256 HEX` | none | Verify the finished file |
 | `--verify server-sha256` | off | Ask the BlazeServe server for the file's SHA-256 (`?hash`) and verify against it; fails if unavailable or different. Cannot be combined with `--sha256` |
 | `--retries N` | `5` | Failed attempts in a row before giving up |
+| `--dry-run` | off | Show the name, size, resume support, free space and plan without downloading; exits `3` if it would not fit |
 | `--force` | off | Replace an existing file |
 | `-c`, `--connections N` | `4` | Parallel connections, 1 to 128, or `max` for 128 |
 | `--limit-rate RATE` | none | Total speed cap in bytes per second, with optional `K`, `M` or `G` |
@@ -89,6 +91,8 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 | `--background` | off | Run as a [background job](background-jobs.md) and print its job ID |
 | `--extract` | off | After the download, extract the archive in place (zip, 7z, tar, `.tar.gz`, `.tar.bz2`, `.tar.xz`) |
 | `--keep-archive` | off | With `--extract`, keep the archive instead of consuming it as files come out |
+| `--nested` | off | With `--extract`, also unpack `.zip`, `.7z` and `.tar` archives found inside, one level deep |
+| `--password-env VAR` | none | With `--extract`, the password of an encrypted archive; a wrong or missing one exits `5` |
 | `--no-verify-first` | off | With `--extract`, skip the check of the whole archive that runs before it is consumed |
 | `--keep-free SIZE` | `1G` | With `--extract`, free space to leave untouched, with optional `K`, `M` or `G` |
 | `--auth USER:PASS`, `--auth-env VAR` | none | Password for the server |

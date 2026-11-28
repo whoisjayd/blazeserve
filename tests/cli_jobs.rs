@@ -702,3 +702,43 @@ async fn the_launcher_exits_while_the_worker_keeps_running() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_named_job_is_shown_and_stopped_by_its_name() {
+    let env = Env::new();
+    let started = env
+        .run(&[
+            "serve",
+            ".",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--background",
+        ])
+        .await;
+    assert_eq!(code(&started), 2, "port 0 is refused: {}", stderr(&started));
+    let port = free_port().to_string();
+    let started = env
+        .run(&[
+            "serve",
+            ".",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port,
+            "--background",
+            "--name",
+            "my share",
+        ])
+        .await;
+    assert_eq!(code(&started), 0, "{}", stderr(&started));
+    let status = env.run(&["status", "my share"]).await;
+    assert!(
+        stdout(&status).contains("name my share"),
+        "{}",
+        stdout(&status)
+    );
+    let stopped = env.run(&["stop", "my share", "--yes"]).await;
+    assert_eq!(code(&stopped), 0, "{}", stderr(&stopped));
+}

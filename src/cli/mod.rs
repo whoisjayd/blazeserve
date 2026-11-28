@@ -4,6 +4,7 @@
 mod ansi;
 pub mod argv;
 mod bench;
+mod blocks;
 mod crash;
 mod doctor;
 mod exit;
@@ -11,10 +12,11 @@ mod feedback;
 mod jobs;
 mod live;
 mod menu;
-mod pick;
-mod prompt;
+mod panel;
+pub(crate) mod pick;
+pub(crate) mod prompt;
 mod report;
-mod runlog;
+pub(crate) mod runlog;
 mod serve;
 mod telemetry;
 mod transfer;
@@ -44,10 +46,11 @@ const STYLES: Styles = Styles::styled()
 
 const TOP_EXAMPLES: &str = "Common tasks:
   Share a folder           blaze serve .
-  ... and let people upload blaze serve ./inbox --uploads
+  Receive uploads          blaze serve ./inbox --uploads
   Send one file            blaze send report.pdf --qr
   Download (resumes)       blaze get http://host:5949/big.iso
   Upload (resumes)         blaze put backup.tar http://host:5949 --auth-env BLAZE_AUTH
+  Look before downloading  blaze info http://host:5949/big.iso
   Check what you got       blaze verify --check SHA256SUMS
   Run in the background    blaze serve . --background, then blaze status and blaze stop
   Something is off         blaze doctor ./site --port 9000, or blaze bug
@@ -55,6 +58,54 @@ const TOP_EXAMPLES: &str = "Common tasks:
 Run 'blaze' with nothing after it for a guided menu, and 'blaze help <command>' for one
 command. Exit codes: 0 done, 1 failed, 2 usage, 3 no disk space, 4 data check failed,
 5 password refused.";
+
+/// The top help lists commands by what they are for, in this order.
+const GROUPS: [(&str, &[&str]); 4] = [
+    ("Share", &["serve", "send"]),
+    ("Transfer", &["get", "put", "info", "checksum", "verify"]),
+    ("Background jobs", &["status", "attach", "stop"]),
+    (
+        "Look after it",
+        &[
+            "doctor",
+            "benchmark",
+            "upgrade",
+            "telemetry",
+            "bug",
+            "version",
+            "completions",
+            "man",
+            "help",
+        ],
+    ),
+];
+
+/// The command line as people see it: [`Cli`] with the grouped top help.
+fn command() -> clap::Command {
+    let command = Cli::command();
+    let heading = AnsiColor::Yellow.on_default().bold();
+    let literal = AnsiColor::Green.on_default().bold();
+    let mut list = String::new();
+    for (title, names) in GROUPS {
+        list.push_str(&format!("\n{heading}{title}:{heading:#}\n"));
+        for name in names {
+            let found = command.find_subcommand(name);
+            let mut about = found
+                .and_then(clap::Command::get_about)
+                .map_or_else(|| "Explain a command".to_owned(), ToString::to_string);
+            for alias in found
+                .into_iter()
+                .flat_map(clap::Command::get_visible_aliases)
+            {
+                about.push_str(&format!(" (also: {alias})"));
+            }
+            list.push_str(&format!("  {literal}{name:<12}{literal:#} {about}\n"));
+        }
+    }
+    command.help_template(format!(
+        "{{about-with-newline}}\n{{usage-heading}} {{usage}}\n{list}\n{heading}Options:{heading:#}\n{{options}}{{after-help}}\n"
+    ))
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -66,11 +117,43 @@ command. Exit codes: 0 done, 1 failed, 2 usage, 3 no disk space, 4 data check fa
     arg_required_else_help = true
 )]
 pub struct Cli {
-    /// When to use colour in output
-    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorWhen::Auto)]
+    /// Colour: auto, always or never
+    #[arg(long, global = true, value_enum, value_name = "WHEN", default_value_t = ColorWhen::Auto, hide_possible_values = true, hide_default_value = true)]
     color: ColorWhen,
+    /// Print only errors and warnings
+    #[arg(short, long, global = true)]
+    quiet: bool,
+    /// Transfer progress: auto, or json lines for programs
+    #[arg(long, global = true, value_enum, value_name = "MODE", default_value_t = ProgressMode::Auto, hide_possible_values = true, hide_default_value = true)]
+    progress: ProgressMode,
+    /// Label this run for status, attach, stop and bug
+    #[arg(long, global = true, value_name = "NAME", value_parser = parse_name)]
+    name: Option<String>,
     #[command(subcommand)]
     command: Command,
+}
+
+static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The `--name` of this run. One process runs one command.
+pub(crate) fn run_name() -> Option<&'static str> {
+    NAME.get().map(String::as_str)
+}
+
+fn parse_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() || name.chars().count() > 40 || name.chars().any(char::is_control) {
+        return Err("a name is 1 to 40 printable characters".to_owned());
+    }
+    Ok(name.to_owned())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+enum ProgressMode {
+    /// A live display at a terminal, nothing when piped
+    Auto,
+    /// One JSON object per line: progress on standard error, the result on standard output
+    Json,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -164,6 +247,15 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
   blaze get http://host:5949/big.iso --limit-rate 2M   # cap total speed at 2 MiB/s
   blaze get http://host:5949/big.iso --idle-timeout 45s --max-time 30m   # give up when stalled or too slow overall")]
     Get(transfer::GetArgs),
+    /// Show what a URL would download
+    ///
+    /// Name, size, type, whether it can be resumed and whether it can come over several
+    /// connections, with the reason when it cannot. Nothing is saved.
+    #[command(after_help = "Examples:
+  blaze info http://host:5949/big.iso
+  blaze info http://host:5949/big.iso --auth-env BLAZE_AUTH
+  blaze info http://host:5949/big.iso --json")]
+    Info(transfer::InfoArgs),
     /// Upload a file; run it again to resume
     ///
     /// The server must accept uploads (`blaze serve DIR --uploads` prints the command to
@@ -179,10 +271,23 @@ The path is the directory you intend to serve; there is no 'serve' keyword.")]
   blaze status --watch
   blaze status --json")]
     Status(jobs::StatusArgs),
+    /// Bring a background job to the front
+    ///
+    /// A live view of the job: progress, details and its log, with a key to stop it. Leaving
+    /// the view does not stop the job.
+    #[command(
+        visible_alias = "fg",
+        after_help = "Examples:
+  blaze attach                 The newest running job
+  blaze attach 3f9a01bc
+  blaze status --watch         All jobs at once"
+    )]
+    Attach(jobs::AttachArgs),
     /// Stop a background job
     ///
     /// A stopped download or upload keeps its progress; run the same command to resume.
     #[command(after_help = "Examples:
+  blaze stop                   Choose from the running jobs
   blaze stop 3f9a01bc
   blaze stop 3f9a01bc --yes")]
     Stop(jobs::StopArgs),
@@ -294,20 +399,15 @@ fn version(args: VersionArgs) -> Result<u8, String> {
         return Ok(0);
     }
     let style = Style::stdout();
-    anstream::println!(
-        "{}\n",
-        style.bold(&format!("BlazeServe {}", crate::VERSION))
+    let title = format!("BlazeServe {}", crate::VERSION);
+    let body = ansi::rows(
+        style,
+        &[
+            ("Platform", os.to_owned()),
+            ("Architecture", arch.to_owned()),
+        ],
     );
-    anstream::print!(
-        "{}",
-        ansi::rows(
-            style,
-            &[
-                ("Platform", os.to_owned()),
-                ("Architecture", arch.to_owned())
-            ]
-        )
-    );
+    ansi::card(&title, &body, &format!("{}\n\n{body}", style.bold(&title)));
     Ok(0)
 }
 
@@ -357,6 +457,7 @@ fn dispatch(command: Command) -> Result<u8, Failure> {
         }
         Command::Checksum(a) => Ok(checksum(a)?),
         Command::Verify(a) => Ok(transfer::verify(a)?),
+        Command::Info(a) => Ok(transfer::info(a)?),
         Command::Version(a) => Ok(version(a)?),
         Command::Doctor(a) => Ok(doctor::run(a)?),
         Command::Benchmark(a) => Ok(bench::run(a)?),
@@ -370,6 +471,7 @@ fn dispatch(command: Command) -> Result<u8, Failure> {
         }
         Command::Status(a) => Ok(jobs::status(a)?),
         Command::Stop(a) => Ok(jobs::stop(a)?),
+        Command::Attach(a) => Ok(jobs::attach(a)?),
         Command::Telemetry(a) => Ok(telemetry::run(a)?),
         Command::Bug(a) => Ok(feedback::bug(a)?),
         Command::Upgrade(a) => Ok(upgrade::run(a)?),
@@ -427,7 +529,7 @@ fn parse_and_run(mut args: Vec<std::ffi::OsString>) -> u8 {
             .chain(chosen.into_iter().map(Into::into))
             .collect();
     }
-    let parsed = Cli::command()
+    let parsed = command()
         .try_get_matches_from(&args)
         .and_then(|matches| Ok((Cli::from_arg_matches(&matches)?, matches)));
     match parsed {
@@ -450,6 +552,11 @@ fn parse_and_run(mut args: Vec<std::ffi::OsString>) -> u8 {
 
 fn run(cli: Cli, matches: &clap::ArgMatches) -> u8 {
     cli.color.apply();
+    ansi::set_quiet(cli.quiet);
+    ansi::set_json_progress(cli.progress == ProgressMode::Json);
+    if let Some(name) = cli.name {
+        let _ = NAME.set(name);
+    }
     jobs::clear_stop();
     upgrade::remove_stale_backup();
     let reporting = report::begin(matches);
@@ -488,12 +595,46 @@ mod tests {
     }
 
     #[test]
+    fn the_top_help_groups_every_command() {
+        let listed: Vec<&str> = GROUPS
+            .iter()
+            .flat_map(|(_, names)| *names)
+            .copied()
+            .collect();
+        for sub in Cli::command()
+            .get_subcommands()
+            .filter(|c| !c.is_hide_set())
+        {
+            assert!(
+                listed.contains(&sub.get_name()),
+                "{} is in no group",
+                sub.get_name()
+            );
+        }
+        let text = command()
+            .try_get_matches_from(["blaze", "--help"])
+            .unwrap_err()
+            .to_string();
+        for needle in [
+            "Share:",
+            "Transfer:",
+            "Background jobs:",
+            "(also: fg)",
+            "--progress",
+        ] {
+            assert!(text.contains(needle), "{needle}:\n{text}");
+        }
+        assert!(!text.contains("Possible values"), "{text}");
+    }
+
+    #[test]
     fn serve_defaults_match_documented_values() {
         let cli = Cli::try_parse_from(["blaze", "serve"]).unwrap();
         let Command::Serve(a) = cli.command else {
             panic!("expected serve")
         };
-        assert_eq!(a.common.port, 5949);
+        assert_eq!(a.common.port, None);
+        assert_eq!(serve::serve_config(&a).unwrap().port, 5949);
         assert_eq!(a.common.host, "0.0.0.0");
         assert_eq!(a.common.backlog, 8192);
         assert_eq!(a.timeout, 1800);

@@ -202,7 +202,10 @@ pub fn run(args: DoctorArgs) -> Result<u8, String> {
             serde_json::to_string(&report).map_err(|e| e.to_string())?
         );
     } else {
-        print_table(&checks);
+        print_table(&checks, &path, &crate::cli::util::friendly_path(&abs));
+        if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            anstream::println!("{}", Style::stdout().bold(&verdict(&checks, &args)));
+        }
     }
     Ok(if success { 0 } else { 1 })
 }
@@ -218,32 +221,89 @@ fn label(id: &str) -> &str {
     }
 }
 
-fn print_table(checks: &[Check]) {
+/// Breaks `text` between words so no line is wider than `width`.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = vec![String::new()];
+    for word in text.split(' ') {
+        let last = lines.len() - 1;
+        let line = &mut lines[last];
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(word.to_owned());
+        } else {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+    }
+    lines
+}
+
+fn print_table(checks: &[Check], path: &str, short: &str) {
     let style = Style::stdout();
-    let status = |outcome: &str| match outcome {
-        "pass" => style.green("ok"),
-        "fail" => style.red("fail"),
-        other => style.yellow(other),
+    let line = |c: &Check, word: String, visible: usize| {
+        format!(
+            "  {:<14}{word}{}  {}\n",
+            label(c.id),
+            " ".repeat(13usize.saturating_sub(visible)),
+            c.details
+        )
     };
-    anstream::println!("{}\n", style.bold("BlazeServe diagnostics"));
+    let mut plain = format!("{}\n\n", style.bold("BlazeServe diagnostics"));
+    let mut framed = String::new();
+    // The columns before the details, and the card's own edges.
+    let room = usize::from(console::Term::stdout().size().1)
+        .saturating_sub(34)
+        .clamp(30, 70);
     for c in checks {
-        let name = label(c.id);
-        let word = status(c.outcome);
+        let (word, mark) = match c.outcome {
+            "pass" => (style.green("ok"), style.green("\u{2713} ok")),
+            "fail" => (style.red("fail"), style.red("\u{2717} fail")),
+            other => (style.yellow(other), style.yellow(&format!("! {other}"))),
+        };
         let visible = if c.outcome == "pass" {
             2
         } else {
             c.outcome.chars().count()
         };
-        anstream::println!(
-            "  {name:<14}{word}{}  {}",
-            " ".repeat(13usize.saturating_sub(visible)),
-            c.details
-        );
+        plain.push_str(&line(c, word, visible));
+        let details = wrap(&c.details.replace(path, short), room);
+        framed.push_str(&format!(
+            "  {:<14}{mark}{}  {}  \n",
+            label(c.id),
+            " ".repeat(13usize.saturating_sub(visible + 2)),
+            details.join(&format!("  \n{}", " ".repeat(31)))
+        ));
+    }
+    crate::cli::ansi::card("BlazeServe diagnostics", &framed, &plain);
+}
+
+/// What to do next, said after the table at a terminal.
+fn verdict(checks: &[Check], args: &DoctorArgs) -> String {
+    let failed = checks.iter().filter(|c| c.outcome == "fail").count();
+    if failed == 0 {
+        format!(
+            "Ready. Next: blaze serve {} --port {}",
+            args.path.display(),
+            args.port
+        )
+    } else {
+        format!(
+            "{failed} {} failed. Fix {} and run `blaze doctor` again, or `blaze bug` if it looks wrong.",
+            if failed == 1 { "check" } else { "checks" },
+            if failed == 1 { "it" } else { "them" }
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_details_wrap_between_words() {
+        assert_eq!(super::wrap("one two three", 7), ["one two", "three"]);
+        assert_eq!(super::wrap("unbroken", 3), ["unbroken"]);
+    }
+
     use super::*;
 
     #[test]
