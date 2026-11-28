@@ -42,8 +42,8 @@ use publish::precheck;
 use request::{LengthError, content_length, if_match, parse_content_range, request_digests};
 use response::{build, io_status, reject, text};
 use resumable::resumable;
-use stream::ActiveGuard;
 pub use stream::UploadState;
+use stream::{ActiveGuard, sweep_orphaned_parts};
 use target::{Staging, Target, parse_target};
 
 /// Entry point for `/__upload__/` requests. The caller authenticates first and decorates the response.
@@ -60,6 +60,9 @@ pub async fn handle_upload(
         Ok(t) => t,
         Err(resp) => return resp,
     };
+    if matches!(*req.method(), Method::PUT | Method::POST | Method::DELETE) {
+        sweep_orphaned_parts(state, &target).await;
+    }
     match *req.method() {
         Method::PUT | Method::POST => upload(state, req, target).await,
         Method::GET | Method::HEAD => status(&target).await,

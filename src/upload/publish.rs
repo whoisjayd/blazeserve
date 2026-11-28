@@ -59,6 +59,7 @@ fn publish_create_with(
     }
     match link(staging, target) {
         Ok(()) => {
+            crate::testknobs::crash_point("upload-after-link");
             let _ = std::fs::remove_file(staging);
             Ok(())
         }
@@ -92,7 +93,15 @@ fn publish_replace(
             "publish path escapes the root",
         )));
     }
-    std::fs::rename(staging, target).map_err(PublishError::Io)
+    crate::testknobs::crash_point("upload-before-rename");
+    let rename = || std::fs::rename(staging, target);
+    // Elsewhere a refusal is final, and waiting would only hold up other publishes.
+    let renamed = if cfg!(windows) {
+        security::retry_sharing(rename)
+    } else {
+        rename()
+    };
+    renamed.map_err(PublishError::Io)
 }
 
 pub(super) async fn publish(
@@ -274,6 +283,34 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
         let current = etag_for_metadata(&std::fs::metadata(&target).unwrap());
         assert!(publish_replace(&Mutex::new(()), &base, &staging, &target, &[current]).is_ok());
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+    }
+
+    /// Security software opens files without delete sharing, which refuses a rename.
+    #[cfg(windows)]
+    #[test]
+    fn publish_replace_waits_out_a_briefly_held_destination() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const SHARE_READ_AND_WRITE: u32 = 0x1 | 0x2;
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().canonicalize().unwrap();
+        let target = base.join("t");
+        let staging = base.join("s");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::write(&staging, b"new").unwrap();
+        let current = etag_for_metadata(&std::fs::metadata(&target).unwrap());
+        let held = std::fs::File::options()
+            .read(true)
+            .share_mode(SHARE_READ_AND_WRITE)
+            .open(&target)
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+        let published = publish_replace(&Mutex::new(()), &base, &staging, &target, &[current]);
+        release.join().unwrap();
+        assert!(published.is_ok());
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
     }
 }

@@ -112,6 +112,7 @@ pub(super) async fn resumable(
         return finish_io(&e);
     }
     drop(out);
+    crate::testknobs::crash_point("resume-after-append");
 
     let new_len = range.start + accepted;
     if new_len < range.total {

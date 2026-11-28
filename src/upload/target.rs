@@ -77,6 +77,16 @@ pub(super) enum Staging {
     Resume,
 }
 
+/// True only for names that `Target::staging_path(Staging::Part)` can create.
+/// Never matches `Staging::Resume` names or non-reserved user files.
+pub(super) fn is_part_staging_name(name: &str) -> bool {
+    name.starts_with('.')
+        && !name.starts_with(RESUME_PREFIX)
+        && name.rsplit_once(PART_MARK).is_some_and(|(_, id)| {
+            id.len() == 12 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+}
+
 #[allow(clippy::result_large_err)]
 pub(super) fn parse_target(state: &AppState, req_path: &str) -> Result<Target, Response<Body>> {
     let raw = req_path
@@ -128,5 +138,23 @@ mod tests {
         assert!(is_reserved_name(".x.blaze-part-abc"));
         assert!(is_reserved_name(".blaze-resume-0011"));
         assert!(!is_reserved_name("report.txt"));
+    }
+
+    #[test]
+    fn part_staging_classifier_excludes_resume_and_plain_names() {
+        assert!(is_part_staging_name(".x.blaze-part-0123456789ab"));
+        assert!(is_part_staging_name(".blaze-part-0123456789ab"));
+        assert!(!is_part_staging_name(".x.blaze-resume"));
+        assert!(!is_part_staging_name(".blaze-resume-0123456789abcdef"));
+        assert!(!is_part_staging_name("x.blaze-part-0123456789ab"));
+        assert!(!is_part_staging_name("report.txt"));
+        assert!(!is_part_staging_name(".hidden"));
+        assert!(!is_part_staging_name(".x.blaze-part-1.blaze-resume"));
+        assert!(!is_part_staging_name(".blaze-resume-1.blaze-part-1"));
+        assert!(!is_part_staging_name(
+            ".blaze-resume-1.blaze-part-0123456789ab"
+        ));
+        assert!(!is_part_staging_name(".notes.blaze-part-draft"));
+        assert!(!is_part_staging_name(".x.blaze-part-0123456789AB"));
     }
 }

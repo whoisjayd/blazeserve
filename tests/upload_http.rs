@@ -836,3 +836,238 @@ async fn active_upload_is_not_visible_to_another_server() {
     .await;
     assert_ne!(other.status, 409);
 }
+
+fn part_names(dir: &std::path::Path) -> Vec<String> {
+    dir_names(dir)
+        .into_iter()
+        .filter(|n| n.contains(".blaze-part-"))
+        .collect()
+}
+
+/// Backdates what a crash left behind past the age at which the server sweeps it.
+fn age_parts(dir: &std::path::Path) {
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(48 * 60 * 60);
+    for name in part_names(dir) {
+        std::fs::File::options()
+            .write(true)
+            .open(dir.join(name))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+}
+
+fn resume_names(dir: &std::path::Path) -> Vec<String> {
+    dir_names(dir)
+        .into_iter()
+        .filter(|n| n.ends_with(".blaze-resume") || n.starts_with(".blaze-resume-"))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_during_create_or_stage_leaves_destination_absent_and_retry_succeeds() {
+    let payload = vec![7u8; 256 * 1024];
+    for point in ["upload-after-create", "upload-after-stage"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut srv = BlazeChild::spawn(dir.path(), &[("BLAZE_CRASH_AT", point)]);
+        send_until_close(srv.addr, &put("/__upload__/big.bin", &[], &payload)).await;
+        srv.wait_aborted();
+
+        assert!(
+            !dir.path().join("big.bin").exists(),
+            "{point}: destination must not exist"
+        );
+        // Observe what a hard kill leaves behind on disk before restart.
+        let leftover_parts = part_names(dir.path());
+        assert!(
+            !leftover_parts.is_empty(),
+            "{point}: expected aborted process to leave an orphaned part file"
+        );
+        assert!(resume_names(dir.path()).is_empty(), "{point}");
+
+        age_parts(dir.path());
+        let srv2 = BlazeChild::spawn(dir.path(), &[]);
+        let r = roundtrip(srv2.addr, &put("/__upload__/big.bin", &[], &payload)).await;
+        assert_eq!(r.status, 201, "{point}: retry failed with {}", r.status);
+        assert_eq!(std::fs::read(dir.path().join("big.bin")).unwrap(), payload);
+        assert!(
+            part_names(dir.path()).is_empty(),
+            "{point}: orphaned part files must be swept on retry: {:?}",
+            part_names(dir.path())
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_after_hard_link_keeps_complete_destination_and_never_overwrites() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = vec![9u8; 256 * 1024];
+    let mut srv = BlazeChild::spawn(dir.path(), &[("BLAZE_CRASH_AT", "upload-after-link")]);
+    send_until_close(srv.addr, &put("/__upload__/linked.bin", &[], &payload)).await;
+    srv.wait_aborted();
+
+    let target = dir.path().join("linked.bin");
+    assert!(target.exists(), "hard link already exposed destination");
+    assert_eq!(std::fs::read(&target).unwrap(), payload);
+    assert!(!part_names(dir.path()).is_empty());
+
+    age_parts(dir.path());
+    let srv2 = BlazeChild::spawn(dir.path(), &[]);
+    let retry = roundtrip(srv2.addr, &put("/__upload__/linked.bin", &[], b"overwrite")).await;
+    assert_eq!(retry.status, 409);
+    assert_eq!(std::fs::read(&target).unwrap(), payload);
+    assert!(
+        part_names(dir.path()).is_empty(),
+        "orphaned part link must be swept: {:?}",
+        part_names(dir.path())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_before_replace_rename_keeps_original_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv0 = BlazeChild::spawn(dir.path(), &[]);
+    let created = roundtrip(srv0.addr, &put("/__upload__/doc.bin", &[], b"original")).await;
+    assert_eq!(created.status, 201);
+    let etag = created.header("etag").unwrap().to_owned();
+    drop(srv0);
+
+    let mut srv1 = BlazeChild::spawn(dir.path(), &[("BLAZE_CRASH_AT", "upload-before-rename")]);
+    send_until_close(
+        srv1.addr,
+        &put(
+            "/__upload__/doc.bin",
+            &[("If-Match", &etag)],
+            b"replacement",
+        ),
+    )
+    .await;
+    srv1.wait_aborted();
+
+    assert_eq!(
+        std::fs::read(dir.path().join("doc.bin")).unwrap(),
+        b"original"
+    );
+    assert!(!part_names(dir.path()).is_empty());
+
+    age_parts(dir.path());
+    let srv2 = BlazeChild::spawn(dir.path(), &[]);
+    let ok = roundtrip(
+        srv2.addr,
+        &put(
+            "/__upload__/doc.bin",
+            &[("If-Match", &etag)],
+            b"replacement",
+        ),
+    )
+    .await;
+    assert_eq!(ok.status, 200);
+    assert_eq!(
+        std::fs::read(dir.path().join("doc.bin")).unwrap(),
+        b"replacement"
+    );
+    assert!(
+        part_names(dir.path()).is_empty(),
+        "orphaned part file must be swept: {:?}",
+        part_names(dir.path())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_after_resume_append_preserves_resume_file_and_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = b"0123456789abcdef".to_vec();
+    let mut srv1 = BlazeChild::spawn(
+        dir.path(),
+        &[
+            ("BLAZE_CRASH_AT", "resume-after-append"),
+            ("BLAZE_CRASH_AFTER", "1"),
+        ],
+    );
+    let c1 = roundtrip(
+        srv1.addr,
+        &put(
+            "/__upload__/res.bin",
+            &[("Content-Range", "bytes 0-3/16")],
+            &full[..4],
+        ),
+    )
+    .await;
+    assert_eq!(c1.status, 202);
+    assert_eq!(c1.header("upload-offset"), Some("4"));
+
+    send_until_close(
+        srv1.addr,
+        &put(
+            "/__upload__/res.bin",
+            &[("Content-Range", "bytes 4-9/16")],
+            &full[4..10],
+        ),
+    )
+    .await;
+    srv1.wait_aborted();
+
+    assert!(!dir.path().join("res.bin").exists());
+    assert_eq!(
+        resume_names(dir.path()).len(),
+        1,
+        "resume staging file must stay on disk across crash"
+    );
+
+    let srv2 = BlazeChild::spawn(dir.path(), &[]);
+    let head = roundtrip(srv2.addr, &request("HEAD", "/__upload__/res.bin", &[], b"")).await;
+    assert_eq!(head.status, 200);
+    assert_eq!(head.header("upload-offset"), Some("10"));
+    assert_eq!(head.header("upload-complete"), Some("?0"));
+
+    let tail = roundtrip(
+        srv2.addr,
+        &put(
+            "/__upload__/res.bin",
+            &[("Content-Range", "bytes 10-15/16")],
+            &full[10..],
+        ),
+    )
+    .await;
+    assert_eq!(tail.status, 201);
+    assert_eq!(std::fs::read(dir.path().join("res.bin")).unwrap(), full);
+    assert!(no_staging_left(dir.path()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nested_crash_orphan_is_swept_without_touching_resume_or_user_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("keep.txt"), b"keep").unwrap();
+    std::fs::write(sub.join(".res.bin.blaze-resume"), b"0123").unwrap();
+
+    let mut srv1 = BlazeChild::spawn(dir.path(), &[("BLAZE_CRASH_AT", "upload-after-stage")]);
+    send_until_close(srv1.addr, &put("/__upload__/sub/new.bin", &[], b"payload")).await;
+    srv1.wait_aborted();
+    assert!(!part_names(&sub).is_empty());
+
+    age_parts(&sub);
+    let srv2 = BlazeChild::spawn(dir.path(), &[]);
+    let retry = roundtrip(srv2.addr, &put("/__upload__/sub/new.bin", &[], b"payload")).await;
+    assert_eq!(retry.status, 201);
+    assert!(part_names(&sub).is_empty());
+    assert_eq!(std::fs::read(sub.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(
+        std::fs::read(sub.join(".res.bin.blaze-resume")).unwrap(),
+        b"0123"
+    );
+    assert_eq!(std::fs::read(sub.join("new.bin")).unwrap(), b"payload");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recent_part_files_of_another_server_are_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    // What a second server sharing this root has on disk while it is still receiving.
+    let in_flight = dir.path().join(".other.bin.blaze-part-0123456789ab");
+    std::fs::write(&in_flight, b"half").unwrap();
+    let srv = BlazeChild::spawn(dir.path(), &[]);
+    let r = roundtrip(srv.addr, &put("/__upload__/mine.bin", &[], b"mine")).await;
+    assert_eq!(r.status, 201);
+    assert!(in_flight.exists(), "an upload in progress was deleted");
+}

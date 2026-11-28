@@ -2,7 +2,8 @@
 
 use super::READ_BUF;
 use super::download::{
-    Download, MAX_RESTARTS, Meta, parse_content_range, rename_with_retry, sibling,
+    Download, MAX_RESTARTS, Meta, allocated, check_free_space, parse_content_range,
+    write_atomic_with,
 };
 use super::http::{
     cannot_write, describe_error, describe_io, header, http_failure, retry_hint, transient_error,
@@ -15,7 +16,7 @@ use crate::cli::util::{Progress, backoff, human_size, transfer_title};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -152,13 +153,10 @@ fn save_sidecar(d: &Download<'_>, probe: &Probe, file: &File, done: &BTreeSet<u6
     let Ok(raw) = serde_json::to_vec(&meta) else {
         return;
     };
-    let tmp = sibling(&d.meta_path, ".tmp");
-    // The data must be on disk before the sidecar claims it is.
-    if file.sync_data().is_ok()
-        && std::fs::write(&tmp, raw).is_ok()
-        && rename_with_retry(&tmp, &d.meta_path).is_err()
-    {
-        let _ = std::fs::remove_file(&tmp);
+    // The data must be on disk before the sidecar claims it is. A save that fails only
+    // costs the segments finished since the previous one.
+    if file.sync_data().is_ok() {
+        let _ = write_atomic_with(&d.meta_path, |f| f.write_all(&raw));
     }
 }
 
@@ -447,6 +445,7 @@ fn attempt(
         d.reset();
         BTreeSet::new()
     });
+    check_free_space(&d.part, probe.total.saturating_sub(allocated(&d.part)))?;
     let write_err = |e: std::io::Error| cannot_write(&d.part, &e);
     let file = OpenOptions::new()
         .write(true)

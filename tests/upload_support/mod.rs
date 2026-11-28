@@ -304,3 +304,123 @@ pub fn sha256_b64(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     base64::engine::general_purpose::STANDARD.encode(Sha256::digest(data))
 }
+
+pub struct BlazeChild {
+    pub addr: SocketAddr,
+    child: Option<std::process::Child>,
+}
+
+impl Drop for BlazeChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl BlazeChild {
+    pub fn spawn(root: &Path, env: &[(&str, &str)]) -> Self {
+        for _ in 0..5 {
+            let port = std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("probe free port")
+                .local_addr()
+                .unwrap()
+                .port();
+            let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_blaze"));
+            cmd.args([
+                "serve",
+                root.to_str().expect("utf-8 root"),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+                "--max-upload-mb",
+                "16",
+            ])
+            .env("BLAZE_TELEMETRY", "0")
+            .env("NO_COLOR", "1")
+            .env_remove("BLAZE_LOG_JSON")
+            .env_remove("BLAZE_CRASH_AT")
+            .env_remove("BLAZE_CRASH_AFTER")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+            for (k, v) in env {
+                cmd.env(k, v);
+            }
+            let mut child = cmd.spawn().expect("spawn blaze serve");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut port_taken = false;
+            while Instant::now() < deadline {
+                if let Some(status) = child.try_wait().expect("poll blaze child") {
+                    let _ = child.wait();
+                    let mut err = String::new();
+                    if let Some(mut stderr) = child.stderr.take() {
+                        let _ = std::io::Read::read_to_string(&mut stderr, &mut err);
+                    }
+                    if err.contains("bind") || err.contains("in use") {
+                        port_taken = true;
+                        break;
+                    }
+                    panic!("blaze serve exited prematurely ({status}): {err}");
+                }
+                if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
+                    return Self {
+                        addr,
+                        child: Some(child),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            if !port_taken {
+                panic!("timed out waiting for blaze serve on {addr}");
+            }
+        }
+        panic!("could not bind blaze serve after retries");
+    }
+
+    pub fn wait_aborted(&mut self) {
+        let mut child = self.child.take().expect("child already awaited");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().expect("wait blaze child") {
+                assert!(
+                    !status.success(),
+                    "expected blaze child to abort, exited cleanly with {status}"
+                );
+                #[cfg(unix)]
+                assert!(
+                    status.code().is_none(),
+                    "expected signal abort on unix, got {status}"
+                );
+                return;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("timed out waiting for blaze child to abort");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+pub async fn send_until_close(addr: SocketAddr, raw: &[u8]) {
+    let mut stream = match TcpStream::connect(addr).await {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let _ = stream.write_all(raw).await;
+    let _ = stream.flush().await;
+    let mut buf = [0u8; 4096];
+    while let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await
+    {
+        if n == 0 {
+            break;
+        }
+    }
+}

@@ -14,6 +14,7 @@ use super::throttle::{Throttle, parse_rate};
 use crate::cli::ansi::{Style, announce};
 use crate::cli::jobs::{self, tracker};
 use crate::cli::util::{Progress, human_size, sha256_file_within, transfer_title};
+use crate::security::retry_sharing;
 use clap::Args;
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -141,21 +142,83 @@ pub(super) fn sibling(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Security software and indexers briefly hold new files open on Windows, which makes
-/// an immediate rename fail with a sharing violation.
 pub(super) fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
-    let mut last = None;
-    for attempt in 0..8u64 {
-        match std::fs::rename(from, to) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                last = Some(e);
-                std::thread::sleep(Duration::from_millis(50 * (attempt + 1)));
-            }
-            Err(e) => return Err(e),
+    retry_sharing(|| std::fs::rename(from, to))
+}
+
+fn remove_with_retry(path: &Path) -> std::io::Result<()> {
+    retry_sharing(|| match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    })
+}
+
+/// Writes a sibling temp file exclusively, fsyncs, and renames it over `path` so a
+/// crash or failed write leaves either the previous file or the complete new one.
+pub(super) fn write_atomic_with(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let tmp = sibling(path, ".tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let result = (|| {
+        let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        write(&mut f)?;
+        f.sync_all()?;
+        drop(f);
+        rename_with_retry(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Nearest existing ancestor of `path`, since the destination folder may not exist yet.
+fn existing_ancestor(path: &Path) -> PathBuf {
+    let mut p = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    while !p.exists() {
+        if !p.pop() {
+            return PathBuf::from(".");
         }
     }
-    Err(last.unwrap_or_else(|| std::io::Error::other("rename failed")))
+    p
+}
+
+fn available_space(path: &Path) -> std::io::Result<u64> {
+    if let Some(free) = crate::testknobs::free_space_override() {
+        return Ok(free);
+    }
+    fs4::available_space(existing_ancestor(path))
+}
+
+fn ensure_space_fits(remaining: u64, free: u64) -> Result<(), String> {
+    if remaining > free {
+        crate::cli::exit::record(crate::cli::exit::NO_SPACE);
+        return Err(format!(
+            "not enough free disk space: {} needed, {} available; free some space or choose another --output",
+            human_size(remaining),
+            human_size(free),
+        ));
+    }
+    Ok(())
+}
+
+/// Disk space the file already holds, which writing over it does not take again.
+pub(super) fn allocated(path: &Path) -> u64 {
+    std::fs::File::open(path)
+        .and_then(|f| fs4::FileExt::allocated_size(&f))
+        .unwrap_or(0)
+}
+
+/// Checks free disk space for `remaining` bytes before writing a partial file.
+/// Probe errors fall through so an unqueryable filesystem does not block a download.
+pub(super) fn check_free_space(dest: &Path, remaining: u64) -> Result<(), String> {
+    let Ok(free) = available_space(dest) else {
+        return Ok(());
+    };
+    ensure_space_fits(remaining, free)
 }
 
 /// The name the server suggests, asked with a `HEAD` before any resume state is looked
@@ -247,6 +310,7 @@ impl Download<'_> {
     pub(super) fn reset(&self) {
         let _ = std::fs::remove_file(&self.part);
         let _ = std::fs::remove_file(&self.meta_path);
+        let _ = std::fs::remove_file(sibling(&self.meta_path, ".tmp"));
     }
 
     pub(super) fn part_len(&self) -> u64 {
@@ -258,10 +322,11 @@ impl Download<'_> {
         serde_json::from_slice(&raw).ok()
     }
 
-    fn save_meta(&self, meta: &Meta) {
-        if let Ok(raw) = serde_json::to_vec(meta) {
-            let _ = std::fs::write(&self.meta_path, raw);
-        }
+    fn save_meta(&self, meta: &Meta) -> std::io::Result<()> {
+        let raw = serde_json::to_vec(meta).map_err(std::io::Error::other)?;
+        write_atomic_with(&self.meta_path, |f| f.write_all(&raw))?;
+        crate::testknobs::crash_point("get-after-meta");
+        Ok(())
     }
 
     fn step(&self) -> Result<Step, String> {
@@ -341,14 +406,18 @@ impl Download<'_> {
             (0, len)
         };
 
-        self.save_meta(&Meta {
-            url: self.url.to_owned(),
-            etag: header(&resp, "etag"),
-            last_modified: header(&resp, "last-modified"),
-            total,
-            seg: None,
-        });
+        if let Some(total) = total {
+            // A restart overwrites the old partial, so its space is available again.
+            let held = if resume_from > 0 {
+                resume_from
+            } else {
+                allocated(&self.part)
+            };
+            check_free_space(&self.part, total.saturating_sub(held))?;
+        }
 
+        // Old bytes go before the new validator is recorded: a crash between the two
+        // would otherwise resume the new file on top of the old one.
         let mut file = if resume_from > 0 {
             OpenOptions::new().append(true).open(&self.part)
         } else {
@@ -359,6 +428,15 @@ impl Download<'_> {
                 .open(&self.part)
         }
         .map_err(|e| cannot_write(&self.part, &e))?;
+
+        self.save_meta(&Meta {
+            url: self.url.to_owned(),
+            etag: header(&resp, "etag"),
+            last_modified: header(&resp, "last-modified"),
+            total,
+            seg: None,
+        })
+        .map_err(|e| cannot_write(&self.meta_path, &e))?;
 
         if resume_from > 0 {
             announce("Resuming", &format!("at {}", human_size(resume_from)));
@@ -487,7 +565,17 @@ fn finish_download(
     let size = d.part_len();
     rename_with_retry(&d.part, dest)
         .map_err(|e| format!("cannot move download to {}: {e}", dest.display()))?;
-    let _ = std::fs::remove_file(&d.meta_path);
+    let _ = std::fs::remove_file(sibling(&d.meta_path, ".tmp"));
+    if let Err(e) = remove_with_retry(&d.meta_path) {
+        announce(
+            "Warning",
+            &format!(
+                "saved {}, but could not remove {}: {e}",
+                dest.display(),
+                d.meta_path.display()
+            ),
+        );
+    }
     anstream::println!(
         "{} {} ({})",
         Style::stdout().green("Saved"),
@@ -641,5 +729,104 @@ mod tests {
         assert_eq!(parse_content_range("bytes 5-9/*"), Some((5, 9, None)));
         assert_eq!(parse_content_range("items 5-9/10"), None);
         assert_eq!(parse_unsatisfied_total("bytes */10"), Some(10));
+    }
+
+    fn test_download<'a>(dir: &Path, url: &'a str) -> Download<'a> {
+        Download {
+            agent: agent(),
+            url,
+            part: dir.join("f.bin.part"),
+            meta_path: dir.join("f.bin.part.meta"),
+            auth: None,
+            resume: true,
+            throttle: None,
+        }
+    }
+
+    #[test]
+    fn save_meta_preserves_previous_json_when_write_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = test_download(dir.path(), "http://127.0.0.1/f.bin");
+        let original = Meta {
+            url: d.url.to_owned(),
+            etag: Some("\"v1\"".to_owned()),
+            last_modified: None,
+            total: Some(4096),
+            seg: None,
+        };
+        d.save_meta(&original).unwrap();
+        let before = std::fs::read(&d.meta_path).unwrap();
+
+        let err = write_atomic_with(&d.meta_path, |f| {
+            f.write_all(b"{\"url\":\"truncated")?;
+            Err(std::io::Error::other("injected write failure"))
+        });
+        assert!(err.is_err());
+        assert_eq!(std::fs::read(&d.meta_path).unwrap(), before);
+        let loaded = d.load_meta().expect("previous metadata remains valid");
+        assert_eq!(loaded.url, original.url);
+        assert_eq!(loaded.etag, original.etag);
+        assert_eq!(loaded.total, original.total);
+        assert!(!sibling(&d.meta_path, ".tmp").exists());
+    }
+
+    #[test]
+    fn save_meta_returns_errors_and_corrupt_meta_does_not_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = Download {
+            agent: agent(),
+            url: "http://127.0.0.1/f.bin",
+            part: dir.path().join("missing/f.bin.part"),
+            meta_path: dir.path().join("missing/f.bin.part.meta"),
+            auth: None,
+            resume: true,
+            throttle: None,
+        };
+        assert!(missing.save_meta(&Meta::default()).is_err());
+
+        let d = test_download(dir.path(), "http://127.0.0.1/f.bin");
+        std::fs::write(&d.meta_path, b"{not valid json").unwrap();
+        assert!(d.load_meta().is_none());
+    }
+
+    #[test]
+    fn retry_sharing_recovers_from_transient_permission_denied_and_removes_missing() {
+        let mut attempts = 0;
+        retry_sharing(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+        assert_eq!(attempts, 3);
+
+        let dir = tempfile::tempdir().unwrap();
+        let meta = dir.path().join("f.bin.part.meta");
+        std::fs::write(&meta, b"{}").unwrap();
+        remove_with_retry(&meta).unwrap();
+        assert!(!meta.exists());
+        remove_with_retry(&meta).unwrap();
+    }
+
+    #[test]
+    fn existing_ancestor_walks_up_to_an_existing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("missing/nested/f.bin.part");
+        assert_eq!(
+            existing_ancestor(&nested),
+            std::path::absolute(dir.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn ensure_space_fits_reports_needed_and_available_sizes() {
+        assert!(ensure_space_fits(1024, 1024).is_ok());
+        assert!(ensure_space_fits(0, 0).is_ok());
+        let err = ensure_space_fits(2 * 1024 * 1024, 1024 * 1024).unwrap_err();
+        assert!(err.contains("2.00 MiB"), "{err}");
+        assert!(err.contains("1.00 MiB"), "{err}");
     }
 }

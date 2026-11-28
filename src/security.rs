@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub const PART_MARK: &str = ".blaze-part-";
 pub const RESUME_SUFFIX: &str = ".blaze-resume";
@@ -161,6 +162,23 @@ pub fn generate_request_id(incoming: Option<&str>) -> String {
         s.push(char::from_digit(u32::from(b & 0xf), 16).unwrap_or('0'));
     }
     s
+}
+
+/// Security software and indexers briefly hold new files open on Windows, which makes
+/// an immediate rename or delete fail with a sharing violation.
+pub(crate) fn retry_sharing(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    let mut last = None;
+    for attempt in 0..8u64 {
+        match op() {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                last = Some(e);
+                std::thread::sleep(Duration::from_millis(50 * (attempt + 1)));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("operation failed")))
 }
 
 fn parent_contained(real_base: &Path, parent: &Path) -> bool {

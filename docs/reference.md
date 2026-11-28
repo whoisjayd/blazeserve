@@ -92,6 +92,8 @@ Codes 3 to 5 let a script tell a full disk, corrupt data and a wrong password ap
 
 `get` and `put` honour `Retry-After` on `429` and `503` (seconds or HTTP date), up to 5 minutes. See [Passwords and retries](sharing-files.md#passwords-and-retries).
 
+When the server reports the file's size (`Content-Length` or `Content-Range`), `get` checks free disk space before creating `.part` and exits with code `3` if the remaining bytes to fetch do not fit. Plain downloads reserve no extra margin (`--keep-free` applies only with `--extract`).
+
 ## `blaze put` options
 
 | Option | Default | Meaning |

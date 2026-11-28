@@ -1023,3 +1023,332 @@ async fn get_extract_without_enough_free_space_exits_3_and_changes_nothing() {
     assert!(!out_dir.path().join("big").exists(), "nothing is extracted");
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_removes_sidecar_after_single_stream_and_resume_publish() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(MIB + 33);
+    std::fs::write(served.path().join("file.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/file.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("fresh.bin");
+    let fresh = blaze_async(vec![
+        "get".into(),
+        url.clone(),
+        "-c".into(),
+        "1".into(),
+        "-o".into(),
+        s(&dest),
+    ])
+    .await;
+    assert_eq!(code(&fresh), 0, "{}", stderr(&fresh));
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert!(!out_dir.path().join("fresh.bin.part").exists());
+    assert!(!out_dir.path().join("fresh.bin.part.meta").exists());
+    assert!(!out_dir.path().join("fresh.bin.part.meta.tmp").exists());
+
+    let resumed_dest = out_dir.path().join("resumed.bin");
+    std::fs::write(out_dir.path().join("resumed.bin.part"), &data[..512 * 1024]).unwrap();
+    let meta =
+        serde_json::json!({ "url": url, "etag": null, "last_modified": null, "total": null });
+    std::fs::write(
+        out_dir.path().join("resumed.bin.part.meta"),
+        meta.to_string(),
+    )
+    .unwrap();
+    let resumed = blaze_async(vec![
+        "get".into(),
+        url,
+        "-c".into(),
+        "1".into(),
+        "-o".into(),
+        s(&resumed_dest),
+    ])
+    .await;
+    assert_eq!(code(&resumed), 0, "{}", stderr(&resumed));
+    assert_eq!(std::fs::read(&resumed_dest).unwrap(), data);
+    assert!(!out_dir.path().join("resumed.bin.part").exists());
+    assert!(!out_dir.path().join("resumed.bin.part.meta").exists());
+    assert!(!out_dir.path().join("resumed.bin.part.meta.tmp").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_with_leftover_sidecar_still_refuses_to_overwrite_without_force() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("f.txt"), b"new").unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/f.txt", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("f.txt");
+    std::fs::write(&dest, b"finished").unwrap();
+    let stale_meta =
+        serde_json::json!({ "url": url, "etag": null, "last_modified": null, "total": 8 });
+    std::fs::write(
+        out_dir.path().join("f.txt.part.meta"),
+        stale_meta.to_string(),
+    )
+    .unwrap();
+
+    let refused = blaze_async(vec!["get".into(), url.clone(), "-o".into(), s(&dest)]).await;
+    assert_eq!(code(&refused), 1, "{}", stderr(&refused));
+    assert!(stderr(&refused).contains("--force"), "{}", stderr(&refused));
+    assert_eq!(std::fs::read(&dest).unwrap(), b"finished");
+
+    let forced = blaze_async(vec![
+        "get".into(),
+        url,
+        "-o".into(),
+        s(&dest),
+        "--force".into(),
+    ])
+    .await;
+    assert_eq!(code(&forced), 0, "{}", stderr(&forced));
+    assert_eq!(std::fs::read(&dest).unwrap(), b"new");
+    assert!(!out_dir.path().join("f.txt.part").exists());
+    assert!(!out_dir.path().join("f.txt.part.meta").exists());
+    assert!(!out_dir.path().join("f.txt.part.meta.tmp").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_checks_free_space_before_creating_part() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(2 * MIB);
+    std::fs::write(served.path().join("big.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("big.bin");
+    let dest_str = s(&dest);
+    let out = tokio::task::spawn_blocking(move || {
+        blaze()
+            .args(["get", &url, "-c", "1", "-o", &dest_str])
+            .env("BLAZE_FREE", (MIB).to_string())
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(code(&out), 3, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("not enough free disk space"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("2.00 MiB"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("1.00 MiB"), "{}", stderr(&out));
+    assert!(!dest.exists());
+    assert!(!out_dir.path().join("big.bin.part").exists());
+    assert!(!out_dir.path().join("big.bin.part.meta").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_resume_counts_only_remaining_bytes_against_free_space() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(2 * MIB);
+    std::fs::write(served.path().join("big.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("big.bin");
+    let already = MIB + MIB / 2;
+    std::fs::write(out_dir.path().join("big.bin.part"), &data[..already]).unwrap();
+    let meta =
+        serde_json::json!({ "url": url, "etag": null, "last_modified": null, "total": null });
+    std::fs::write(out_dir.path().join("big.bin.part.meta"), meta.to_string()).unwrap();
+
+    let dest_str = s(&dest);
+    let out = tokio::task::spawn_blocking(move || {
+        blaze()
+            .args(["get", &url, "-c", "1", "-o", &dest_str])
+            // 1 MiB free: above the 512 KiB remainder, below the 2 MiB total.
+            .env("BLAZE_FREE", (MIB).to_string())
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert!(!out_dir.path().join("big.bin.part").exists());
+    assert!(!out_dir.path().join("big.bin.part.meta").exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_crash_after_meta_leaves_valid_sidecar_and_resumes() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(MIB);
+    std::fs::write(served.path().join("crash.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/crash.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("crash.bin");
+    let part = out_dir.path().join("crash.bin.part");
+    let meta_path = out_dir.path().join("crash.bin.part.meta");
+    let tmp_path = out_dir.path().join("crash.bin.part.meta.tmp");
+
+    let half = MIB / 2;
+    std::fs::write(&part, &data[..half]).unwrap();
+    let old_meta =
+        serde_json::json!({ "url": url, "etag": null, "last_modified": null, "total": null });
+    std::fs::write(&meta_path, old_meta.to_string()).unwrap();
+
+    let url_crash = url.clone();
+    let dest_crash = s(&dest);
+    let crashed = tokio::task::spawn_blocking(move || {
+        blaze()
+            .args(["get", &url_crash, "-c", "1", "-o", &dest_crash])
+            .env("BLAZE_CRASH_AT", "get-after-meta")
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap();
+
+    assert!(!crashed.status.success(), "child should have aborted");
+    assert!(!dest.exists());
+    assert!(!tmp_path.exists());
+    let raw_meta = std::fs::read(&meta_path).expect("sidecar remains after crash");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&raw_meta).expect("sidecar must stay valid JSON");
+    assert_eq!(parsed["url"], url);
+    assert!(
+        parsed["total"].is_null() || parsed["total"].as_u64() == Some(data.len() as u64),
+        "unexpected sidecar total: {parsed}"
+    );
+
+    let before = server.state().metrics.bytes_sent();
+    let resumed = blaze_async(vec![
+        "get".into(),
+        url,
+        "-c".into(),
+        "1".into(),
+        "-o".into(),
+        s(&dest),
+    ])
+    .await;
+    let sent = server.state().metrics.bytes_sent() - before;
+
+    assert_eq!(code(&resumed), 0, "{}", stderr(&resumed));
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert_eq!(
+        sent,
+        (data.len() - half) as u64,
+        "rerun should resume from the partial file"
+    );
+    assert!(!part.exists());
+    assert!(!meta_path.exists());
+    assert!(!tmp_path.exists());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_parallel_checks_free_space_before_creating_part() {
+    let served = tempfile::tempdir().unwrap();
+    std::fs::write(served.path().join("big.bin"), pattern(9 * MIB)).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/big.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = s(&out_dir.path().join("big.bin"));
+    let out = tokio::task::spawn_blocking(move || {
+        blaze()
+            .args(["get", &url, "-c", "4", "-o", &dest])
+            .env("BLAZE_FREE", MIB.to_string())
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(code(&out), 3, "{}", stderr(&out));
+    assert!(!out_dir.path().join("big.bin").exists());
+    assert!(!out_dir.path().join("big.bin.part").exists());
+    assert!(!out_dir.path().join("big.bin.part.meta").exists());
+    server.shutdown().await;
+}
+
+/// A partial of an older version of the file, with the validator it was fetched under.
+fn stale_partial(dir: &std::path::Path, url: &str, len: usize) {
+    std::fs::write(dir.join("f.bin.part"), vec![0xAA; len]).unwrap();
+    let meta = serde_json::json!({
+        "url": url, "etag": "\"old\"", "last_modified": null, "total": null
+    });
+    std::fs::write(dir.join("f.bin.part.meta"), meta.to_string()).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_crash_while_restarting_a_changed_file_never_splices_old_bytes() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(MIB);
+    std::fs::write(served.path().join("f.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/f.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("f.bin");
+    stale_partial(out_dir.path(), &url, MIB / 2);
+
+    let (url_crash, dest_crash) = (url.clone(), s(&dest));
+    let crashed = tokio::task::spawn_blocking(move || {
+        blaze()
+            .args(["get", &url_crash, "-c", "1", "-o", &dest_crash])
+            .env("BLAZE_CRASH_AT", "get-after-meta")
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap();
+    assert!(!crashed.status.success(), "child should have aborted");
+
+    let again = blaze_async(vec![
+        "get".into(),
+        url,
+        "-c".into(),
+        "1".into(),
+        "-o".into(),
+        s(&dest),
+    ])
+    .await;
+    assert_eq!(code(&again), 0, "{}", stderr(&again));
+    assert!(std::fs::read(&dest).unwrap() == data, "file is corrupted");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_counts_a_replaced_partial_as_free_space() {
+    let served = tempfile::tempdir().unwrap();
+    let data = pattern(2 * MIB);
+    std::fs::write(served.path().join("f.bin"), &data).unwrap();
+    let server = serve(served.path(), 0).await;
+    let url = format!("http://{}/f.bin", server.local_addr());
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let dest = out_dir.path().join("f.bin");
+    stale_partial(out_dir.path(), &url, MIB + MIB / 2);
+
+    let dest_str = s(&dest);
+    let out = tokio::task::spawn_blocking(move || {
+        blaze()
+            .args(["get", &url, "-c", "1", "-o", &dest_str])
+            .env("BLAZE_FREE", MIB.to_string())
+            .output()
+            .expect("spawn blaze")
+    })
+    .await
+    .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(std::fs::read(&dest).unwrap() == data);
+    server.shutdown().await;
+}

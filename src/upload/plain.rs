@@ -10,7 +10,9 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use super::publish::{publish, publish_failure, success};
 use super::request::Digests;
 use super::response::{finish_io, io_status, reject, text};
-use super::stream::{StagingGuard, buf_capacity, create_staging, idle, pump, stream_failure};
+use super::stream::{
+    ActiveGuard, StagingGuard, buf_capacity, create_staging, idle, pump, stream_failure,
+};
 use super::target::{Staging, Target};
 use crate::{AppState, Body};
 
@@ -23,6 +25,9 @@ pub(super) async fn plain(
     tags: Option<Vec<String>>,
 ) -> Response<Body> {
     let staging = t.staging_path(Staging::Part);
+    let Some(_active) = ActiveGuard::acquire(state, &staging) else {
+        return reject(StatusCode::CONFLICT, "Upload in progress");
+    };
     let file = match create_staging(&t, staging.clone()).await {
         Ok(f) => f,
         Err(e) => {
@@ -63,6 +68,7 @@ pub(super) async fn plain(
         return finish_io(&e);
     }
     drop(out);
+    crate::testknobs::crash_point("upload-after-stage");
     let digest: [u8; 32] = hasher.finalize().into();
     if [digests.body, digests.repr]
         .into_iter()
