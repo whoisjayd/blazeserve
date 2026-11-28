@@ -22,6 +22,8 @@ mod response;
 mod scope;
 
 pub use hash::HashCache;
+#[cfg(fuzzing)]
+pub use resolve::decode_components_for_fuzz;
 
 const UPLOAD_PREFIX: &str = "/__upload__/";
 

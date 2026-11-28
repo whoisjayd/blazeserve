@@ -13,6 +13,7 @@ pub mod range;
 pub mod security;
 pub mod server;
 pub mod telemetry;
+mod testknobs;
 pub mod ui;
 pub mod upload;
 pub mod usage;

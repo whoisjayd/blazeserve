@@ -12,7 +12,11 @@ mod segmented;
 mod throttle;
 mod upload;
 
+#[cfg(fuzzing)]
+pub use discover::parse_digest_for_fuzz;
 pub use download::{GetArgs, get};
+#[cfg(fuzzing)]
+pub use filename::suggested_name_for_fuzz;
 pub use upload::{PutArgs, put};
 
 const READ_BUF: usize = 256 * 1024;

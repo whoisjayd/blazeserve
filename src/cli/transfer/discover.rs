@@ -101,6 +101,13 @@ pub(super) fn discover(url: &str, auth: Option<&str>) -> Result<ServerDigest, St
     parse_digest(&body, repr.as_deref())
 }
 
+#[cfg(fuzzing)]
+pub fn parse_digest_for_fuzz(body: &[u8], repr_digest: Option<&str>) -> Option<(String, u64)> {
+    parse_digest(body, repr_digest)
+        .ok()
+        .map(|d| (d.sha256, d.size))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +146,22 @@ mod tests {
         assert!(parse_digest(format!(r#"{{"sha256":"{ABC}"}}"#).as_bytes(), None).is_err());
         assert!(parse_digest(ok(ABC).as_bytes(), Some("sha-256=:AAAA:")).is_err());
         assert!(parse_digest(ok(ABC).as_bytes(), Some("sha-512=:AAAA:")).is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn parsed_digests_are_lowercase_sha256(
+            body in proptest::collection::vec(proptest::num::u8::ANY, 0..128),
+            repr in proptest::option::of(".{0,80}"),
+        ) {
+            if let Ok(d) = parse_digest(&body, repr.as_deref()) {
+                proptest::prop_assert_eq!(d.sha256.len(), 64);
+                proptest::prop_assert!(
+                    d.sha256
+                        .bytes()
+                        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                );
+            }
+        }
     }
 }

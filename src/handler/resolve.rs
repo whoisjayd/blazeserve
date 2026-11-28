@@ -249,6 +249,11 @@ pub(super) fn list_dir(cfg: &Config, dir: &Path, rel: String) -> Resolved {
     Resolved::Listing { rel, entries }
 }
 
+#[cfg(fuzzing)]
+pub fn decode_components_for_fuzz(raw: &str) -> Result<Vec<String>, ()> {
+    decode_components(raw).map_err(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +291,17 @@ mod tests {
         );
         let e = accepted_encodings(&h);
         assert!(e.gzip && !e.br);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn decoded_components_never_contain_traversal_or_separators(raw in ".{0,128}") {
+            if let Ok(parts) = decode_components(&raw) {
+                for p in parts {
+                    proptest::prop_assert!(!p.is_empty() && p != "." && p != "..");
+                    proptest::prop_assert!(!p.contains(['/', '\\', '\0']));
+                }
+            }
+        }
     }
 }

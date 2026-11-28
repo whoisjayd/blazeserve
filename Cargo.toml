@@ -11,6 +11,14 @@ keywords = ["http", "file-server", "static", "range", "cli"]
 categories = ["command-line-utilities", "web-programming::http-server"]
 include = ["/src/**", "/python/**", "/tests/**", "/tests_py/**", "/Cargo.toml", "/Cargo.lock", "/pyproject.toml", "/README.md", "/LICENSE"]
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/blazeserve-v{ version }-{ target }.{ archive-format }"
+bin-dir = "blazeserve-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [lib]
 name = "blazeserve"
 path = "src/lib.rs"
@@ -86,3 +94,13 @@ codegen-units = 1
 panic = "abort"
 strip = true
 opt-level = 3
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+unused_must_use = "warn"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"

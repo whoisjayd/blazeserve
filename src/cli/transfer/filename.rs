@@ -123,6 +123,11 @@ fn sanitize(raw: &str) -> Option<String> {
     Some(name.to_owned())
 }
 
+#[cfg(fuzzing)]
+pub fn suggested_name_for_fuzz(header: &str) -> Option<String> {
+    suggested_name(header)
+}
+
 /// Windows opens `CON.txt` as the console, whatever the extension.
 fn is_device_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
@@ -242,5 +247,21 @@ mod tests {
         );
         let long = format!("attachment; filename=\"{}\"", "a".repeat(256));
         assert_eq!(name(&long), None);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn suggested_names_satisfy_safety_invariants(header in ".{0,256}") {
+            if let Some(n) = suggested_name(&header) {
+                proptest::prop_assert!(!n.is_empty() && n.len() <= super::MAX_NAME_BYTES);
+                proptest::prop_assert!(!n.contains(['/', '\\']));
+                proptest::prop_assert!(
+                    !n.chars()
+                        .any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
+                );
+                proptest::prop_assert!(n != "." && n != "..");
+                proptest::prop_assert!(!n.ends_with('.') && !n.ends_with(' '));
+            }
+        }
     }
 }

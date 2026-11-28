@@ -1,0 +1,58 @@
+name: fuzz
+
+on:
+  pull_request:
+    paths:
+      - 'src/range.rs'
+      - 'src/security.rs'
+      - 'src/handler/resolve.rs'
+      - 'src/handler/mod.rs'
+      - 'src/cli/mod.rs'
+      - 'src/cli/transfer/**'
+      - 'fuzz/**'
+      - '.github/workflows/fuzz.yml'
+  schedule:
+    - cron: '37 3 * * 6'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [range, digest, path, filename]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - run: rustup toolchain install nightly --profile minimal
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - run: >-
+          cargo +nightly fuzz run "$TARGET" --
+          -max_total_time=120 -max_len=4096 -timeout=10 -rss_limit_mb=512
+        env:
+          TARGET: ${{ matrix.target }}
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30

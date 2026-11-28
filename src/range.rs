@@ -140,4 +140,16 @@ mod tests {
             RangeSpec::Ranges(vec![(0, 17)])
         );
     }
+
+    proptest::proptest! {
+        #[test]
+        fn parsed_ranges_stay_within_representation(header in ".{0,128}", size in 0u64..=u64::MAX) {
+            if let RangeSpec::Ranges(r) = parse_range_header(Some(&header), size) {
+                proptest::prop_assert!(!r.is_empty());
+                for (s, e) in r {
+                    proptest::prop_assert!(s <= e && e < size);
+                }
+            }
+        }
+    }
 }

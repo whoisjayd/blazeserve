@@ -21,6 +21,8 @@ use clap_complete::Shell;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+#[cfg(fuzzing)]
+pub use transfer::{parse_digest_for_fuzz, suggested_name_for_fuzz};
 pub use upgrade::api as upgrade_api;
 pub use util::{human_size, sha256_file};
 
