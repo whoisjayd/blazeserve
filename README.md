@@ -11,6 +11,7 @@
 One program for Linux, Windows and macOS: a file server, and downloads and uploads that resume.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/whoisjayd/blazeserve/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/whoisjayd/blazeserve/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/whoisjayd/blazeserve/badge?style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/whoisjayd/blazeserve)
 [![Release](https://img.shields.io/github/v/release/whoisjayd/blazeserve?style=flat-square)](https://github.com/whoisjayd/blazeserve/releases)
 [![crates.io](https://img.shields.io/crates/v/blazeserve?style=flat-square&label=cargo)](https://crates.io/crates/blazeserve)
 [![PyPI](https://img.shields.io/pypi/v/blazeserve?style=flat-square&label=pip)](https://pypi.org/project/blazeserve/)
