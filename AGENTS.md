@@ -172,6 +172,13 @@ git diff --cached --stat
 - Leave out distributions, caches and generated files.
 - Do not amend, rebase, force-push, tag, publish or push unless explicitly authorised. History already on `main` is never rewritten.
 
+### Dependency updates
+
+- Merge a Dependabot pull request only when its checks have passed. Squash it into one Conventional Commits line ending in `[skip ci]`, with an empty body, so CI does not run again for what it already tested: `gh pr merge N --squash --subject "build(deps): bump x from 1.0 to 1.1 [skip ci]" --body ""`.
+- Updates merged this way were never tested together. Before a release or tag, `main` needs a later commit without the marker that CI has passed.
+- Never tag a `[skip ci]` commit: the release workflow would not run.
+- Close, rather than merge, an update for something already removed.
+
 ## Versions and releases
 
 Keep every hard-coded release version in sync: `version` in `Cargo.toml` and `pyproject.toml`, the BlazeServe entry in the regenerated `Cargo.lock`, the image tag in `deploy/k8s/deployment.yaml`, and any test that checks the version.
