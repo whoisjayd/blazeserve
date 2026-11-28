@@ -2,7 +2,7 @@
 
 Run `blaze upgrade` to move to a newer version; see [Getting started](getting-started.md#keep-it-up-to-date).
 
-## From 1.1 to the next release
+## From 1.1 to 2.0
 
 - The default port is now **5949** instead of 8000. Add `--port 8000` to keep the old address, and check proxies, firewall rules and scripts.
 - OpenTelemetry export and the bundled monitoring configs were removed: `--otlp-endpoint`, the `OTEL_*` variables and the `trace_id` and `span_id` log fields are gone. `/__metrics__` stays.

@@ -18,7 +18,8 @@ We check the report, work on a fix and publish a release. Please keep the detail
 
 | Version | Supported |
 | :--- | :--- |
-| 1.x | Yes |
+| 2.x | Yes |
+| 1.x | No. Upgrade to 2.x |
 | Earlier than 1.0 | No. The old Python version is no longer maintained |
 
 ## What is covered

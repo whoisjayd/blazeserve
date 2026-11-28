@@ -61,7 +61,7 @@ cargo install blazeserve     # or build it: Rust 1.93 and a C compiler
 
 The install scripts check the download against the published checksums. Builds exist for Linux (x86_64 and aarch64, glibc or static musl), Windows x86_64 and macOS (Intel and Apple silicon). Run `blaze upgrade` to update later.
 
-This page describes the `main` branch; the newest release may not have every feature yet. See [upgrading](https://github.com/whoisjayd/blazeserve/blob/main/docs/upgrading.md).
+Coming from 1.x? Read [upgrading](https://github.com/whoisjayd/blazeserve/blob/main/docs/upgrading.md): the default port and some options changed.
 
 ## Start
 

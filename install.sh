@@ -13,7 +13,7 @@
 #
 # Environment:
 #   BLAZE_INSTALL_DIR   where the program goes (default ~/.local/bin)
-#   BLAZE_VERSION       a release tag like v1.1.0 (default: the latest)
+#   BLAZE_VERSION       a release tag like v2.0.0 (default: the latest)
 #   BLAZE_BASE_URL      override download base URL (for mirrors or local testing)
 
 set -eu
@@ -43,7 +43,7 @@ Usage: install.sh [--uninstall]
 
 Environment variables:
   BLAZE_INSTALL_DIR   Destination directory (default: ~/.local/bin)
-  BLAZE_VERSION       Release version or tag, e.g. v1.1.0 (default: latest)
+  BLAZE_VERSION       Release version or tag, e.g. v2.0.0 (default: latest)
   BLAZE_BASE_URL      Override release asset base URL
 EOF
 }

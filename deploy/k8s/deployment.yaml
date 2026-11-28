@@ -26,7 +26,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: blazeserve
-          image: ghcr.io/whoisjayd/blazeserve:v1.1.0
+          image: ghcr.io/whoisjayd/blazeserve:v2.0.0
           imagePullPolicy: IfNotPresent
           args: ["serve", "/data", "--host", "0.0.0.0", "--port", "5949", "--log-json"]
           ports:

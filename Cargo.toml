@@ -1,6 +1,6 @@
 [package]
 name = "blazeserve"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.93"
 description = "High-performance HTTP file server and CLI with range requests, resumable transfers, caching, TLS, uploads, ZIP streaming, rate limiting, and Prometheus metrics."

@@ -11,7 +11,7 @@
 #   gh attestation verify <archive> --repo whoisjayd/blazeserve
 #
 # Environment:
-#   BLAZE_VERSION       a release tag like v1.1.0 (default: the latest)
+#   BLAZE_VERSION       a release tag like v2.0.0 (default: the latest)
 #   BLAZE_INSTALL_DIR   override install directory (default: %LOCALAPPDATA%\Programs\BlazeServe)
 #   BLAZE_BASE_URL      override download base URL (for mirrors or local testing)
 #   BLAZE_UNINSTALL     set to 1 to remove BlazeServe and its PATH entry

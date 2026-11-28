@@ -22,13 +22,13 @@ Release archives include the man page (`man/blaze.1`) and shell completions (`co
 
 Both [`install.sh`](../install.sh) and [`install.ps1`](../install.ps1) download the release archive for your machine and verify its SHA-256 against the release `SHA256SUMS` file before placing `blaze`. Neither script asks for root or administrator privileges, and neither configures automatic updates.
 
-- **Linux and macOS (`install.sh`):** installs to `~/.local/bin/blaze` (override with `BLAZE_INSTALL_DIR`, or pin a release with `BLAZE_VERSION=v1.1.0`). Remove it with:
+- **Linux and macOS (`install.sh`):** installs to `~/.local/bin/blaze` (override with `BLAZE_INSTALL_DIR`, or pin a release with `BLAZE_VERSION=v2.0.0`). Remove it with:
 
   ```bash
   curl -fsSL https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.sh | sh -s -- --uninstall
   ```
 
-- **Windows (`install.ps1`):** installs to `%LOCALAPPDATA%\Programs\BlazeServe\blaze.exe` and adds that folder to your user `PATH` (`BLAZE_VERSION=v1.1.0` pins a release). Remove it with:
+- **Windows (`install.ps1`):** installs to `%LOCALAPPDATA%\Programs\BlazeServe\blaze.exe` and adds that folder to your user `PATH` (`BLAZE_VERSION=v2.0.0` pins a release). Remove it with:
 
   ```powershell
   $env:BLAZE_UNINSTALL = 1; irm https://raw.githubusercontent.com/whoisjayd/blazeserve/main/install.ps1 | iex
@@ -37,7 +37,7 @@ Both [`install.sh`](../install.sh) and [`install.ps1`](../install.ps1) download 
 Checking `SHA256SUMS` guards against corrupted downloads and mismatched mirrors, not against a compromised release host. To verify who built an archive, download it from the release page and run `gh attestation verify` before running or extracting it:
 
 ```bash
-gh attestation verify blazeserve-v1.1.0-x86_64-unknown-linux-musl.tar.gz --repo whoisjayd/blazeserve
+gh attestation verify blazeserve-v2.0.0-x86_64-unknown-linux-musl.tar.gz --repo whoisjayd/blazeserve
 ```
 
 ### Building from source
